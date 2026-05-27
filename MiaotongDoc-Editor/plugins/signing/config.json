@@ -1,0 +1,47 @@
+# MiaotongDoc 签署插件
+# 在文档编辑器中嵌入签署按钮
+
+{
+    "name": "miaotongdoc-signing",
+    "guid": "asc.miaotongdoc.signing",
+    "baseUrl": "",
+    "variations": [
+        {
+            "description": "MiaotongDoc Signing Plugin",
+            "url": "index.html",
+
+            "icons": ["icon_light.png", "icon_dark.png"],
+            "icons2": [
+                {
+                    "style": "light",
+                    "100%": "icon_light.png",
+                    "150%": "icon_light@1.5x.png",
+                    "200%": "icon_light@2x.png"
+                },
+                {
+                    "style": "dark",
+                    "100%": "icon_dark.png",
+                    "150%": "icon_dark@1.5x.png",
+                    "200%": "icon_dark@2x.png"
+                }
+            ],
+            "isViewer": true,
+            "EditorsSupport": ["word", "cell", "slide"],
+            "isVisual": false,
+            "isModal": false,
+            "isInsideMode": false,
+            "initDataType": "none",
+            "initData": "",
+            "isUpdateOleOnResize": false,
+            "buttons": [
+                {
+                    "text": "提交签署",
+                    "primary": true,
+                    "icons": "icon.png",
+                    "hint": "提交文档进行签署",
+                    "disable": false
+                }
+            ]
+        }
+    ]
+}

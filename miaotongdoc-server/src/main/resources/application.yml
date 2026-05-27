@@ -1,0 +1,120 @@
+server:
+  port: 9004
+  tomcat:
+    max-http-form-post-size: 200MB
+    connection-timeout: 300000
+
+spring:
+  application:
+    name: miaotongdoc
+
+  # 数据库
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:miaotongdocdb}
+    username: ${POSTGRES_USER:miaotong}
+    password: ${POSTGRES_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  # JPA
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  # Flyway
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  # Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 10000
+
+  # 文件上传
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+  # OAuth2 Client (SSO) - 仅在 SSO 启用时配置
+  # security:
+  #   oauth2:
+  #     client:
+  #       registration:
+  #         keycloak:
+  #           client-id: ${SSO_CLIENT_ID:}
+  #           client-secret: ${SSO_CLIENT_SECRET:}
+  #           scope: openid,profile,email
+  #           authorization-grant-type: authorization_code
+  #           redirect-uri: "{baseUrl}/api/sso/callback/{registrationId}"
+  #           client-name: 银行统一认证
+  #       provider:
+  #         keycloak:
+  #           issuer-uri: ${SSO_ISSUER_URI:}
+
+# ===== 应用配置 =====
+app:
+  jwt-secret: ${APP_JWT_SECRET:miaotongdoc-default-jwt-secret-please-change-in-production}
+  jwt-expiration: ${APP_JWT_EXPIRATION:7200000}
+  storage-path: ${APP_STORAGE_PATH:/data/documents}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost}
+
+# ===== 文档编辑器配置 =====
+editor:
+  jwt-secret: ${EDITOR_JWT_SECRET:}
+  server-url: ${EDITOR_SERVER_URL:http://editor:8080}
+  callback-url: ${EDITOR_CALLBACK_URL:http://host.docker.internal:9004/api/callback/editor}
+  download-url: ${EDITOR_DOWNLOAD_URL:http://host.docker.internal:9004/api/documents}
+
+# ===== SSO 配置 =====
+sso:
+  enabled: ${SSO_ENABLED:false}
+  provider-name: ${SSO_PROVIDER_NAME:银行统一认证}
+  claim-mapping:
+    employee-id: employee_id
+    department-id: department_id
+    real-name: name
+  auto-provision:
+    enabled: ${SSO_AUTO_PROVISION:true}
+    employee-id-range-start: 90000001
+    employee-id-range-end: 99999999
+    default-role: user
+  success-redirect: ${SSO_SUCCESS_REDIRECT:/home.html}
+  failure-redirect: ${SSO_FAILURE_REDIRECT:/login.html?error=sso_failed}
+
+# ===== Actuator 监控 =====
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+
+# ===== 日志 =====
+logging:
+  level:
+    com.miaotong.doc: INFO
+    org.springframework.security: WARN

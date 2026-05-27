@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(mv d:/tiany/stycode/MiaotongDoc/MiaotongDoc-OnlyOffice d:/tiany/stycode/MiaotongDoc/MiaotongDoc-Editor)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(npm -v)",
+      "Bash(npm install *)",
+      "Read(//d/Program Files/Java/**)",
+      "Read(//c/Program Files/**)",
+      "Read(//d/Program Files/**)",
+      "Bash(where java *)",
+      "Bash(npx vite *)",
+      "Bash(\"D:/Program Files/Java/jdk-17/bin/java\" -version)",
+      "Bash(JAVA_HOME=\"D:/Program Files/Java/jdk-17\" \"D:/Program Files/apache-maven-3.6.1/bin/mvn\" compile -q)"
+    ],
+    "additionalDirectories": [
+      "d:\\tiany\\stycode\\MiaotongDoc\\MiaotongDoc-OnlyOffice"
+    ]
+  }
+}
