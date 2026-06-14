@@ -46,7 +46,9 @@
           <span class="nav-section-title" :class="{ active: activeTab === 'folders' }" @click="switchTab('folders')">文件夹</span>
           <div class="nav-section-actions">
             <el-button text size="small" @click.stop="collapseAllFolders" title="全部折叠">
-              <el-icon><Folder /></el-icon>
+              <svg viewBox="0 0 1024 1024" width="14" height="14" style="vertical-align: middle">
+                <path fill="currentColor" d="M128 256h768a42.667 42.667 0 0 0 0-85.333H128a42.667 42.667 0 1 0 0 85.333zm768 426.667H128a42.667 42.667 0 0 0 0 85.333h768a42.667 42.667 0 0 0 0-85.333zm-256-213.334H128a42.667 42.667 0 0 0 0 85.334h512a42.667 42.667 0 0 0 0-85.334z"/>
+              </svg>
             </el-button>
             <el-button text size="small" @click.stop="showCreateFolder" title="新建文件夹">
               <el-icon><Plus /></el-icon>
@@ -68,7 +70,7 @@
             <el-icon v-else class="folder-toggle-placeholder"></el-icon>
             <span class="folder-icon-wrapper" :style="{ color: folder.color || '#909399' }">
               <svg class="folder-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
-                <path fill="currentColor" d="M128 192v640h768V320H485.76L357.504 192zm-32-64h287.872l128.384 128H928a32 32 0 0 1 32 32v576a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V160a32 32 0 0 1 32-32"></path>
+                <path d="M880 298.4H521L403.7 186.2c-1.5-1.4-3.5-2.2-5.5-2.2H144c-17.7 0-32 14.3-32 32v592c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V330.4c0-17.7-14.3-32-32-32z" :fill="folder.color || '#909399'" />
               </svg>
             </span>
             <span class="folder-name">{{ folder.name }}</span>
@@ -165,7 +167,8 @@
       </header>
 
       <!-- Document list view -->
-      <main class="content-area" v-if="isDocView">
+      <main class="content-area doc-list-wrapper" v-if="isDocView">
+        <div class="content-scroll">
         <div class="content-header">
           <div class="header-left">
             <div v-if="activeFolderId" class="folder-path">
@@ -335,6 +338,7 @@
             <el-empty :description="emptyText" />
           </template>
         </el-table>
+        </div>
         <div class="pagination-bar">
           <el-pagination
             background
@@ -381,7 +385,7 @@
             <div class="folder-mgmt-info">
               <span class="folder-icon-wrapper" :style="{ color: folder.color || '#909399' }">
                 <svg class="folder-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-                  <path fill="currentColor" d="M128 192v640h768V320H485.76L357.504 192zm-32-64h287.872l128.384 128H928a32 32 0 0 1 32 32v576a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V160a32 32 0 0 1 32-32"></path>
+                  <path d="M880 298.4H521L403.7 186.2c-1.5-1.4-3.5-2.2-5.5-2.2H144c-17.7 0-32 14.3-32 32v592c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V330.4c0-17.7-14.3-32-32-32z" :fill="folder.color || '#909399'" />
                 </svg>
               </span>
               <span class="folder-mgmt-name">{{ folder.name }}</span>
@@ -446,8 +450,8 @@
     </el-dialog>
 
     <!-- 创建文件夹弹窗 -->
-    <el-dialog v-model="createFolderVisible" title="新建文件夹" width="450px">
-      <el-form :model="{ name: newFolderName, color: newFolderColor, templateId: newFolderTemplateId }" label-width="80px">
+    <el-dialog v-model="createFolderVisible" title="新建文件夹" width="480px">
+      <el-form :model="{ name: newFolderName, color: newFolderColor, templateId: newFolderTemplateId }" label-width="90px">
         <el-form-item label="文件夹名称">
           <el-input v-model="newFolderName" placeholder="请输入文件夹名称" maxlength="50" show-word-limit />
         </el-form-item>
@@ -485,8 +489,8 @@
     </el-dialog>
 
     <!-- 编辑文件夹弹窗 -->
-    <el-dialog v-model="editFolderVisible" title="编辑文件夹" width="450px">
-      <el-form label-width="80px">
+    <el-dialog v-model="editFolderVisible" title="编辑文件夹" width="480px">
+      <el-form label-width="90px">
         <el-form-item label="文件夹名称">
           <el-input v-model="editFolderName" placeholder="请输入文件夹名称" maxlength="50" show-word-limit />
         </el-form-item>
@@ -1478,13 +1482,12 @@ async function handleTableCommand(cmd: string, row: any) {
 }
 
 .pagination-bar {
-  position: sticky;
-  bottom: 0;
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
-  padding: 16px 0;
-  background: linear-gradient(transparent, #f5f7fa 20%);
-  z-index: 10;
+  padding: 12px 0 0;
+  border-top: 1px solid #ebeef5;
+  background: #f5f7fa;
 }
 
 
@@ -1687,8 +1690,20 @@ async function handleTableCommand(cmd: string, row: any) {
 .content-area {
   flex: 1;
   padding: 24px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.content-area.doc-list-wrapper {
+  overflow: hidden;
+}
+
+.content-scroll {
+  flex: 1;
   overflow-y: auto;
-  position: relative;
+  min-height: 0;
 }
 
 .content-header {
@@ -2104,6 +2119,11 @@ async function handleTableCommand(cmd: string, row: any) {
   font-size: 12px;
   color: #909399;
   text-align: center;
+}
+
+/* 弹窗表单标签不换行 */
+:deep(.el-form-item__label) {
+  white-space: nowrap;
 }
 
 .form-tip {
