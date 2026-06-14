@@ -33,4 +33,28 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
     @Modifying
     @Query(value = "INSERT INTO mt_audit_log_archive (user_id, employee_id, user_name, action, resource_type, resource_id, detail, ip_address, user_agent, created_at) SELECT user_id, employee_id, user_name, action, resource_type, resource_id, detail, ip_address, user_agent, created_at FROM mt_audit_log WHERE created_at < :threshold", nativeQuery = true)
     int archiveOlderThan(@Param("threshold") LocalDateTime threshold);
+
+    // 管理员查询所有日志
+    Page<AuditLog> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.createdAt BETWEEN :start AND :end ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByDateRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.userId = :userId ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByUserId(@Param("userId") Long userId, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.action = :action ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByAction(@Param("action") String action, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.userId = :userId AND a.action = :action ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByUserIdAndAction(@Param("userId") Long userId, @Param("action") String action, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.createdAt BETWEEN :start AND :end AND a.userId = :userId ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByDateRangeAndUserId(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end, @Param("userId") Long userId, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.createdAt BETWEEN :start AND :end AND a.action = :action ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByDateRangeAndAction(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end, @Param("action") String action, Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE a.createdAt BETWEEN :start AND :end AND a.userId = :userId AND a.action = :action ORDER BY a.createdAt DESC")
+    Page<AuditLog> findAllByDateRangeAndUserIdAndAction(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end, @Param("userId") Long userId, @Param("action") String action, Pageable pageable);
 }

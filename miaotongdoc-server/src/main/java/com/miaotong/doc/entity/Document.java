@@ -68,11 +68,17 @@ public class Document {
     @Column(name = "signing_locked")
     private Boolean signingLocked = false;
 
+    @Column(name = "folder_id")
+    private Long folderId;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "updated_by")
+    private Long updatedBy;
 
     @PrePersist
     protected void onCreate() {

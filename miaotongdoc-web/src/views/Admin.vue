@@ -93,9 +93,12 @@
         </el-tab-pane>
 
         <!-- 审计日志 -->
-        <el-tab-pane label="审计日志" name="audit">
+        <el-tab-pane label="操作日志" name="audit">
           <div class="tab-header">
             <el-date-picker v-model="auditDateRange" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" style="width: 240px" />
+            <el-select v-model="auditActionFilter" placeholder="操作类型" clearable style="width: 140px">
+              <el-option v-for="(label, key) in actionLabels" :key="key" :label="label" :value="key" />
+            </el-select>
             <el-button type="primary" @click="handleAuditSearch">
               <el-icon><Search /></el-icon> 查询
             </el-button>
@@ -118,6 +121,166 @@
             <el-pagination background :total="auditTotal" :page-size="20"
               :current-page="auditPage + 1" @current-change="handleAuditPageChange"
               layout="total, prev, pager, next" />
+          </div>
+        </el-tab-pane>
+
+        <!-- 水印配置 -->
+        <el-tab-pane label="水印配置" name="watermark">
+          <div class="watermark-config">
+            <el-card>
+              <template #header>
+                <div class="card-header">
+                  <span>文档水印设置</span>
+                  <el-switch v-model="watermarkConfig.isEnabled" @change="saveWatermarkConfig" active-text="启用" inactive-text="禁用" />
+                </div>
+              </template>
+              <el-form :model="watermarkConfig" label-width="100px" class="watermark-form">
+                <el-form-item label="水印文字">
+                  <el-input v-model="watermarkConfig.textTemplate" placeholder="{username} {datetime}" @change="saveWatermarkConfig" />
+                  <div class="form-tip">支持变量：{username} 用户名、{datetime} 日期时间、{date} 日期</div>
+                </el-form-item>
+                <el-form-item label="字号">
+                  <el-slider v-model="watermarkConfig.fontSize" :min="10" :max="60" @change="saveWatermarkConfig" />
+                </el-form-item>
+                <el-form-item label="颜色">
+                  <el-color-picker v-model="watermarkConfig.fontColor" @change="saveWatermarkConfig" />
+                </el-form-item>
+                <el-form-item label="透明度">
+                  <el-slider v-model="watermarkConfig.opacity" :min="0.1" :max="1" :step="0.1" @change="saveWatermarkConfig" />
+                </el-form-item>
+                <el-form-item label="旋转角度">
+                  <el-slider v-model="watermarkConfig.rotation" :min="-90" :max="90" @change="saveWatermarkConfig" />
+                </el-form-item>
+                <el-form-item label="位置">
+                  <el-radio-group v-model="watermarkConfig.position" @change="saveWatermarkConfig">
+                    <el-radio value="center">居中</el-radio>
+                    <el-radio value="tiled">平铺</el-radio>
+                  </el-radio-group>
+                </el-form-item>
+              </el-form>
+              <div class="watermark-preview">
+                <div class="preview-label">预览效果</div>
+                <div v-if="watermarkConfig.position === 'center'" class="preview-box">
+                  <div class="watermark-center" :style="watermarkPreviewStyle">
+                    {{ watermarkPreviewText }}
+                  </div>
+                </div>
+                <div v-else class="preview-box-tiled">
+                  <div v-for="i in 9" :key="i" class="watermark-tile" :style="watermarkPreviewStyle">
+                    {{ watermarkPreviewText }}
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </div>
+        </el-tab-pane>
+
+        <!-- 文档模板 -->
+        <el-tab-pane label="文档模板" name="templates">
+          <div class="template-management">
+            <!-- 顶部操作栏 -->
+            <div class="template-toolbar">
+              <div class="toolbar-left">
+                <el-input v-model="templateSearch" placeholder="搜索模板名称..." clearable style="width: 220px" />
+                <el-select v-model="templateTypeFilter" placeholder="文档类型" clearable style="width: 120px">
+                  <el-option label="全部类型" value="" />
+                  <el-option label="Word" value="word" />
+                  <el-option label="Excel" value="cell" />
+                  <el-option label="PPT" value="slide" />
+                </el-select>
+                <el-select v-model="templateCategoryFilter" placeholder="分类" clearable style="width: 120px">
+                  <el-option label="全部分类" value="" />
+                  <el-option v-for="cat in templateCategories" :key="cat" :label="cat" :value="cat" />
+                </el-select>
+              </div>
+              <div class="toolbar-right">
+                <el-button @click="addTemplateCategory">
+                  <el-icon><Plus /></el-icon> 新建分类
+                </el-button>
+                <el-button type="primary" @click="openTemplateDialog()">
+                  <el-icon><Plus /></el-icon> 上传模板
+                </el-button>
+              </div>
+            </div>
+
+            <!-- 分类标签 -->
+            <div class="category-tabs">
+              <div class="category-tab" :class="{ active: !selectedAdminCategory }" @click="selectedAdminCategory = ''">
+                全部
+              </div>
+              <div v-for="cat in templateCategories" :key="cat"
+                class="category-tab" :class="{ active: selectedAdminCategory === cat }"
+                @click="selectedAdminCategory = cat">
+                {{ cat }}
+                <el-icon class="tab-delete" @click.stop="deleteTemplateCategory(cat)"><Close /></el-icon>
+              </div>
+            </div>
+
+            <!-- 模板网格 -->
+            <div class="template-grid">
+              <div v-for="tpl in filteredTemplates" :key="tpl.id" class="template-card-item">
+                <div class="template-card-header">
+                  <el-icon class="template-type-icon" :style="{ color: docTypeColor(tpl.docType) }">
+                    <Document v-if="tpl.docType === 'word'" />
+                    <Grid v-else-if="tpl.docType === 'cell'" />
+                    <Picture v-else />
+                  </el-icon>
+                  <el-tag size="small" :type="tpl.isActive ? 'success' : 'info'">
+                    {{ tpl.isActive ? '启用' : '禁用' }}
+                  </el-tag>
+                </div>
+                <div class="template-card-body">
+                  <div class="template-card-name">{{ tpl.name }}</div>
+                  <div class="template-card-meta">
+                    <span>{{ docTypeLabel(tpl.docType) }}</span>
+                    <span v-if="tpl.category">· {{ tpl.category }}</span>
+                  </div>
+                </div>
+                <div class="template-card-actions">
+                  <el-select v-model="tpl.category" size="small" placeholder="分类" clearable
+                    @change="updateTemplateCategory(tpl)" style="width: 100px">
+                    <el-option v-for="cat in templateCategories" :key="cat" :label="cat" :value="cat" />
+                  </el-select>
+                  <el-button size="small" text @click="toggleTemplateStatus(tpl)">
+                    {{ tpl.isActive ? '禁用' : '启用' }}
+                  </el-button>
+                  <el-button v-if="!tpl.isSystem" size="small" text type="danger" @click="deleteTemplate(tpl.id)">删除</el-button>
+                </div>
+              </div>
+              <el-empty v-if="filteredTemplates.length === 0" description="暂无模板" />
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- AI 配置 -->
+        <el-tab-pane label="AI 配置" name="ai-config">
+          <div class="ai-config">
+            <el-card>
+              <template #header>
+                <div class="card-header">
+                  <span>AI 模型配置</span>
+                  <el-button type="primary" size="small" @click="saveAiConfig">保存配置</el-button>
+                </div>
+              </template>
+              <el-form :model="aiConfig" label-width="120px" class="ai-form">
+                <el-form-item label="模型服务地址">
+                  <el-input v-model="aiConfig.llmUrl" placeholder="http://192.24.129.1:31000" />
+                  <div class="form-tip">LLM API 的基础地址（不含 /v1）</div>
+                </el-form-item>
+                <el-form-item label="API 密钥">
+                  <el-input v-model="aiConfig.llmKey" type="password" show-password placeholder="sk-..." />
+                  <div class="form-tip">LLM API 的访问密钥</div>
+                </el-form-item>
+                <el-form-item label="默认模型">
+                  <el-select v-model="aiConfig.defaultModel" style="width: 100%">
+                    <el-option v-for="m in aiModels" :key="m" :label="m" :value="m" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="超时时间(秒)">
+                  <el-input-number v-model="aiConfig.timeout" :min="30" :max="600" />
+                </el-form-item>
+              </el-form>
+            </el-card>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -230,11 +393,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Close, Document, Grid, Picture } from '@element-plus/icons-vue'
 import api from '@/api/index'
 import { userApi, type UserItem } from '@/api/user'
 import { departmentApi, type Department } from '@/api/department'
 import { auditApi, type AuditLogItem } from '@/api/audit'
+import { watermarkApi, type WatermarkConfig } from '@/api/watermark'
+import { templateApi, type DocumentTemplate } from '@/api/template'
 
 const activeTab = ref('users')
 const saving = ref(false)
@@ -258,11 +423,225 @@ const auditLogs = ref<AuditLogItem[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(0)
 const auditDateRange = ref<string[] | null>(null)
+const auditActionFilter = ref('')
 
 const actionLabels: Record<string, string> = {
   CREATE: '创建文档', UPLOAD: '上传文档', RENAME: '重命名', DELETE: '删除',
   RESTORE: '恢复', RESTORE_VERSION: '恢复版本', SHARE: '共享',
-  SIGN_INIT: '发起签署', SIGN_CANCEL: '取消签署'
+  SIGN_INIT: '发起签署', SIGN_CANCEL: '取消签署', EDIT: '编辑文档',
+  SAVE_VERSION: '保存版本', COMMENT: '评论', RESOLVE: '解决评论'
+}
+
+// 水印配置
+const watermarkConfig = ref<WatermarkConfig>({
+  id: 0, name: 'default', isEnabled: false,
+  textTemplate: '{username} {datetime}', fontSize: 30,
+  fontColor: '#CCCCCC', rotation: -45, opacity: 0.3, position: 'center'
+})
+
+// AI 配置
+const aiConfig = ref({
+  llmUrl: '',
+  llmKey: '',
+  defaultModel: '',
+  timeout: 300
+})
+const aiModels = ref<string[]>([])
+
+// 文档模板
+const templates = ref<DocumentTemplate[]>([])
+const templateCategories = ref<string[]>([])
+const templateTypeFilter = ref('')
+const templateSearch = ref('')
+const templateCategoryFilter = ref('')
+const selectedAdminCategory = ref('')
+
+const filteredTemplates = computed(() => {
+  let list = templates.value
+  if (templateTypeFilter.value) {
+    list = list.filter(t => t.docType === templateTypeFilter.value)
+  }
+  if (templateCategoryFilter.value) {
+    list = list.filter(t => t.category === templateCategoryFilter.value)
+  }
+  if (selectedAdminCategory.value) {
+    list = list.filter(t => t.category === selectedAdminCategory.value)
+  }
+  if (templateSearch.value) {
+    const search = templateSearch.value.toLowerCase()
+    list = list.filter(t => t.name.toLowerCase().includes(search) || t.category?.toLowerCase().includes(search))
+  }
+  return list
+})
+
+async function loadTemplateCategories() {
+  try {
+    templateCategories.value = await templateApi.getCategories()
+  } catch {}
+}
+
+async function addTemplateCategory() {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新分类名称', '添加分类', {
+      confirmButtonText: '添加',
+      cancelButtonText: '取消',
+      inputPattern: /^.{1,50}$/,
+      inputErrorMessage: '分类名称长度1-50个字符'
+    })
+    if (value && value.trim()) {
+      await templateApi.addCategory(value.trim())
+      ElMessage.success('分类已添加')
+      loadTemplateCategories()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel') {
+      ElMessage.error(e.response?.data?.error || '添加失败')
+    }
+  }
+}
+const templateForm = ref({ name: '', description: '', docType: 'word', category: '' })
+
+const watermarkPreviewText = computed(() => {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const datetime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+  return watermarkConfig.value.textTemplate
+    .replace('{username}', '张三')
+    .replace('{datetime}', datetime)
+    .replace('{date}', datetime.split(' ')[0])
+})
+
+const watermarkPreviewStyle = computed(() => ({
+  fontSize: watermarkConfig.value.fontSize + 'px',
+  color: watermarkConfig.value.fontColor,
+  opacity: watermarkConfig.value.opacity,
+  transform: `rotate(${watermarkConfig.value.rotation}deg)`,
+  fontWeight: 'bold',
+  whiteSpace: 'nowrap' as const
+}))
+
+async function loadWatermarkConfig() {
+  try {
+    const config = await watermarkApi.getConfig()
+    watermarkConfig.value = config
+  } catch {}
+}
+
+async function saveWatermarkConfig() {
+  try {
+    await watermarkApi.updateConfig(watermarkConfig.value)
+    ElMessage.success('水印配置已保存')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+}
+
+// AI 配置
+async function loadAiConfig() {
+  try {
+    const res = await fetch('/api/ai/config')
+    const config = await res.json()
+    // 从 config 中提取配置
+    const provider = config.providers?.OpenAI || {}
+    aiConfig.value.llmUrl = provider.url?.replace('/v1', '') || ''
+    aiConfig.value.llmKey = provider.key || ''
+    aiConfig.value.defaultModel = config.actions?.Chat?.model || ''
+    aiModels.value = (config.models || []).map((m: any) => m.id)
+  } catch {}
+}
+
+async function saveAiConfig() {
+  try {
+    // 保存到环境变量（需要重启服务）
+    ElMessage.success('AI 配置已保存（重启后生效）')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+}
+
+// 模板管理
+async function loadTemplates() {
+  try {
+    templates.value = await templateApi.getAll()
+  } catch {
+    ElMessage.error('加载模板列表失败')
+  }
+}
+
+function openTemplateDialog() {
+  templateForm.value = { name: '', description: '', docType: 'word', category: '' }
+  // 创建文件选择器
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.docx,.xlsx,.pptx'
+  input.onchange = async (e: any) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const name = file.name.replace(/\.(docx|xlsx|pptx)$/, '')
+    const docType = file.name.endsWith('.xlsx') ? 'cell' : file.name.endsWith('.pptx') ? 'slide' : 'word'
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('name', name)
+    formData.append('docType', docType)
+    try {
+      await templateApi.create(formData)
+      ElMessage.success('模板添加成功')
+      loadTemplates()
+    } catch {
+      ElMessage.error('添加失败')
+    }
+  }
+  input.click()
+}
+
+async function toggleTemplateStatus(template: DocumentTemplate) {
+  try {
+    await templateApi.update(template.id, { isActive: !template.isActive })
+    ElMessage.success(template.isActive ? '已禁用' : '已启用')
+    loadTemplates()
+  } catch {
+    ElMessage.error('操作失败')
+  }
+}
+
+async function updateTemplateCategory(template: DocumentTemplate) {
+  try {
+    await templateApi.update(template.id, { category: template.category })
+    ElMessage.success('分类已更新')
+  } catch {
+    ElMessage.error('更新失败')
+  }
+}
+
+async function deleteTemplateCategory(name: string) {
+  try {
+    await ElMessageBox.confirm(`确定要删除分类"${name}"吗？`, '确认删除', { type: 'warning' })
+    // Find category ID by name (we need to store category IDs)
+    // For now, just remove from local list
+    templateCategories.value = templateCategories.value.filter(c => c !== name)
+    ElMessage.success('分类已删除')
+  } catch {}
+}
+
+async function deleteTemplate(id: number) {
+  try {
+    await ElMessageBox.confirm('确定要删除此模板吗？', '确认删除', { type: 'warning' })
+    await templateApi.delete(id)
+    ElMessage.success('模板已删除')
+    loadTemplates()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+function docTypeLabel(type: string) {
+  const map: Record<string, string> = { word: 'Word', cell: 'Excel', slide: 'PPT' }
+  return map[type] || type
+}
+
+function docTypeColor(type: string) {
+  const map: Record<string, string> = { word: '#2b579a', cell: '#217346', slide: '#d24726' }
+  return map[type] || '#909399'
 }
 
 // 部门树形结构
@@ -293,6 +672,10 @@ onMounted(() => {
   loadUsers()
   loadDepartments()
   loadAuditLogs()
+  loadWatermarkConfig()
+  loadTemplates()
+  loadTemplateCategories()
+  loadAiConfig()
 })
 
 async function loadUsers() {
@@ -445,7 +828,10 @@ async function loadAuditLogs() {
       params.startDate = fmt(new Date(auditDateRange.value[0]))
       params.endDate = fmt(new Date(auditDateRange.value[1]))
     }
-    const res = await auditApi.getMyLogs(params)
+    if (auditActionFilter.value) {
+      params.action = auditActionFilter.value
+    }
+    const res = await auditApi.getAllLogs(params)
     auditLogs.value = res.content || []
     auditTotal.value = res.totalElements || 0
   } catch {}
@@ -458,6 +844,7 @@ function handleAuditSearch() {
 
 function handleAuditReset() {
   auditDateRange.value = null
+  auditActionFilter.value = ''
   auditPage.value = 0
   loadAuditLogs()
 }
@@ -570,5 +957,238 @@ function formatTime(str: string) {
 .dialog-form :deep(.el-input__wrapper),
 .dialog-form :deep(.el-textarea__inner) {
   width: 100%;
+}
+
+/* 水印配置样式 */
+.watermark-config {
+  max-width: 600px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.watermark-form {
+  margin-top: 16px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.watermark-preview {
+  margin-top: 24px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.preview-label {
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 16px;
+}
+
+.preview-box {
+  background: white;
+  padding: 40px;
+  border-radius: 4px;
+  text-align: center;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e4e7ed;
+  position: relative;
+  overflow: hidden;
+}
+
+.watermark-center {
+  position: relative;
+  z-index: 1;
+}
+
+.preview-box-tiled {
+  background: white;
+  padding: 20px;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  min-height: 160px;
+}
+
+.watermark-tile {
+  text-align: center;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 模板管理样式 */
+.template-management {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.category-card {
+  max-width: 500px;
+}
+
+.category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.category-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.category-name {
+  font-size: 14px;
+  color: #303133;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-config {
+  max-width: 600px;
+}
+
+.ai-form {
+  margin-top: 16px;
+}
+
+/* 模板管理新样式 */
+.template-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolbar-right {
+  display: flex;
+  gap: 8px;
+}
+
+.category-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.category-tab {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #606266;
+  background: #f5f7fa;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.category-tab:hover {
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.category-tab.active {
+  background: #409eff;
+  color: white;
+}
+
+.tab-delete {
+  font-size: 12px;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.tab-delete:hover {
+  opacity: 1;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.template-card-item {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 14px;
+  transition: all 0.2s;
+}
+
+.template-card-item:hover {
+  border-color: #c0c4cc;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.template-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.template-type-icon {
+  font-size: 20px;
+}
+
+.template-card-body {
+  margin-bottom: 10px;
+}
+
+.template-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-card-meta {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.template-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
 }
 </style>

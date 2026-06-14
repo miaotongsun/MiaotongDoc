@@ -29,4 +29,8 @@ public class DocumentDTO {
     private String currentUserPermission;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private Long updatedBy;
+    private String updatedByName;
+    private Long folderId;
+    private String templateName;
 }

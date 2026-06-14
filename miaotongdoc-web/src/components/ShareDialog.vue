@@ -89,6 +89,7 @@
               <el-radio-button v-for="o in permOpts" :key="o.v" :value="o.v">{{ o.l }}</el-radio-button>
             </el-radio-group>
           </div>
+          <div class="perm-desc">{{ permOpts.find(o => o.v === newPerm)?.desc }}</div>
           <el-button type="primary" @click="doShare" style="width: 100%; margin-top: 8px">
             共享给 {{ pickedUsers.length }} 人
           </el-button>
@@ -175,10 +176,10 @@ const existChecked = ref(new Set<number>())
 const deptExpanded = ref<number[]>([])
 
 const permOpts = [
-  { l: '查看', v: 'view' },
-  { l: '评论', v: 'comment' },
-  { l: '编辑', v: 'edit' },
-  { l: '管理', v: 'admin' }
+  { l: '查看', v: 'view', desc: '仅查看文档内容，不可评论或编辑' },
+  { l: '评论', v: 'comment', desc: '查看 + 添加评论和批注' },
+  { l: '编辑', v: 'edit', desc: '评论 + 修改文档内容' },
+  { l: '管理', v: 'admin', desc: '拥有全部权限：编辑 + 共享、删除、版本管理' }
 ]
 
 function permText(p: string) { return permOpts.find(o => o.v === p)?.l || p }
@@ -228,7 +229,7 @@ const currentDeptUsers = computed(() => {
   collectDeptIds(selectedDeptId.value)
 
   return allUsers.value
-    .filter(u => u.departmentId && deptIds.has(u.departmentId) && !isSelf(u.id))
+    .filter(u => u.departmentId && deptIds.has(u.departmentId) && !isSelf(u.id) && u.role !== 'admin')
     .sort((a, b) => (a.realName || '').localeCompare(b.realName || ''))
 })
 
@@ -260,7 +261,7 @@ const filteredUsers = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
   if (!kw) return []
   return allUsers.value.filter(u =>
-    !isSelf(u.id) && (
+    !isSelf(u.id) && u.role !== 'admin' && (
       (u.realName || '').toLowerCase().includes(kw) ||
       (u.employeeId || '').toLowerCase().includes(kw)
     )
@@ -367,7 +368,7 @@ async function onExistCmd(share: ShareItem & { permission: string }, cmd: string
   }
   try {
     await shareApi.updatePermission(share.id, cmd)
-    share.permission = cmd as any
+    loadExisting()
     ElMessage.success('权限已更新')
   } catch { ElMessage.error('更新失败') }
 }
@@ -608,6 +609,7 @@ async function loadExisting() {
 
 .perm-row { display: flex; align-items: center; gap: 8px; }
 .perm-lbl { font-size: 12px; color: var(--el-text-color-regular); white-space: nowrap; }
+.perm-desc { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; padding-left: 36px; }
 
 /* 右2：已共享 */
 .col-existing {

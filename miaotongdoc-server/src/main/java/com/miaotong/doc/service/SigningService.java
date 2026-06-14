@@ -1,5 +1,6 @@
 package com.miaotong.doc.service;
 
+import com.miaotong.doc.constants.NotificationType;
 import com.miaotong.doc.dto.CreateSigningTaskRequest;
 import com.miaotong.doc.dto.SigningTaskDTO;
 import com.miaotong.doc.dto.SigningRecordDTO;
@@ -62,8 +63,8 @@ public class SigningService {
             signingRecordRepository.save(record);
 
             notificationService.notify(creatorId, request.getSignerUserIds().get(i),
-                    request.getDocumentId(), "SIGN_REQUEST",
-                    "请求你签署文档: " + doc.getTitle());
+                    request.getDocumentId(), NotificationType.SIGN_REQUEST,
+                    "邀请您签署文档");
 
             // 自动共享文档给签署人（只读），确保签署人能打开文档
             if (!documentShareRepository.existsByDocumentIdAndUserId(request.getDocumentId(), request.getSignerUserIds().get(i))) {
@@ -89,7 +90,7 @@ public class SigningService {
     public void confirmSign(Long taskId, Long userId, HttpServletRequest request) {
         SigningRecord record = signingRecordRepository
                 .findByTaskIdAndSignerUserIdForUpdate(taskId, userId)
-                .orElseThrow(() -> new BusinessException("你不是该任务的签署人"));
+                .orElseThrow(() -> new BusinessException("您不是该任务的签署人"));
 
         if (!"pending".equals(record.getStatus())) {
             throw new BusinessException("该签署已完成或已拒绝");
@@ -121,14 +122,14 @@ public class SigningService {
         signingTaskRepository.save(task);
 
         notificationService.notify(userId, task.getCreatedBy(), task.getDocumentId(),
-                "SIGN_CONFIRM", "确认签署了文档");
+                NotificationType.SIGN_CONFIRM, "已确认签署");
     }
 
     @Transactional
     public void rejectSign(Long taskId, Long userId, String remark) {
         SigningRecord record = signingRecordRepository
                 .findByTaskIdAndSignerUserIdForUpdate(taskId, userId)
-                .orElseThrow(() -> new BusinessException("你不是该任务的签署人"));
+                .orElseThrow(() -> new BusinessException("您不是该任务的签署人"));
 
         if (!"pending".equals(record.getStatus())) {
             throw new BusinessException("该签署已完成或已拒绝");
@@ -162,7 +163,7 @@ public class SigningService {
         documentRepository.save(doc);
 
         notificationService.notify(userId, task.getCreatedBy(), task.getDocumentId(),
-                "SIGN_REJECT", "拒绝签署文档");
+                NotificationType.SIGN_REJECT, "已拒绝签署");
     }
 
     @Transactional
@@ -197,7 +198,7 @@ public class SigningService {
                 record.setStatus("cancelled");
                 signingRecordRepository.save(record);
                 notificationService.notify(userId, record.getSignerUserId(), task.getDocumentId(),
-                        "SIGN_CANCEL", "签署任务已取消: " + task.getTitle());
+                        NotificationType.SIGN_CANCEL, "已取消签署任务");
             }
         }
     }
@@ -245,6 +246,8 @@ public class SigningService {
                 if ("pending".equals(record.getStatus())) {
                     record.setStatus("expired");
                     signingRecordRepository.save(record);
+                    notificationService.notify(task.getCreatedBy(), record.getSignerUserId(),
+                            task.getDocumentId(), NotificationType.SIGN_EXPIRED, "签署任务已超期");
                 }
             }
         }

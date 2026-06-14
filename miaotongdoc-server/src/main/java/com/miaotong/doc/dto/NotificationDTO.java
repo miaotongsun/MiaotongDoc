@@ -14,6 +14,7 @@ public class NotificationDTO {
     private Long userId;
     private Long fromUserId;
     private String fromUserName;
+    private String fromEmployeeId;
     private Long documentId;
     private String documentTitle;
     private String type;

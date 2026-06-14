@@ -8,6 +8,7 @@ import com.miaotong.doc.service.DocumentService;
 import com.miaotong.doc.service.ShareService;
 import com.miaotong.doc.service.PdfExportService;
 import com.miaotong.doc.service.SigningService;
+import com.miaotong.doc.service.ContentIndexService;
 import com.miaotong.doc.util.JwtUtil;
 import com.miaotong.doc.util.EditorJwtUtil;
 import com.miaotong.doc.repository.UserRepository;
@@ -16,6 +17,7 @@ import com.miaotong.doc.exception.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -28,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/documents")
 @RequiredArgsConstructor
@@ -37,6 +40,7 @@ public class DocumentController {
     private final ShareService shareService;
     private final PdfExportService pdfExportService;
     private final SigningService signingService;
+    private final ContentIndexService contentIndexService;
     private final EditorJwtUtil editorJwtUtil;
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
@@ -87,12 +91,34 @@ public class DocumentController {
         return ResponseEntity.ok(toDTO(doc));
     }
 
+    // 手动触发全文索引
+    @PostMapping("/reindex")
+    public ResponseEntity<Map<String, String>> reindex(HttpServletRequest httpRequest) {
+        String role = (String) httpRequest.getAttribute("role");
+        if (!"admin".equals(role)) {
+            return ResponseEntity.status(403).body(Map.of("error", "需要管理员权限"));
+        }
+        contentIndexService.indexNewDocuments();
+        return ResponseEntity.ok(Map.of("message", "索引任务已触发"));
+    }
+
+    @GetMapping("/suggest")
+    public ResponseEntity<?> suggest(
+            @RequestParam String keyword,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+        java.util.List<Map<String, Object>> suggestions = documentService.suggest(keyword, userId, role);
+        return ResponseEntity.ok(Map.of("suggestions", suggestions));
+    }
+
     @GetMapping("/list")
     public ResponseEntity<Page<DocumentDTO>> listDocuments(
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long owner,
             @RequestParam(required = false) Long departmentId,
+            @RequestParam(required = false) Long folderId,
             @RequestParam(defaultValue = "updatedAt") String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
@@ -101,8 +127,19 @@ public class DocumentController {
         String role = (String) httpRequest.getAttribute("role");
         Sort pageSort = parseSort(sort);
         PageRequest pageRequest = PageRequest.of(page, size, pageSort);
-        Page<Document> documents = documentService.listDocuments(type, keyword, owner, userId, departmentId, role, pageRequest);
+        Page<Document> documents = documentService.listDocuments(type, keyword, owner, userId, departmentId, folderId, role, pageRequest);
         return ResponseEntity.ok(documents.map(doc -> toDTO(doc, userId)));
+    }
+
+    @PostMapping("/{id}/move")
+    public ResponseEntity<Map<String, String>> moveToFolder(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        Long folderId = body.get("folderId") != null ? ((Number) body.get("folderId")).longValue() : null;
+        documentService.moveToFolder(id, folderId, userId);
+        return ResponseEntity.ok(Map.of("message", "文档已移动"));
     }
 
     private Sort parseSort(String sort) {
@@ -170,6 +207,82 @@ public class DocumentController {
         result.put("message", "批量删除成功");
         result.put("deleted", deleted);
         return ResponseEntity.ok(result);
+    }
+
+    // ===== 回收站 =====
+
+    @GetMapping("/trash")
+    public ResponseEntity<?> getTrashDocuments(HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+        java.util.List<DocumentDTO> docs;
+        if ("admin".equals(role)) {
+            docs = documentService.getTrashDocuments(null);
+        } else {
+            docs = documentService.getTrashDocuments(userId);
+        }
+        return ResponseEntity.ok(docs);
+    }
+
+    @PostMapping("/{id}/restore")
+    public ResponseEntity<Map<String, String>> restoreFromTrash(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        documentService.restoreFromTrash(id, userId);
+        return ResponseEntity.ok(Map.of("message", "文档已恢复"));
+    }
+
+    @DeleteMapping("/{id}/permanent")
+    public ResponseEntity<Map<String, String>> permanentDelete(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+        requirePermission(id, userId, "admin", role);
+        documentService.permanentDelete(id);
+        return ResponseEntity.ok(Map.of("message", "文档已永久删除"));
+    }
+
+    @DeleteMapping("/trash/empty")
+    public ResponseEntity<Map<String, Object>> emptyTrash(HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+        int count;
+        if ("admin".equals(role)) {
+            count = documentService.emptyTrash(null);
+        } else {
+            count = documentService.emptyTrash(userId);
+        }
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("message", "回收站已清空");
+        result.put("deleted", count);
+        return ResponseEntity.ok(result);
+    }
+
+    // ===== 批量导出 =====
+
+    @PostMapping("/export/zip")
+    public ResponseEntity<byte[]> exportAsZip(
+            @RequestBody java.util.List<Long> documentIds,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+
+        try {
+            byte[] zipContent = documentService.exportDocumentsAsZip(documentIds, userId, role);
+
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.parseMediaType("application/zip"));
+            headers.setContentDisposition(org.springframework.http.ContentDisposition.builder("attachment")
+                    .filename("documents_" + java.time.LocalDate.now() + ".zip").build());
+            headers.setContentLength(zipContent.length);
+
+            return new ResponseEntity<>(zipContent, headers, org.springframework.http.HttpStatus.OK);
+        } catch (Exception e) {
+            log.error("批量导出失败", e);
+            return ResponseEntity.status(500).build();
+        }
     }
 
     @PostMapping("/{id}/versions")
@@ -254,7 +367,8 @@ public class DocumentController {
         document.setUrl(downloadUrl + "/" + id + "/file");
 
         EditorConfig.Permissions permissions = new EditorConfig.Permissions();
-        permissions.setComment(true);
+        boolean canComment = "comment".equals(permission) || canEdit;
+        permissions.setComment(canComment);
         permissions.setDownload(true);
         permissions.setEdit(canEdit);
         permissions.setPrint(true);
@@ -294,14 +408,19 @@ public class DocumentController {
         editorConfigData.setMode(canEdit ? "edit" : "view");
 
         EditorConfig.Customization customization = new EditorConfig.Customization();
-        customization.setForcesave(true);
+        // 禁用强制保存，避免触发 status=8 导致"版本已更改"
+        // 自动保存已足够保证数据安全
+        customization.setForcesave(false);
         editorConfigData.setCustomization(customization);
 
         // 强制快速协作模式，防止用户切换到严格模式后无法改回
         EditorConfig.CoEditing coEditing = new EditorConfig.CoEditing();
         coEditing.setMode("fast");
-        coEditing.setChange(true);
+        // 不设置 change=true，避免触发强制保存（status=8）导致"版本已更改"
         editorConfigData.setCoEditing(coEditing);
+
+        // 启用文件刷新请求，确保版本变更时能重新加载最新文档
+        editorConfigData.setCanRequestRefreshFile(true);
 
         config.setEditorConfig(editorConfigData);
 
@@ -334,9 +453,24 @@ public class DocumentController {
     }
 
     @GetMapping("/{id}/export/pdf")
-    public ResponseEntity<byte[]> exportPdf(@PathVariable Long id) {
+    public ResponseEntity<byte[]> exportPdf(@PathVariable Long id, HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String username = "用户";
+        if (userId != null) {
+            userRepository.findById(userId).ifPresent(user -> {
+                // username will be set below
+            });
+        }
+        // Get username for watermark
+        final String[] usernameArr = {"用户"};
+        if (userId != null) {
+            userRepository.findById(userId).ifPresent(user -> {
+                usernameArr[0] = user.getRealName() != null ? user.getRealName() : user.getUsername();
+            });
+        }
+
         Document doc = documentService.getDocument(id);
-        byte[] pdfContent = pdfExportService.convertToPdf(id);
+        byte[] pdfContent = pdfExportService.convertToPdf(id, usernameArr[0]);
 
         String filename = doc.getTitle() + "_v" + doc.getCurrentVersion() + ".pdf";
         String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
@@ -371,6 +505,8 @@ public class DocumentController {
         dto.setSigningLocked(doc.getSigningLocked());
         dto.setCreatedAt(doc.getCreatedAt());
         dto.setUpdatedAt(doc.getUpdatedAt());
+        dto.setUpdatedBy(doc.getUpdatedBy());
+        dto.setFolderId(doc.getFolderId());
 
         userRepository.findById(doc.getOwnerUserId()).ifPresent(user -> {
             dto.setOwnerName(user.getRealName());
@@ -379,6 +515,12 @@ public class DocumentController {
                         .ifPresent(dept -> dto.setDepartmentName(dept.getName()));
             }
         });
+
+        if (doc.getUpdatedBy() != null) {
+            userRepository.findById(doc.getUpdatedBy()).ifPresent(user -> {
+                dto.setUpdatedByName(user.getRealName() != null ? user.getRealName() : user.getUsername());
+            });
+        }
 
         if (userId != null) {
             try {

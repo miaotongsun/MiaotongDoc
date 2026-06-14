@@ -1,2 +1,19 @@
 node_modules
 document-storage
+
+# 敏感配置文件（密码从 .env 统一管理）
+.env
+**/local.json
+*.log
+
+# JVM 崩溃日志
+hs_err_pid*.log
+replay_pid*.log
+
+# Docker 数据
+MiaotongDoc-Docker/data/
+
+# IDE 配置
+.idea/
+*.iml
+.vscode/

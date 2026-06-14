@@ -54,8 +54,10 @@ public class FolderController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, String>> deleteFolder(@PathVariable Long id) {
-        folderService.deleteFolder(id);
+    public ResponseEntity<Map<String, String>> deleteFolder(
+            @PathVariable Long id,
+            @RequestParam(required = false) Long moveToParentId) {
+        folderService.deleteFolder(id, moveToParentId);
         return ResponseEntity.ok(Map.of("message", "文件夹已删除"));
     }
 

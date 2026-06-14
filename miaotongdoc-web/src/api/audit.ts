@@ -29,5 +29,9 @@ export const auditApi = {
 
   getMyLogs(params?: { page?: number; size?: number; startDate?: string; endDate?: string }) {
     return api.get<any, AuditLogPage>('/audit/me', { params })
+  },
+
+  getAllLogs(params?: { page?: number; size?: number; startDate?: string; endDate?: string; userId?: number; action?: string }) {
+    return api.get<any, AuditLogPage>('/audit/all', { params })
   }
 }

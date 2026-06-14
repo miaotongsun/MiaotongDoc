@@ -70,9 +70,10 @@ public class NotificationController {
         dto.setCreatedAt(notification.getCreatedAt());
 
         if (notification.getFromUserId() != null) {
-            userRepository.findById(notification.getFromUserId()).ifPresent(user ->
-                dto.setFromUserName(user.getRealName())
-            );
+            userRepository.findById(notification.getFromUserId()).ifPresent(user -> {
+                dto.setFromUserName(user.getRealName());
+                dto.setFromEmployeeId(user.getEmployeeId());
+            });
         }
         if (notification.getDocumentId() != null) {
             documentRepository.findById(notification.getDocumentId()).ifPresent(doc ->

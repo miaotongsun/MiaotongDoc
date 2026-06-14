@@ -95,7 +95,21 @@ async function handleLogin() {
     await userStore.login(form.value.username, form.value.password)
     router.push('/home')
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.message || '登录失败')
+    const status = error.response?.status
+    const message = error.response?.data?.message
+
+    if (status === 400) {
+      // 业务错误：密码错误、账号禁用等
+      ElMessage.error(message || '用户名或密码错误')
+    } else if (status === 401) {
+      ElMessage.error('用户名或密码错误')
+    } else if (status === 403) {
+      ElMessage.error('账号已被禁用，请联系管理员')
+    } else if (status === 500) {
+      ElMessage.error('服务器错误，请稍后重试')
+    } else {
+      ElMessage.error(message || '登录失败，请检查网络连接')
+    }
   } finally {
     loading.value = false
   }

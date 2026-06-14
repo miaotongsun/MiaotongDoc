@@ -46,6 +46,7 @@ public class EditorConfig {
         private String mode;
         private Customization customization;
         private CoEditing coEditing;
+        private Boolean canRequestRefreshFile;
     }
 
     @Data

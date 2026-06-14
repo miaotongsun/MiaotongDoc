@@ -39,4 +39,26 @@ public class AuditController {
         }
         return ResponseEntity.ok(auditService.getUserAuditLogs(userId, PageRequest.of(page, size)));
     }
+
+    // 管理员查看所有操作日志
+    @GetMapping("/all")
+    public ResponseEntity<Page<AuditLog>> getAllAuditLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String action,
+            HttpServletRequest httpRequest) {
+        String role = (String) httpRequest.getAttribute("role");
+        if (!"admin".equals(role)) {
+            return ResponseEntity.status(403).build();
+        }
+        if (startDate != null && endDate != null && !startDate.isEmpty() && !endDate.isEmpty()) {
+            java.time.LocalDate start = java.time.LocalDate.parse(startDate);
+            java.time.LocalDate end = java.time.LocalDate.parse(endDate);
+            return ResponseEntity.ok(auditService.getAllAuditLogs(start, end, userId, action, PageRequest.of(page, size)));
+        }
+        return ResponseEntity.ok(auditService.getAllAuditLogs(userId, action, PageRequest.of(page, size)));
+    }
 }

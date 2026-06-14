@@ -29,6 +29,12 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+        jdbc:
+          time_zone: Asia/Shanghai
+
+  # Elasticsearch
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URI:http://elasticsearch:9200}
 
   # Flyway
   flyway:
@@ -75,10 +81,20 @@ app:
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost}
 
+# ===== 存储配置 =====
+storage:
+  type: ${STORAGE_TYPE:local}
+  base-path: ${APP_STORAGE_PATH:/data/documents}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET_KEY:}
+    bucket: ${MINIO_BUCKET:miaotongdoc}
+
 # ===== 文档编辑器配置 =====
 editor:
   jwt-secret: ${EDITOR_JWT_SECRET:}
-  server-url: ${EDITOR_SERVER_URL:http://editor:8080}
+  server-url: ${EDITOR_SERVER_URL:http://editor:80}
   callback-url: ${EDITOR_CALLBACK_URL:http://host.docker.internal:9004/api/callback/editor}
   download-url: ${EDITOR_DOWNLOAD_URL:http://host.docker.internal:9004/api/documents}
 
@@ -112,6 +128,12 @@ management:
       enabled: true
     db:
       enabled: true
+
+# ===== AI 代理配置 =====
+ai-proxy:
+  target-url: ${LLM_API_URL:}
+  api-key: ${LLM_API_KEY:}
+  timeout: ${LLM_TIMEOUT:300}
 
 # ===== 日志 =====
 logging:

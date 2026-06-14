@@ -1,5 +1,6 @@
 package com.miaotong.doc.service;
 
+import com.miaotong.doc.constants.NotificationType;
 import com.miaotong.doc.dto.CreateCommentRequest;
 import com.miaotong.doc.dto.CommentDTO;
 import com.miaotong.doc.dto.MentionDTO;
@@ -8,6 +9,8 @@ import com.miaotong.doc.entity.Mention;
 import com.miaotong.doc.entity.User;
 import com.miaotong.doc.exception.NotFoundException;
 import com.miaotong.doc.repository.CommentRepository;
+import com.miaotong.doc.repository.DocumentRepository;
+import com.miaotong.doc.repository.DocumentShareRepository;
 import com.miaotong.doc.repository.MentionRepository;
 import com.miaotong.doc.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +28,8 @@ public class CommentService {
     private final CommentRepository commentRepository;
     private final MentionRepository mentionRepository;
     private final UserRepository userRepository;
+    private final DocumentRepository documentRepository;
+    private final DocumentShareRepository documentShareRepository;
     private final NotificationService notificationService;
     private final ActivityService activityService;
 
@@ -44,7 +49,17 @@ public class CommentService {
 
         comment = commentRepository.save(comment);
 
-        if (request.getMentionUserIds() != null && !request.getMentionUserIds().isEmpty()) {
+        // 清理评论内容中的@提及内部格式，保留可读文本
+        String rawContent = request.getContent();
+        final String cleanContent = rawContent != null
+                ? rawContent.replaceAll("@\\{userId:\\d+:([^:}]+)(?::[^}]*)?\\}", "@$1") : "";
+        final String commentPreview = cleanContent.length() > 50
+                ? cleanContent.substring(0, 50) + "..." : cleanContent;
+
+        boolean hasMentions = request.getMentionUserIds() != null && !request.getMentionUserIds().isEmpty();
+
+        if (hasMentions) {
+            // 有@提及：只通知被@的用户
             for (Long mentionedUserId : request.getMentionUserIds()) {
                 Mention mention = new Mention();
                 mention.setCommentId(comment.getId());
@@ -52,8 +67,23 @@ public class CommentService {
                 mentionRepository.save(mention);
 
                 notificationService.notify(userId, mentionedUserId, request.getDocumentId(),
-                        "MENTION", user.getRealName() + " 在评论中提到了你");
+                        NotificationType.MENTION, commentPreview);
             }
+        } else {
+            // 无@提及：通知文档所有者和有管理权限的共享用户（排除自己）
+            documentRepository.findById(request.getDocumentId()).ifPresent(doc -> {
+                // 通知文档所有者
+                if (!doc.getOwnerUserId().equals(userId)) {
+                    notificationService.notify(userId, doc.getOwnerUserId(), request.getDocumentId(),
+                            NotificationType.COMMENT, commentPreview);
+                }
+                // 通知有管理权限的共享用户
+                documentShareRepository.findByDocumentId(request.getDocumentId()).stream()
+                        .filter(s -> "admin".equals(s.getPermission()) && !s.getUserId().equals(userId)
+                                && !s.getUserId().equals(doc.getOwnerUserId()))
+                        .forEach(s -> notificationService.notify(userId, s.getUserId(), request.getDocumentId(),
+                                NotificationType.COMMENT, commentPreview));
+            });
         }
 
         activityService.log(userId, request.getDocumentId(), "COMMENT", null);

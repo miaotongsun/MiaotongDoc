@@ -1,5 +1,6 @@
 package com.miaotong.doc.service;
 
+import com.miaotong.doc.constants.NotificationType;
 import com.miaotong.doc.dto.CreateDocumentRequest;
 import com.miaotong.doc.dto.DocumentDTO;
 import com.miaotong.doc.entity.Document;
@@ -8,38 +9,46 @@ import com.miaotong.doc.entity.User;
 import com.miaotong.doc.exception.BusinessException;
 import com.miaotong.doc.exception.NotFoundException;
 import com.miaotong.doc.repository.DocumentRepository;
+import com.miaotong.doc.repository.DocumentShareRepository;
 import com.miaotong.doc.repository.DocumentVersionRepository;
 import com.miaotong.doc.repository.UserRepository;
+import com.miaotong.doc.service.storage.StorageService;
 import com.miaotong.doc.util.DocGenerator;
 import com.miaotong.doc.util.FileHashUtil;
 import com.miaotong.doc.util.FileValidator;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
     private final DocumentVersionRepository versionRepository;
+    private final DocumentShareRepository shareRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
     private final AuditService auditService;
+    private final ActivityService activityService;
     private final FileValidator fileValidator;
-
-    @Value("${app.storage-path:/data/documents}")
-    private String storagePath;
+    private final JdbcTemplate jdbcTemplate;
+    private final StorageService storageService;
+    private final ContentIndexService contentIndexService;
+    private final TemplateService templateService;
 
     @Transactional
     public Document createDocument(CreateDocumentRequest request, Long userId) {
@@ -53,10 +62,16 @@ public class DocumentService {
 
         String title = request.getTitle() != null ? request.getTitle() : "未命名文档";
         byte[] content;
-        try {
-            content = DocGenerator.create(request.getDocType(), title);
-        } catch (IOException e) {
-            throw new BusinessException("创建文档失败");
+
+        // 如果指定了模板，使用模板内容
+        if (request.getTemplateId() != null && request.getTemplateId() > 0) {
+            content = templateService.getTemplateContent(request.getTemplateId());
+        } else {
+            try {
+                content = DocGenerator.create(request.getDocType(), title);
+            } catch (IOException e) {
+                throw new BusinessException("创建文档失败");
+            }
         }
 
         String filePath = saveFile(docKey, 1, fileType, content);
@@ -91,6 +106,7 @@ public class DocumentService {
         versionRepository.save(initialVersion);
 
         auditService.log(userId, "CREATE", "DOCUMENT", doc.getId(), null);
+        activityService.log(userId, doc.getId(), "CREATE", null);
 
         return doc;
     }
@@ -160,6 +176,7 @@ public class DocumentService {
         versionRepository.save(initialVersion);
 
         auditService.log(userId, "UPLOAD", "DOCUMENT", doc.getId(), null);
+        activityService.log(userId, doc.getId(), "UPLOAD", null);
 
         return doc;
     }
@@ -178,13 +195,94 @@ public class DocumentService {
                 .orElseThrow(() -> new NotFoundException("文档不存在"));
     }
 
-    public Page<Document> listDocuments(String docType, String keyword, Long ownerUserId, Long userId, Long departmentId, String systemRole, Pageable pageable) {
+    /**
+     * 搜索建议：返回标题和内容匹配的文档，带内容片段
+     */
+    public java.util.List<Map<String, Object>> suggest(String keyword, Long userId, String role) {
+        boolean isAdmin = "admin".equals(role);
+        java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
+
+        // 搜索标题匹配的文档
+        java.util.List<Document> titleMatches;
+        if (isAdmin) {
+            titleMatches = documentRepository.searchByKeyword(keyword, org.springframework.data.domain.PageRequest.of(0, 5)).getContent();
+        } else {
+            titleMatches = documentRepository.searchAccessibleByUser(userId, keyword, org.springframework.data.domain.PageRequest.of(0, 5)).getContent();
+        }
+
+        for (Document doc : titleMatches) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("id", doc.getId());
+            item.put("title", doc.getTitle());
+            item.put("docType", doc.getDocType());
+            item.put("matchType", "title");
+            item.put("snippet", "");
+            results.add(item);
+        }
+
+        // 搜索内容匹配的文档
+        java.util.List<Long> contentIds = contentIndexService.searchContent(keyword);
+        if (!contentIds.isEmpty()) {
+            // 过滤已有标题匹配的结果
+            java.util.Set<Long> existingIds = new java.util.HashSet<>();
+            for (Map<String, Object> item : results) {
+                existingIds.add((Long) item.get("id"));
+            }
+
+            java.util.List<Document> contentDocs;
+            if (isAdmin) {
+                contentDocs = documentRepository.findAllById(contentIds);
+            } else {
+                contentDocs = documentRepository.findAllById(contentIds).stream()
+                        .filter(d -> d.getOwnerUserId().equals(userId) ||
+                                shareRepository.existsByDocumentIdAndUserId(d.getId(), userId))
+                        .collect(java.util.stream.Collectors.toList());
+            }
+
+            for (Document doc : contentDocs) {
+                if (existingIds.contains(doc.getId())) continue;
+                if (results.size() >= 5) break;
+
+                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                item.put("id", doc.getId());
+                item.put("title", doc.getTitle());
+                item.put("docType", doc.getDocType());
+                item.put("matchType", "content");
+
+                // 从 ES 获取内容片段
+                String snippet = contentIndexService.getContentSnippet(doc.getId(), keyword);
+                item.put("snippet", snippet);
+
+                results.add(item);
+            }
+        }
+
+        return results;
+    }
+
+    public Page<Document> listDocuments(String docType, String keyword, Long ownerUserId, Long userId, Long departmentId, Long folderId, String systemRole, Pageable pageable) {
         boolean isAdmin = "admin".equals(systemRole);
 
+        // 按文件夹筛选
+        if (folderId != null) {
+            return documentRepository.findByFolderIdAndIsDeletedFalse(folderId, pageable);
+        }
+
         if (keyword != null && !keyword.isEmpty()) {
-            return isAdmin
-                    ? documentRepository.searchByKeyword(keyword, pageable)
-                    : documentRepository.searchAccessibleByUser(userId, keyword, pageable);
+            // 全文搜索：使用 Elasticsearch 搜索内容，再用数据库查询标题
+            java.util.List<Long> contentMatches = contentIndexService.searchContent(keyword);
+            if (contentMatches.isEmpty()) {
+                // ES 无结果，降级为标题模糊搜索
+                return isAdmin
+                        ? documentRepository.searchByKeyword(keyword, pageable)
+                        : documentRepository.searchAccessibleByUser(userId, keyword, pageable);
+            }
+            // ES 搜索结果 + 标题匹配
+            if (isAdmin) {
+                return documentRepository.searchByKeywordAndContent(keyword, contentMatches, pageable);
+            } else {
+                return documentRepository.searchAccessibleByUserAndContent(userId, keyword, contentMatches, pageable);
+            }
         }
         if ("shared".equals(docType)) {
             return documentRepository.findSharedWithUser(userId, pageable);
@@ -223,45 +321,55 @@ public class DocumentService {
         doc.setTitle(newTitle);
         doc = documentRepository.save(doc);
         auditService.log(userId, "RENAME", "DOCUMENT", id, null);
+        activityService.log(userId, id, "RENAME", null);
         return doc;
     }
 
     @Transactional
     public DocumentVersion createVersion(Long docId, String summary, Long userId) {
         Document doc = getDocument(docId);
-        Path currentFile = Paths.get(doc.getFilePath());
-        if (!Files.exists(currentFile)) {
+        if (!storageService.exists(doc.getFilePath())) {
             throw new BusinessException("文档文件不存在");
         }
 
         int newVersion = doc.getCurrentVersion() + 1;
-        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
-        Path dir = Paths.get(storagePath, datePath, doc.getDocKey());
-        try {
-            Files.createDirectories(dir);
-            Path target = dir.resolve("v" + newVersion + "." + doc.getFileType());
-            Files.copy(currentFile, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        byte[] content = storageService.load(doc.getFilePath());
+        String newObjectKey = buildObjectKey(doc.getDocKey(), newVersion, doc.getFileType());
+        storageService.store(newObjectKey, content);
 
-            DocumentVersion version = new DocumentVersion();
-            version.setDocumentId(docId);
-            version.setVersionNumber(newVersion);
-            version.setFilePath(target.toString());
-            version.setFileSize(Files.size(target));
-            version.setFileHash(doc.getFileHash());
-            version.setChangeSummary(summary != null ? summary : "手动保存版本");
-            version.setCreatedBy(userId);
-            version = versionRepository.save(version);
+        DocumentVersion version = new DocumentVersion();
+        version.setDocumentId(docId);
+        version.setVersionNumber(newVersion);
+        version.setFilePath(newObjectKey);
+        version.setFileSize((long) content.length);
+        version.setFileHash(doc.getFileHash());
+        version.setChangeSummary(summary != null ? summary : "手动保存版本");
+        version.setCreatedBy(userId);
+        version = versionRepository.save(version);
 
-            doc.setCurrentVersion(newVersion);
-            doc.setFilePath(target.toString());
-            doc.setFileSize(Files.size(target));
-            documentRepository.save(doc);
+        doc.setCurrentVersion(newVersion);
+        doc.setFilePath(newObjectKey);
+        doc.setFileSize((long) content.length);
+        documentRepository.save(doc);
 
-            auditService.log(userId, "CREATE_VERSION", "DOCUMENT", docId, "v" + newVersion);
-            return version;
-        } catch (IOException e) {
-            throw new BusinessException("创建版本失败");
-        }
+        auditService.log(userId, "CREATE_VERSION", "DOCUMENT", docId, "v" + newVersion);
+        activityService.log(userId, docId, "SAVE_VERSION", null);
+
+        // 通知文档共享者有新版本（排除操作者自己）
+        shareRepository.findByDocumentId(docId).stream()
+                .filter(s -> !s.getUserId().equals(userId))
+                .forEach(s -> notificationService.notify(userId, s.getUserId(), docId,
+                        NotificationType.VERSION, "保存了新版本 v" + newVersion));
+
+        return version;
+    }
+
+    @Transactional
+    public void moveToFolder(Long docId, Long folderId, Long userId) {
+        Document doc = getDocument(docId);
+        doc.setFolderId(folderId);
+        documentRepository.save(doc);
+        auditService.log(userId, "MOVE", "DOCUMENT", docId, null);
     }
 
     @Transactional
@@ -271,7 +379,148 @@ public class DocumentService {
         doc.setDeletedAt(java.time.LocalDateTime.now());
         doc.setDeletedBy(userId);
         documentRepository.save(doc);
+
+        // 清理 OnlyOffice coauthoring 内部状态，防止新文档复用旧状态
+        cleanupOnlyOfficeState(doc.getDocKey(), true);
+
         auditService.log(userId, "DELETE", "DOCUMENT", id, null);
+        activityService.log(userId, id, "DELETE", null);
+    }
+
+    // ===== 回收站功能 =====
+
+    public java.util.List<DocumentDTO> getTrashDocuments(Long userId) {
+        java.util.List<Document> docs;
+        if (userId == null) {
+            docs = documentRepository.findByIsDeletedTrueOrderByDeletedAtDesc();
+        } else {
+            docs = documentRepository.findByIsDeletedTrueAndOwnerUserIdOrderByDeletedAtDesc(userId);
+        }
+        return docs.stream().map(doc -> {
+            DocumentDTO dto = new DocumentDTO();
+            dto.setId(doc.getId());
+            dto.setTitle(doc.getTitle());
+            dto.setDocType(doc.getDocType());
+            dto.setFileType(doc.getFileType());
+            dto.setFileSize(doc.getFileSize());
+            dto.setOwnerUserId(doc.getOwnerUserId());
+            dto.setCurrentVersion(doc.getCurrentVersion());
+            dto.setUpdatedAt(doc.getDeletedAt());
+
+            // 创建人
+            userRepository.findById(doc.getOwnerUserId()).ifPresent(user -> {
+                dto.setOwnerName(user.getRealName() != null ? user.getRealName() : user.getUsername());
+            });
+
+            // 删除人
+            if (doc.getDeletedBy() != null) {
+                userRepository.findById(doc.getDeletedBy()).ifPresent(user -> {
+                    dto.setUpdatedByName(user.getRealName() != null ? user.getRealName() : user.getUsername());
+                });
+            }
+
+            return dto;
+        }).toList();
+    }
+
+    @Transactional
+    public void restoreFromTrash(Long id, Long userId) {
+        Document doc = documentRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("文档不存在"));
+        if (!Boolean.TRUE.equals(doc.getIsDeleted())) {
+            throw new BusinessException("文档不在回收站中");
+        }
+        doc.setIsDeleted(false);
+        doc.setDeletedAt(null);
+        doc.setDeletedBy(null);
+        documentRepository.save(doc);
+        auditService.log(userId, "RESTORE", "DOCUMENT", id, null);
+        activityService.log(userId, id, "RESTORE", null);
+    }
+
+    @Transactional
+    public void permanentDelete(Long id) {
+        Document doc = documentRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("文档不存在"));
+        // 删除文件
+        if (doc.getFilePath() != null && storageService.exists(doc.getFilePath())) {
+            storageService.delete(doc.getFilePath());
+        }
+        // 删除版本文件
+        versionRepository.findByDocumentId(id).forEach(v -> {
+            if (v.getFilePath() != null && storageService.exists(v.getFilePath())) {
+                storageService.delete(v.getFilePath());
+            }
+        });
+        // 删除数据库记录
+        versionRepository.deleteByDocumentId(id);
+        shareRepository.deleteByDocumentId(id);
+        documentRepository.delete(doc);
+    }
+
+    @Transactional
+    public int emptyTrash(Long userId) {
+        java.util.List<Document> docs;
+        if (userId == null) {
+            docs = documentRepository.findByIsDeletedTrueOrderByDeletedAtDesc();
+        } else {
+            docs = documentRepository.findByIsDeletedTrueAndOwnerUserIdOrderByDeletedAtDesc(userId);
+        }
+        int count = 0;
+        for (Document doc : docs) {
+            permanentDelete(doc.getId());
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * 批量导出文档为 ZIP 文件
+     */
+    public byte[] exportDocumentsAsZip(java.util.List<Long> documentIds, Long userId, String role) throws Exception {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(baos)) {
+            for (Long docId : documentIds) {
+                Document doc = getDocument(docId);
+                // 检查权限
+                if (!"admin".equals(role)) {
+                    boolean isOwner = doc.getOwnerUserId().equals(userId);
+                    boolean hasShare = shareRepository.existsByDocumentIdAndUserId(docId, userId);
+                    if (!isOwner && !hasShare) {
+                        continue; // 无权限，跳过
+                    }
+                }
+                // 读取文件
+                byte[] content = storageService.load(doc.getFilePath());
+                String filename = doc.getTitle() + "." + doc.getFileType();
+                // 写入 ZIP
+                zos.putNextEntry(new java.util.zip.ZipEntry(filename));
+                zos.write(content);
+                zos.closeEntry();
+            }
+        }
+        return baos.toByteArray();
+    }
+
+    /**
+     * 清理 OnlyOffice coauthoring 服务器的内部状态（task_result + doc_changes）
+     * 防止新建同名文档时复用旧的 coauthoring 状态导致"连接失败"
+     *
+     * @param docKey 文档 key
+     * @param fullCleanup true: 删除 task_result + doc_changes（用于文档删除）
+     *                    false: 只删除 doc_changes（用于保存版本，避免其他编辑者报"版本已更改"）
+     */
+    private void cleanupOnlyOfficeState(String docKey, boolean fullCleanup) {
+        try {
+            int changes = jdbcTemplate.update("DELETE FROM doc_changes WHERE id = ?", docKey);
+            int tasks = 0;
+            if (fullCleanup) {
+                tasks = jdbcTemplate.update("DELETE FROM task_result WHERE id = ?", docKey);
+            }
+            log.info("清理 OnlyOffice 状态: docKey={}, full={}, doc_changes删除{}条, task_result删除{}条", docKey, fullCleanup, changes, tasks);
+        } catch (Exception e) {
+            log.warn("清理 OnlyOffice 状态失败（不影响删除操作）: docKey={}", docKey, e);
+        }
     }
 
     @Transactional
@@ -295,23 +544,13 @@ public class DocumentService {
 
     public byte[] getFileContent(Long id) {
         Document doc = getDocument(id);
-        try {
-            Path path = Paths.get(doc.getFilePath());
-            return Files.readAllBytes(path);
-        } catch (IOException e) {
-            throw new BusinessException("读取文件失败");
-        }
+        return storageService.load(doc.getFilePath());
     }
 
     public byte[] getFileContentForVersion(Long docId, Integer versionNumber) {
         DocumentVersion version = versionRepository.findByDocumentIdAndVersionNumber(docId, versionNumber)
                 .orElseThrow(() -> new NotFoundException("版本不存在"));
-        try {
-            Path path = Paths.get(version.getFilePath());
-            return Files.readAllBytes(path);
-        } catch (IOException e) {
-            throw new BusinessException("读取版本文件失败");
-        }
+        return storageService.load(version.getFilePath());
     }
 
     @Transactional
@@ -320,12 +559,7 @@ public class DocumentService {
         DocumentVersion version = versionRepository.findByDocumentIdAndVersionNumber(docId, versionNumber)
                 .orElseThrow(() -> new NotFoundException("版本不存在"));
 
-        byte[] content;
-        try {
-            content = Files.readAllBytes(Paths.get(version.getFilePath()));
-        } catch (IOException e) {
-            throw new BusinessException("读取版本文件失败");
-        }
+        byte[] content = storageService.load(version.getFilePath());
 
         int newVersion = doc.getCurrentVersion() + 1;
         String filePath = saveFile(doc.getDocKey(), newVersion, doc.getFileType(), content);
@@ -348,21 +582,21 @@ public class DocumentService {
         documentRepository.save(doc);
 
         auditService.log(userId, "RESTORE_VERSION", "DOCUMENT", docId, "v" + versionNumber);
+        activityService.log(userId, docId, "RESTORE_VERSION", null);
+
+        // 恢复版本后必须清理 task_result + doc_changes
+        // 因为文件内容已改变，旧的协作状态不再有效
+        // 其他编辑者会收到"版本已更改"并刷新，这是合理的
+        cleanupOnlyOfficeState(doc.getDocKey(), true);
     }
 
     private String saveFile(String docKey, int version, String fileType, byte[] content) {
-        try {
-            String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
-            Path dir = Paths.get(storagePath, datePath, docKey);
-            Files.createDirectories(dir);
+        String objectKey = buildObjectKey(docKey, version, fileType);
+        return storageService.store(objectKey, content);
+    }
 
-            String fileName = "v" + version + "." + fileType;
-            Path filePath = dir.resolve(fileName);
-            Files.write(filePath, content);
-
-            return filePath.toString();
-        } catch (IOException e) {
-            throw new BusinessException("保存文件失败");
-        }
+    private String buildObjectKey(String docKey, int version, String fileType) {
+        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        return "documents/" + datePath + "/" + docKey + "/v" + version + "." + fileType;
     }
 }

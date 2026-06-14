@@ -108,14 +108,27 @@ public class FolderService {
     }
 
     @Transactional
-    public void deleteFolder(Long id) {
+    public void deleteFolder(Long id, Long moveToParentId) {
         Folder folder = getFolder(id);
-        // 删除子文件夹
+        // 将当前文件夹下的文档移动到目标文件夹
+        List<Document> docs = documentRepository.findByFolderIdAndIsDeletedFalse(id,
+                org.springframework.data.domain.PageRequest.of(0, 10000)).getContent();
+        for (Document doc : docs) {
+            doc.setFolderId(moveToParentId);
+            documentRepository.save(doc);
+        }
+        // 递归删除子文件夹（子文件夹的文档也移到目标文件夹）
         List<Folder> children = folderRepository.findByParentIdOrderByCreatedAtDesc(id);
         for (Folder child : children) {
-            deleteFolder(child.getId());
+            deleteFolder(child.getId(), moveToParentId);
         }
         folderRepository.delete(folder);
+    }
+
+    /** 兼容旧调用 */
+    @Transactional
+    public void deleteFolder(Long id) {
+        deleteFolder(id, null);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.miaotong.doc.service;
 
+import com.miaotong.doc.constants.NotificationType;
 import com.miaotong.doc.entity.Document;
 import com.miaotong.doc.entity.DocumentShare;
 import com.miaotong.doc.exception.BusinessException;
@@ -20,7 +21,9 @@ public class ShareService {
     private final DocumentShareRepository shareRepository;
     private final DocumentRepository documentRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
     private final AuditService auditService;
+    private final ActivityService activityService;
 
     @Transactional
     public DocumentShare shareDocument(Long documentId, Long userId, Long sharedBy, String permission, String systemRole) {
@@ -47,6 +50,11 @@ public class ShareService {
 
         share = shareRepository.save(share);
         auditService.log(sharedBy, "SHARE", "DOCUMENT", documentId, null);
+        activityService.log(sharedBy, documentId, "SHARE", userId);
+
+        String permLabel = permLabel(permission);
+        notificationService.notify(sharedBy, userId, documentId,
+                NotificationType.SHARE, "邀请您协同编辑文档（" + permLabel + "）");
 
         return share;
     }
@@ -81,6 +89,9 @@ public class ShareService {
                 share.setPermission(permission);
                 shareRepository.save(share);
                 count++;
+                String permLabel = permLabel(permission);
+                notificationService.notify(sharedBy, uid, documentId,
+                        NotificationType.SHARE, "邀请您协同编辑文档（" + permLabel + "）");
             }
         }
 
@@ -103,6 +114,9 @@ public class ShareService {
 
         share.setPermission(permission);
         shareRepository.save(share);
+
+        notificationService.notify(userId, share.getUserId(), share.getDocumentId(),
+                NotificationType.PERMISSION_CHANGE, "权限已变更为" + permLabel(permission));
     }
 
     @Transactional
@@ -119,6 +133,9 @@ public class ShareService {
         }
 
         shareRepository.deleteById(shareId);
+
+        notificationService.notify(userId, share.getUserId(), share.getDocumentId(),
+                NotificationType.REVOKE, "已撤回您的文档共享权限");
     }
 
     public String getUserPermission(Long documentId, Long userId) {
@@ -137,5 +154,15 @@ public class ShareService {
         }
 
         return null;
+    }
+
+    private String permLabel(String permission) {
+        return switch (permission) {
+            case "view" -> "只读";
+            case "comment" -> "评论";
+            case "edit" -> "编辑";
+            case "admin" -> "管理";
+            default -> permission;
+        };
     }
 }

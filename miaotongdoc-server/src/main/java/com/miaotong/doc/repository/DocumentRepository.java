@@ -35,6 +35,13 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     @Query("SELECT d FROM Document d WHERE d.isDeleted = false AND (d.title LIKE %:keyword% OR d.docKey LIKE %:keyword%) ORDER BY d.updatedAt DESC")
     Page<Document> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
+    // 全文搜索：标题匹配 OR 内容匹配
+    @Query("SELECT d FROM Document d WHERE d.isDeleted = false AND (d.title LIKE %:keyword% OR d.id IN :contentIds) ORDER BY d.updatedAt DESC")
+    Page<Document> searchByKeywordAndContent(@Param("keyword") String keyword, @Param("contentIds") List<Long> contentIds, Pageable pageable);
+
+    @Query("SELECT d FROM Document d WHERE d.isDeleted = false AND (d.ownerUserId = :userId OR d.id IN (SELECT ds.documentId FROM DocumentShare ds WHERE ds.userId = :userId)) AND (d.title LIKE %:keyword% OR d.id IN :contentIds) ORDER BY d.updatedAt DESC")
+    Page<Document> searchAccessibleByUserAndContent(@Param("userId") Long userId, @Param("keyword") String keyword, @Param("contentIds") List<Long> contentIds, Pageable pageable);
+
     @Query("SELECT d FROM Document d WHERE d.isDeleted = false AND d.id IN (SELECT ds.documentId FROM DocumentShare ds WHERE ds.userId = :userId) ORDER BY d.updatedAt DESC")
     Page<Document> findSharedWithUser(@Param("userId") Long userId, Pageable pageable);
 
@@ -61,4 +68,12 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     @Query("SELECT d FROM Document d WHERE d.isDeleted = false AND (d.ownerUserId = :userId OR d.id IN (SELECT ds.documentId FROM DocumentShare ds WHERE ds.userId = :userId)) AND d.docType = :docType AND d.departmentId IN (SELECT dep.id FROM Department dep WHERE dep.path LIKE CONCAT((SELECT dep2.path FROM Department dep2 WHERE dep2.id = :deptId), '%')) ORDER BY d.updatedAt DESC")
     Page<Document> findAccessibleByUserAndDocTypeAndDepartmentTree(@Param("userId") Long userId, @Param("docType") String docType, @Param("deptId") Long deptId, Pageable pageable);
+
+    // 按文件夹查询
+    Page<Document> findByFolderIdAndIsDeletedFalse(Long folderId, Pageable pageable);
+
+    // 回收站查询
+    List<Document> findByIsDeletedTrueOrderByDeletedAtDesc();
+    List<Document> findByIsDeletedTrueAndOwnerUserIdOrderByDeletedAtDesc(Long ownerUserId);
+    List<Document> findByIsDeletedTrueAndDeletedAtBefore(java.time.LocalDateTime dateTime);
 }

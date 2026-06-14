@@ -7,6 +7,7 @@ export interface NotificationItem {
   id: number
   fromUserId?: number
   fromUserName?: string
+  fromEmployeeId?: string
   documentId?: number
   documentTitle?: string
   type: string
@@ -18,6 +19,8 @@ export interface NotificationItem {
 export const useNotificationStore = defineStore('notification', () => {
   const notifications = ref<NotificationItem[]>([])
   const unreadCount = ref(0)
+  const hasMore = ref(true)
+  const currentPage = ref(0)
   const ws = new ReconnectingWebSocket()
 
   function connect(token: string) {
@@ -38,11 +41,26 @@ export const useNotificationStore = defineStore('notification', () => {
 
   async function loadNotifications() {
     try {
-      const res = await notificationApi.getAll({ page: 0, size: 50 })
+      currentPage.value = 0
+      const res = await notificationApi.getAll({ page: 0, size: 20 })
       notifications.value = res.content || []
       unreadCount.value = notifications.value.filter(n => !n.isRead).length
+      hasMore.value = !res.last
     } catch {
       // ignore
+    }
+  }
+
+  async function loadMore() {
+    if (!hasMore.value) return
+    try {
+      currentPage.value++
+      const res = await notificationApi.getAll({ page: currentPage.value, size: 20 })
+      const newItems = res.content || []
+      notifications.value.push(...newItems)
+      hasMore.value = !res.last
+    } catch {
+      currentPage.value--
     }
   }
 
@@ -75,9 +93,11 @@ export const useNotificationStore = defineStore('notification', () => {
   return {
     notifications,
     unreadCount,
+    hasMore,
     connect,
     disconnect,
     loadNotifications,
+    loadMore,
     markAsRead,
     markAllAsRead
   }

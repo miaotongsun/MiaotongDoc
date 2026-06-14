@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MiaotongDoc Signing Plugin</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .signing-dialog {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-primary {
+            background: #409eff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #66b1ff;
+        }
+        .btn-secondary {
+            background: #909399;
+            color: white;
+            margin-left: 10px;
+        }
+        .btn-secondary:hover {
+            background: #a6a9ad;
+        }
+    </style>
+</head>
+<body>
+    <div class="signing-dialog">
+        <h2>提交签署</h2>
+        <div class="form-group">
+            <label>签署标题</label>
+            <input type="text" id="signingTitle" placeholder="请输入签署任务标题">
+        </div>
+        <div class="form-group">
+            <label>签署说明</label>
+            <textarea id="signingDescription" placeholder="请输入签署说明（可选）"></textarea>
+        </div>
+        <div class="form-group">
+            <label>截止时间</label>
+            <input type="datetime-local" id="signingDeadline">
+        </div>
+        <div class="form-group">
+            <button class="btn btn-primary" onclick="submitSigning()">提交</button>
+            <button class="btn btn-secondary" onclick="closeDialog()">取消</button>
+        </div>
+    </div>
+
+    <script>
+        var plugin;
+
+        window.Asc.plugin.init = function() {
+            plugin = this;
+        };
+
+        function submitSigning() {
+            var title = document.getElementById('signingTitle').value;
+            var description = document.getElementById('signingDescription').value;
+            var deadline = document.getElementById('signingDeadline').value;
+
+            if (!title) {
+                alert('请输入签署标题');
+                return;
+            }
+
+            // 发送签署请求到主应用
+            plugin.sendData({
+                action: 'submitSigning',
+                data: {
+                    title: title,
+                    description: description,
+                    deadline: deadline
+                }
+            });
+
+            closeDialog();
+        }
+
+        function closeDialog() {
+            plugin.executeMethod('Close', []);
+        }
+    </script>
+</body>
+</html>

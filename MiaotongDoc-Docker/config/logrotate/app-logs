@@ -1,0 +1,34 @@
+# Nginx 日志轮转
+/data/logs/nginx/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}
+
+# PostgreSQL 日志轮转
+/data/logs/postgres/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 postgres postgres
+}
+
+# OnlyOffice 编辑器日志轮转
+/data/logs/editor/*.log
+/data/logs/editor2/*.log
+/data/logs/editor3/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+}

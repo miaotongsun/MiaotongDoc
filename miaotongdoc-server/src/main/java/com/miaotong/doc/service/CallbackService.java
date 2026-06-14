@@ -1,21 +1,21 @@
 package com.miaotong.doc.service;
 
 import com.miaotong.doc.entity.Document;
-import com.miaotong.doc.entity.DocumentVersion;
 import com.miaotong.doc.exception.NotFoundException;
 import com.miaotong.doc.repository.DocumentRepository;
-import com.miaotong.doc.repository.DocumentVersionRepository;
+import com.miaotong.doc.service.storage.StorageService;
 import com.miaotong.doc.util.FileHashUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.zip.*;
 
 @Slf4j
 @Service
@@ -23,42 +23,43 @@ import java.nio.file.StandardCopyOption;
 public class CallbackService {
 
     private final DocumentRepository documentRepository;
-    private final DocumentVersionRepository versionRepository;
+    private final StorageService storageService;
+    private final ActivityService activityService;
     private final RestTemplate restTemplate = new RestTemplate();
 
-    @Value("${app.storage-path:/data/documents}")
-    private String storagePath;
+    private static final String APP_NAME = "MiaotongDoc";
+    private static final String APP_VERSION = "1.0";
+    private static final String APP_XML = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            + "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">"
+            + "<Application>" + APP_NAME + "</Application>"
+            + "<AppVersion>" + APP_VERSION + "</AppVersion>"
+            + "</Properties>";
 
-    /**
-     * 保存文档（OnlyOffice 回调触发）
-     * - 只在文件内容真正变化时才创建新版本
-     * - 通过 hash 对比判断是否有变化
-     */
     @Transactional
     public void saveDocument(String key, String url, Long userId) {
         Document doc = documentRepository.findByDocKeyForUpdate(key)
                 .orElseThrow(() -> new NotFoundException("文档不存在: " + key));
 
-        // 拒绝已锁定文档的保存回调
         if (Boolean.TRUE.equals(doc.getSigningLocked())) {
             log.warn("文档已锁定，拒绝保存回调: key={}", key);
             return;
         }
 
-        // OnlyOffice 回调 URL 使用浏览器的 Host（localhost），但 web-server 容器内
-        // 需要通过 nginx 容器访问，将 localhost 替换为 nginx 容器名
         String downloadUrl = url.replace("http://localhost", "http://nginx");
         byte[] fileBytes = restTemplate.getForEntity(downloadUrl, byte[].class).getBody();
         if (fileBytes == null || fileBytes.length == 0) {
             throw new RuntimeException("下载文件为空: " + url);
         }
 
+        // 修改 docx 文件中的 app.xml，替换应用程序名称
+        if ("docx".equals(doc.getFileType()) || "xlsx".equals(doc.getFileType()) || "pptx".equals(doc.getFileType())) {
+            fileBytes = replaceAppName(fileBytes);
+        }
+
         String newHash = FileHashUtil.calculateSHA256(fileBytes);
 
-        // 检查内容是否真的变化了
         if (doc.getFileHash() != null && doc.getFileHash().equals(newHash)) {
             log.info("文档内容未变化，跳过保存: key={}, hash={}", key, newHash);
-            // 只更新文件大小（因为 OnlyOffice 可能微调了元数据）
             doc.setFileSize((long) fileBytes.length);
             documentRepository.save(doc);
             return;
@@ -66,31 +67,74 @@ public class CallbackService {
 
         log.info("文档内容变化，开始保存: key={}, oldHash={}, newHash={}", key, doc.getFileHash(), newHash);
 
-        String filePath = saveFileAtomic(doc.getDocKey(), doc.getCurrentVersion(), doc.getFileType(), fileBytes);
+        // 自动保存写入 current.docx，不覆盖版本文件
+        String objectKey = buildCurrentObjectKey(doc.getDocKey(), doc.getFileType());
+        String filePath = storageService.store(objectKey, fileBytes);
 
-        // 更新文档主记录（不创建版本记录，由 owner 手动创建）
         doc.setFilePath(filePath);
         doc.setFileHash(newHash);
         doc.setFileSize((long) fileBytes.length);
+        doc.setUpdatedBy(userId);
         documentRepository.save(doc);
+
+        // 记录编辑活动
+        activityService.log(userId, doc.getId(), "EDIT", null);
 
         log.info("文档保存成功（自动保存，未创建版本）: docId={}, version={}", doc.getId(), doc.getCurrentVersion());
     }
 
-    private String saveFileAtomic(String docKey, int version, String fileType, byte[] content) {
+    /**
+     * 替换 docx/xlsx/pptx 文件中的 app.xml 应用程序名称
+     */
+    private byte[] replaceAppName(byte[] fileBytes) {
         try {
-            String datePath = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM"));
-            Path dir = Paths.get(storagePath, datePath, docKey);
-            Files.createDirectories(dir);
+            ByteArrayInputStream bais = new ByteArrayInputStream(fileBytes);
+            ZipInputStream zin = new ZipInputStream(bais);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ZipOutputStream zout = new ZipOutputStream(baos);
 
-            Path tempFile = dir.resolve("v" + version + "." + fileType + ".tmp");
-            Path targetFile = dir.resolve("v" + version + "." + fileType);
+            boolean replaced = false;
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                zout.putNextEntry(new ZipEntry(entry.getName()));
+                if ("docProps/app.xml".equals(entry.getName())) {
+                    zout.write(APP_XML.getBytes(StandardCharsets.UTF_8));
+                    replaced = true;
+                } else {
+                    byte[] buffer = new byte[4096];
+                    int len;
+                    while ((len = zin.read(buffer)) > 0) {
+                        zout.write(buffer, 0, len);
+                    }
+                }
+                zout.closeEntry();
+            }
+            zin.close();
+            zout.close();
 
-            Files.write(tempFile, content);
-            Files.move(tempFile, targetFile, StandardCopyOption.ATOMIC_MOVE);
-            return targetFile.toString();
+            if (replaced) {
+                log.info("已替换文档应用程序名称为 {}/{}", APP_NAME, APP_VERSION);
+            } else {
+                log.warn("未找到 docProps/app.xml，跳过替换");
+            }
+
+            return baos.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException("保存文件失败", e);
+            log.warn("替换应用程序名称失败，使用原始文件: {}", e.getMessage());
+            return fileBytes;
         }
+    }
+
+    /**
+     * 自动保存使用 current.docx，与版本文件（v1.docx, v2.docx）分开
+     */
+    private String buildCurrentObjectKey(String docKey, String fileType) {
+        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        return "documents/" + datePath + "/" + docKey + "/current." + fileType;
+    }
+
+    private String buildObjectKey(String docKey, int version, String fileType) {
+        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        return "documents/" + datePath + "/" + docKey + "/v" + version + "." + fileType;
     }
 }

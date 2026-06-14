@@ -103,6 +103,14 @@ function onDragStart(e: DragEvent) {
   isDragging.value = true
   e.dataTransfer?.setData('text/plain', String(props.doc.id))
   e.dataTransfer!.effectAllowed = 'move'
+  // 创建更小的拖拽预览
+  const ghost = document.createElement('div')
+  ghost.className = 'drag-ghost'
+  ghost.textContent = props.doc.title
+  ghost.style.cssText = 'position:absolute;top:-1000px;padding:8px 16px;background:white;border:1px solid #409eff;border-radius:6px;font-size:13px;color:#303133;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+  document.body.appendChild(ghost)
+  e.dataTransfer!.setDragImage(ghost, 0, 0)
+  setTimeout(() => document.body.removeChild(ghost), 0)
   emit('dragstart', e, props.doc)
 }
 

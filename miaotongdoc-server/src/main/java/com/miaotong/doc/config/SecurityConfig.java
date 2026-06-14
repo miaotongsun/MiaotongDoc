@@ -30,6 +30,10 @@ public class SecurityConfig {
                 // 认证相关（无需登录）
                 .requestMatchers("/api/auth/login").permitAll()
                 .requestMatchers("/api/auth/register").permitAll()
+                // AI 代理（AI 插件使用 OnlyOffice JWT，非应用 JWT）
+                .requestMatchers("/api/ai/proxy").permitAll()
+                .requestMatchers("/api/ai/models").permitAll()
+                .requestMatchers("/api/ai/config").permitAll()
                 // 编辑器回调（验证编辑器 JWT，无需应用 JWT）
                 .requestMatchers("/api/callback/**").permitAll()
                 // 文档文件下载（编辑器拉取用）

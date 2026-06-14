@@ -76,6 +76,8 @@ interface VersionItem {
 const props = defineProps<{
   modelValue: boolean
   docId: number
+  docTitle?: string
+  docType?: string
   currentVersion: number
   canAdmin?: boolean
 }>()
@@ -155,10 +157,12 @@ async function handleRestore(version: VersionItem) {
 async function handleDownload(version: VersionItem) {
   try {
     const blob = await versionApi.downloadVersion(props.docId, version.versionNumber)
+    const title = props.docTitle || '文档'
+    const ext = props.docType || 'docx'
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `v${version.versionNumber}.docx`
+    a.download = `${title}_v${version.versionNumber}.${ext}`
     a.click()
     URL.revokeObjectURL(url)
   } catch {

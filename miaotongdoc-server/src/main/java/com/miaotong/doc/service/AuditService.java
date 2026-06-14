@@ -62,6 +62,31 @@ public class AuditService {
         return auditLogRepository.findByEmployeeIdOrderByCreatedAtDesc(employeeId, pageable);
     }
 
+    // 管理员查看所有日志
+    public Page<AuditLog> getAllAuditLogs(Long userId, String action, Pageable pageable) {
+        if (userId != null && action != null && !action.isEmpty()) {
+            return auditLogRepository.findAllByUserIdAndAction(userId, action, pageable);
+        } else if (userId != null) {
+            return auditLogRepository.findAllByUserId(userId, pageable);
+        } else if (action != null && !action.isEmpty()) {
+            return auditLogRepository.findAllByAction(action, pageable);
+        }
+        return auditLogRepository.findAllByOrderByCreatedAtDesc(pageable);
+    }
+
+    public Page<AuditLog> getAllAuditLogs(LocalDate startDate, LocalDate endDate, Long userId, String action, Pageable pageable) {
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.plusDays(1).atStartOfDay();
+        if (userId != null && action != null && !action.isEmpty()) {
+            return auditLogRepository.findAllByDateRangeAndUserIdAndAction(start, end, userId, action, pageable);
+        } else if (userId != null) {
+            return auditLogRepository.findAllByDateRangeAndUserId(start, end, userId, pageable);
+        } else if (action != null && !action.isEmpty()) {
+            return auditLogRepository.findAllByDateRangeAndAction(start, end, action, pageable);
+        }
+        return auditLogRepository.findAllByDateRange(start, end, pageable);
+    }
+
     @Scheduled(cron = "0 0 3 * * ?")
     @Transactional
     public void archiveOldAuditLogs() {

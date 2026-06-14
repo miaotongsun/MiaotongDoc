@@ -23,6 +23,8 @@ public class DocGenerator {
         try (XWPFDocument doc = new XWPFDocument()) {
             doc.getProperties().getCoreProperties().setTitle(title);
             doc.getProperties().getCoreProperties().setCreator("MiaotongDoc");
+            doc.getProperties().getExtendedProperties().setApplication("MiaotongDoc");
+            doc.getProperties().getExtendedProperties().setAppVersion("1.0");
             doc.createParagraph();
             return toBytes(doc);
         }
@@ -32,6 +34,8 @@ public class DocGenerator {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
             wb.getProperties().getCoreProperties().setTitle(title);
             wb.getProperties().getCoreProperties().setCreator("MiaotongDoc");
+            wb.getProperties().getExtendedProperties().setApplication("MiaotongDoc");
+            wb.getProperties().getExtendedProperties().setAppVersion("1.0");
             wb.createSheet("Sheet1");
             return toBytes(wb);
         }
@@ -41,6 +45,8 @@ public class DocGenerator {
         try (XMLSlideShow ppt = new XMLSlideShow()) {
             ppt.getProperties().getCoreProperties().setTitle(title);
             ppt.getProperties().getCoreProperties().setCreator("MiaotongDoc");
+            ppt.getProperties().getExtendedProperties().setApplication("MiaotongDoc");
+            ppt.getProperties().getExtendedProperties().setAppVersion("1.0");
             ppt.createSlide();
             return toBytes(ppt);
         }

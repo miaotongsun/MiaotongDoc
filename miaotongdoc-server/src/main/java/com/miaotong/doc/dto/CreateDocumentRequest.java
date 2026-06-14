@@ -12,4 +12,6 @@ public class CreateDocumentRequest {
     private String docType;
 
     private String title;
+
+    private Long templateId;
 }

@@ -33,8 +33,8 @@ export const folderApi = {
     return api.put<any, Folder>(`/folders/${id}`, { color })
   },
 
-  delete(id: number) {
-    return api.delete(`/folders/${id}`)
+  delete(id: number, moveToParentId?: number | null) {
+    return api.delete(`/folders/${id}`, { params: { moveToParentId } })
   },
 
   download(id: number) {

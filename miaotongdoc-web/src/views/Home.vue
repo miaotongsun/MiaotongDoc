@@ -43,18 +43,15 @@
         <li class="nav-divider"></li>
         <!-- 文件夹 -->
         <li class="nav-section-header">
-          <span>文件夹</span>
-          <el-dropdown trigger="click" @command="handleFolderCreateCommand">
-            <el-button text size="small" @click.stop>
+          <span class="nav-section-title" :class="{ active: activeTab === 'folders' }" @click="switchTab('folders')">文件夹</span>
+          <div class="nav-section-actions">
+            <el-button text size="small" @click.stop="collapseAllFolders" title="全部折叠">
+              <el-icon><Folder /></el-icon>
+            </el-button>
+            <el-button text size="small" @click.stop="showCreateFolder" title="新建文件夹">
               <el-icon><Plus /></el-icon>
             </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="empty">新建空文件夹</el-dropdown-item>
-                <el-dropdown-item command="template">从模板创建</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          </div>
         </li>
         <div class="folder-tree">
           <div v-for="folder in flatFolders" :key="folder.id" class="folder-item"
@@ -69,7 +66,11 @@
               <ArrowDown v-else />
             </el-icon>
             <el-icon v-else class="folder-toggle-placeholder"></el-icon>
-            <el-icon class="folder-icon" :style="{ color: folder.color || '#909399' }"><Folder /></el-icon>
+            <span class="folder-icon-wrapper" :style="{ color: folder.color || '#909399' }">
+              <svg class="folder-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+                <path fill="currentColor" d="M128 192v640h768V320H485.76L357.504 192zm-32-64h287.872l128.384 128H928a32 32 0 0 1 32 32v576a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V160a32 32 0 0 1 32-32"></path>
+              </svg>
+            </span>
             <span class="folder-name">{{ folder.name }}</span>
             <div class="folder-actions" @click.stop>
               <el-dropdown trigger="click" @command="handleFolderCommand($event, folder)">
@@ -168,7 +169,7 @@
         <div class="content-header">
           <div class="header-left">
             <div v-if="activeFolderId" class="folder-path">
-              <span class="path-item root" @click="selectFolder(null)">全部文档</span>
+              <span class="path-item root" @click="selectFolder(null)">文件夹</span>
               <span v-for="(crumb, idx) in folderBreadcrumbs" :key="crumb.id" class="path-segment">
                 <span class="path-sep">/</span>
                 <span class="path-item"
@@ -361,6 +362,39 @@
       <!-- Inline admin view -->
       <main class="content-area" v-else-if="activeTab === 'admin'">
         <AdminPanel />
+      </main>
+
+      <!-- Folder management view -->
+      <main class="content-area" v-else-if="activeTab === 'folders'">
+        <div class="folder-mgmt-header">
+          <h3>文件夹管理</h3>
+          <el-button type="primary" size="small" @click="showCreateFolder">
+            <el-icon><Plus /></el-icon> 新建文件夹
+          </el-button>
+        </div>
+        <div v-if="folders.length === 0" class="empty-state">
+          <el-empty description="暂无文件夹，点击上方按钮创建" />
+        </div>
+        <div v-else class="folder-mgmt-list">
+          <div v-for="folder in flatFolders" :key="folder.id" class="folder-mgmt-item"
+            :style="{ paddingLeft: (16 + folder.depth * 24) + 'px' }">
+            <div class="folder-mgmt-info">
+              <span class="folder-icon-wrapper" :style="{ color: folder.color || '#909399' }">
+                <svg class="folder-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
+                  <path fill="currentColor" d="M128 192v640h768V320H485.76L357.504 192zm-32-64h287.872l128.384 128H928a32 32 0 0 1 32 32v576a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V160a32 32 0 0 1 32-32"></path>
+                </svg>
+              </span>
+              <span class="folder-mgmt-name">{{ folder.name }}</span>
+              <span class="folder-mgmt-meta">{{ folder.hasChildren ? '含子文件夹' : '空文件夹' }}</span>
+            </div>
+            <div class="folder-mgmt-actions">
+              <el-button size="small" @click="showEditFolder(folder)">编辑</el-button>
+              <el-button size="small" @click="showAddSubFolder(folder)">新建子文件夹</el-button>
+              <el-button size="small" @click="selectFolder(folder.id); switchTab('all')">查看文档</el-button>
+              <el-button size="small" type="danger" plain @click="handleDeleteFolder(folder)">删除</el-button>
+            </div>
+          </div>
+        </div>
       </main>
 
       <!-- Trash view -->
@@ -566,6 +600,10 @@ function toggleFolder(id: number) {
   expandedFolders.value = newSet
 }
 
+function collapseAllFolders() {
+  expandedFolders.value = new Set()
+}
+
 // 计算扁平化的文件夹列表（支持任意层级嵌套）
 const flatFolders = computed(() => {
   const result: (FolderType & { depth: number; hasChildren: boolean })[] = []
@@ -635,18 +673,6 @@ async function loadFolders() {
   } catch {}
 }
 
-function handleFolderCreateCommand(cmd: string) {
-  if (cmd === 'empty') {
-    showCreateFolder()
-  } else if (cmd === 'template') {
-    showTemplateFolderDialog()
-  }
-}
-
-function showTemplateFolderDialog() {
-  ElMessage.info('项目空间模板功能开发中...')
-}
-
 function selectFolder(id: number | null) {
   activeFolderId.value = activeFolderId.value === id ? null : id
   // 自动展开选中的文件夹及其父级
@@ -683,17 +709,28 @@ async function handleFolderCommand(cmd: string, folder: any) {
       ElMessage.error('下载失败')
     }
   } else if (cmd === 'delete') {
-    try {
-      await ElMessageBox.confirm('删除文件夹后，其中的文档将移至根目录。确定删除吗？', '删除文件夹', { type: 'warning' })
-      await folderApi.delete(folder.id)
-      ElMessage.success('文件夹已删除')
-      if (activeFolderId.value === folder.id) {
-        activeFolderId.value = null
-        documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
-      }
-      loadFolders()
-    } catch {}
+    handleDeleteFolder(folder)
   }
+}
+
+async function handleDeleteFolder(folder: any) {
+  const parentName = folder.parentId
+    ? folders.value.find(f => f.id === folder.parentId)?.name || '上级文件夹'
+    : '根目录'
+  try {
+    await ElMessageBox.confirm(
+      `删除文件夹后，其中的文档将移至「${parentName}」。确定删除吗？`,
+      '删除文件夹',
+      { type: 'warning' }
+    )
+    await folderApi.delete(folder.id, folder.parentId)
+    ElMessage.success('文件夹已删除')
+    if (activeFolderId.value === folder.id) {
+      activeFolderId.value = null
+      documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+    }
+    loadFolders()
+  } catch {}
 }
 
 // AI 智能整理
@@ -770,7 +807,7 @@ const isAdmin = computed(() => sessionStorage.getItem('role') === 'admin')
 
 const isDocView = computed(() => {
   if (activeFolderId.value) return true
-  return !['activity', 'admin', 'contract', 'trash'].includes(activeTab.value)
+  return !['activity', 'admin', 'contract', 'trash', 'folders'].includes(activeTab.value)
 })
 
 const tabLabels: Record<string, string> = {
@@ -784,7 +821,8 @@ const tabLabels: Record<string, string> = {
   trash: '回收站',
   activity: '个人动态',
   admin: '管理后台',
-  contract: '合同管理'
+  contract: '合同管理',
+  folders: '文件夹管理'
 }
 
 const activeTabLabel = computed(() => {
@@ -817,7 +855,7 @@ function switchTab(tab: string) {
   activeTab.value = tab
   activeFolderId.value = null  // 切换标签时清除文件夹选择
   selectedIds.value = new Set()
-  if (['activity', 'admin', 'contract'].includes(tab)) return
+  if (['activity', 'admin', 'contract', 'folders'].includes(tab)) return
   if (tab === 'trash') {
     loadTrash()
     return
@@ -1440,9 +1478,13 @@ async function handleTableCommand(cmd: string, row: any) {
 }
 
 .pagination-bar {
+  position: sticky;
+  bottom: 0;
   display: flex;
   justify-content: flex-end;
   padding: 16px 0;
+  background: linear-gradient(transparent, #f5f7fa 20%);
+  z-index: 10;
 }
 
 
@@ -1646,6 +1688,7 @@ async function handleTableCommand(cmd: string, row: any) {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
+  position: relative;
 }
 
 .content-header {
@@ -1930,6 +1973,31 @@ async function handleTableCommand(cmd: string, row: any) {
   text-transform: uppercase;
 }
 
+.nav-section-title {
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.nav-section-title:hover,
+.nav-section-title.active {
+  color: var(--el-color-primary);
+}
+
+.nav-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-section-actions .el-button {
+  padding: 4px;
+  color: #909399;
+}
+
+.nav-section-actions .el-button:hover {
+  color: var(--el-color-primary);
+}
+
 .folder-tree {
   padding: 0 8px;
 }
@@ -1961,9 +2029,18 @@ async function handleTableCommand(cmd: string, row: any) {
   color: #409eff;
 }
 
-.folder-icon {
+.folder-icon-wrapper {
   flex-shrink: 0;
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.folder-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .folder-name {
@@ -2034,6 +2111,73 @@ async function handleTableCommand(cmd: string, row: any) {
   color: #909399;
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* 文件夹管理页面 */
+.folder-mgmt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.folder-mgmt-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+  margin: 0;
+}
+
+.folder-mgmt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.folder-mgmt-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.folder-mgmt-item:hover {
+  border-color: #c0c4cc;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.folder-mgmt-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-mgmt-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-mgmt-meta {
+  font-size: 12px;
+  color: #909399;
+  flex-shrink: 0;
+}
+
+.folder-mgmt-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: 16px;
 }
 
 </style>

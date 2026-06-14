@@ -1,0 +1,92 @@
+{
+    "services": {
+        "CoAuthoring": {
+            "server": {
+                "appName": "miaotongDoc/1.0"
+            },
+            "sql": {
+                "type": "postgres",
+                "dbHost": "postgres",
+                "dbPort": "5432",
+                "dbName": "miaotongdocdb",
+                "dbUser": "miaotong",
+                "dbPass": "${DB_PASSWORD}"
+            },
+            "redis": {
+                "host": "redis",
+                "port": "6379",
+                "password": "${REDIS_PASSWORD}"
+            },
+            "token": {
+                "enable": {
+                    "request": {
+                        "inbox": true,
+                        "outbox": true
+                    },
+                    "browser": true
+                },
+                "algorithm": "HS256",
+                "inbox": {
+                    "header": "Authorization",
+                    "inBody": true
+                },
+                "outbox": {
+                    "header": "Authorization",
+                    "inBody": true
+                }
+            },
+            "secret": {
+                "inbox": {
+                    "string": "${EDITOR_JWT_SECRET}"
+                },
+                "outbox": {
+                    "string": "${EDITOR_JWT_SECRET}"
+                },
+                "session": {
+                    "string": "${EDITOR_JWT_SECRET}"
+                },
+                "browser": {
+                    "string": "${EDITOR_JWT_SECRET}"
+                }
+            },
+            "license": {
+                "connectionsLimit": 999999,
+                "usersCountLimit": 999999
+            },
+            "queue": {
+                "type": "rabbitmq"
+            },
+            "plugins": {
+                "autostart": ["asc.{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}"]
+            }
+        }
+    },
+    "rabbitmq": {
+        "url": "amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672"
+    },
+    "storage": {
+        "fs": {
+            "secretString": "${SECURE_LINK_SECRET}"
+        }
+    },
+    "feedback": {
+        "url": ""
+    },
+    "analytics": {
+        "enabled": false
+    },
+    "branding": {
+        "logo": {
+            "image": "",
+            "imageEmbedded": "",
+            "url": ""
+        },
+        "customer": {
+            "name": "MiaotongDoc",
+            "address": "",
+            "mail": "",
+            "www": "",
+            "info": ""
+        }
+    }
+}

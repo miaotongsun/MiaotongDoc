@@ -55,6 +55,17 @@
             },
             "queue": {
                 "type": "rabbitmq"
+            },
+            "plugins": {
+                "aiPluginSettings": "{\"proxy\":\"/api/ai/proxy\",\"version\":4}"
+            },
+            "aiSettings": {
+                "proxy": "/api/ai/proxy",
+                "actions": {},
+                "models": [],
+                "providers": {},
+                "version": 3,
+                "timeout": "5m"
             }
         }
     },
@@ -63,7 +74,7 @@
     },
     "storage": {
         "fs": {
-            "secretString": "miaotongdoc_storage_secret"
+            "secretString": "${SECURE_LINK_SECRET}"
         }
     },
     "feedback": {

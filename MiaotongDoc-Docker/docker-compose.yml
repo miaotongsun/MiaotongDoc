@@ -6,10 +6,13 @@ services:
     container_name: miaotongdoc-nginx
     ports:
       - "80:80"
+    environment:
+      TZ: Asia/Shanghai
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/service-worker-override.js:/etc/nginx/service-worker-override.js:ro
-      - ../miaotongdoc-web/dist:/usr/share/nginx/html
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/service-worker-override.js:/etc/nginx/service-worker-override.js:ro
+      - ./app/web/dist:/usr/share/nginx/html
+      - ./data/logs/nginx:/var/log/nginx
     depends_on:
       - web-server
       - editor
@@ -18,18 +21,27 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   postgres:
     image: postgres:12
     container_name: miaotongdoc-postgres
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: miaotongdocdb
       POSTGRES_USER: miaotong
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Shanghai
     volumes:
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - pgdata:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./data/pgdata:/var/lib/postgresql/data
+      - ./data/logs/postgres:/var/log/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U miaotong -d miaotongdocdb"]
       interval: 10s
@@ -38,14 +50,21 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.20
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     container_name: miaotongdoc-redis
+    ports:
+      - "6379:6379"
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     volumes:
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -54,24 +73,37 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.30
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3-management
     container_name: miaotongdoc-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: miaotong
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitmq2024}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 15s
       timeout: 10s
       retries: 5
     volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
+      - ./data/rabbitmq:/var/lib/rabbitmq
     networks:
       mtd-net:
         ipv4_address: 172.20.0.35
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   web-server:
@@ -80,10 +112,13 @@ services:
     ports:
       - "9004:9004"
     volumes:
-      - ../miaotongdoc-server/target/miaotongdoc.jar:/app/app.jar
-      - ../document-storage:/data/documents
-    command: java -jar /app/app.jar
+      - ./app/server/miaotongdoc.jar:/app/app.jar
+      - ./data/documents:/data/documents
+      - ./data/logs/server:/app/logs
+      - ./config/logback-spring.xml:/app/config/logback-spring.xml:ro
+    command: java -jar /app/app.jar --logging.config=/app/config/logback-spring.xml
     environment:
+      TZ: Asia/Shanghai
       SPRING_PROFILES_ACTIVE: prod
       APP_JWT_SECRET: ${APP_JWT_SECRET}
       APP_JWT_EXPIRATION: ${APP_JWT_EXPIRATION}
@@ -105,6 +140,14 @@ services:
       SSO_CLIENT_ID: ${SSO_CLIENT_ID}
       SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}
       SSO_PROVIDER_NAME: ${SSO_PROVIDER_NAME}
+      STORAGE_TYPE: ${STORAGE_TYPE}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      LLM_API_URL: ${LLM_API_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_TIMEOUT: ${LLM_TIMEOUT}
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:9004/actuator/health || exit 1"]
       interval: 30s
@@ -117,16 +160,25 @@ services:
         condition: service_healthy
       editor:
         condition: service_started
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
     networks:
       mtd-net:
         ipv4_address: 172.20.0.40
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   editor:
     image: miaotongdoc-editor:latest
     container_name: miaotongdoc-editor
     build:
-      context: ../MiaotongDoc-Editor
+      context: ./app/editor
       dockerfile: Dockerfile
       args:
         - BASE_IMAGE=onlyoffice/documentserver:9.3
@@ -145,13 +197,15 @@ services:
       - REDIS_SERVER_HOST=redis
       - REDIS_SERVER_PORT=6379
       - REDIS_SERVER_PASS=${REDIS_PASSWORD}
-      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD:-rabbitmq2024}@rabbitmq:5672
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
       - COAUTH_ALLOW_PRIVATE_IP=true
-      - SECURE_LINK_SECRET=MiaotongDoc2024Secret
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
     volumes:
-      - editor-data:/var/www/onlyoffice/Data
-      - editor-cache:/var/lib/onlyoffice/documentserver/App_Data
-      - editor-logs:/var/log/onlyoffice
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor:/var/log/onlyoffice
     depends_on:
       postgres:
         condition: service_healthy
@@ -162,6 +216,11 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.50
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   editor2:
@@ -182,13 +241,15 @@ services:
       - REDIS_SERVER_HOST=redis
       - REDIS_SERVER_PORT=6379
       - REDIS_SERVER_PASS=${REDIS_PASSWORD}
-      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD:-rabbitmq2024}@rabbitmq:5672
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
       - COAUTH_ALLOW_PRIVATE_IP=true
-      - SECURE_LINK_SECRET=MiaotongDoc2024Secret
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
     volumes:
-      - editor-data:/var/www/onlyoffice/Data
-      - editor-cache:/var/lib/onlyoffice/documentserver/App_Data
-      - editor2-logs:/var/log/onlyoffice
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor2:/var/log/onlyoffice
     depends_on:
       postgres:
         condition: service_healthy
@@ -199,6 +260,11 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.51
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   editor3:
@@ -219,13 +285,15 @@ services:
       - REDIS_SERVER_HOST=redis
       - REDIS_SERVER_PORT=6379
       - REDIS_SERVER_PASS=${REDIS_PASSWORD}
-      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD:-rabbitmq2024}@rabbitmq:5672
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
       - COAUTH_ALLOW_PRIVATE_IP=true
-      - SECURE_LINK_SECRET=MiaotongDoc2024Secret
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
     volumes:
-      - editor-data:/var/www/onlyoffice/Data
-      - editor-cache:/var/lib/onlyoffice/documentserver/App_Data
-      - editor3-logs:/var/log/onlyoffice
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor3:/var/log/onlyoffice
     depends_on:
       postgres:
         condition: service_healthy
@@ -236,6 +304,11 @@ services:
     networks:
       mtd-net:
         ipv4_address: 172.20.0.52
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   # OnlyOffice 文件缓存定时清理（每天凌晨3点清理超过24h的缓存）
@@ -243,14 +316,82 @@ services:
     image: alpine:latest
     container_name: miaotongdoc-cache-cleaner
     environment:
-      - CACHE_MAX_AGE_HOURS=24
+      - CACHE_MAX_AGE_HOURS=${CACHE_MAX_AGE_HOURS}
     volumes:
-      - editor-cache:/var/cache/onlyoffice
+      - ./data/editor-cache:/var/cache/onlyoffice
       - ./scripts/clean-editor-cache.sh:/scripts/clean.sh:ro
     entrypoint: /bin/sh
     command: -c "echo '0 3 * * * /bin/sh /scripts/clean.sh >> /proc/1/fd/1 2>&1' | crontab - && crond -f -l 8"
     networks:
       - mtd-net
+    restart: unless-stopped
+
+  # 日志轮转（每天凌晨2点执行）
+  logrotate:
+    image: alpine:latest
+    container_name: miaotongdoc-logrotate
+    volumes:
+      - ./data/logs:/data/logs
+      - ./config/logrotate/app-logs:/etc/logrotate.d/app-logs:ro
+      - ./scripts/logrotate.sh:/scripts/logrotate.sh:ro
+    entrypoint: /bin/sh
+    command: -c "echo '0 2 * * * /bin/sh /scripts/logrotate.sh >> /proc/1/fd/1 2>&1' | crontab - && crond -f -l 8"
+    networks:
+      - mtd-net
+    restart: unless-stopped
+
+  # MinIO 对象存储
+  minio:
+    image: minio/minio:latest
+    container_name: miaotongdoc-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - ./data/minio:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.60
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Elasticsearch 全文搜索引擎
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: miaotongdoc-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.70
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
 networks:
@@ -259,12 +400,3 @@ networks:
     ipam:
       config:
         - subnet: 172.20.0.0/16
-
-volumes:
-  pgdata:
-  rabbitmq-data:
-  editor-data:
-  editor-cache:
-  editor-logs:
-  editor2-logs:
-  editor3-logs:

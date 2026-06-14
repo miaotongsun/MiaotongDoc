@@ -10,7 +10,8 @@ export interface Document {
   ownerUserId: number
   ownerName: string
   departmentId?: number
-  departmentName?: string
+  departmentName?: number
+  folderId?: number
   status: string
   currentVersion: number
   isStarred: boolean
@@ -23,6 +24,7 @@ export interface Document {
 export interface CreateDocumentRequest {
   docType: string
   title?: string
+  templateId?: number
 }
 
 export const documentApi = {
@@ -40,6 +42,10 @@ export const documentApi = {
 
   list(params?: { type?: string; keyword?: string; departmentId?: number; sort?: string; page?: number; size?: number }) {
     return api.get<any, any>('/documents/list', { params })
+  },
+
+  suggest(keyword: string) {
+    return api.get<any, { suggestions: any[] }>('/documents/suggest', { params: { keyword } })
   },
 
   getById(id: number) {
@@ -78,5 +84,34 @@ export const documentApi = {
 
   createVersion(id: number, summary?: string) {
     return api.post<any, { message: string; versionNumber: number }>(`/documents/${id}/versions`, { summary })
+  },
+
+  // 回收站
+  getTrash() {
+    return api.get<any, Document[]>('/documents/trash')
+  },
+
+  restoreFromTrash(id: number) {
+    return api.post(`/documents/${id}/restore`)
+  },
+
+  permanentDelete(id: number) {
+    return api.delete(`/documents/${id}/permanent`)
+  },
+
+  emptyTrash() {
+    return api.delete<any, { deleted: number }>('/documents/trash/empty')
+  },
+
+  // 移动到文件夹
+  moveToFolder(id: number, folderId: number | null) {
+    return api.post(`/documents/${id}/move`, { folderId })
+  },
+
+  // 批量导出
+  exportZip(ids: number[]) {
+    return api.post<any, Blob>('/documents/export/zip', ids, {
+      responseType: 'blob' as any
+    })
   }
 }

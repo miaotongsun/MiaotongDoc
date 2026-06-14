@@ -21,6 +21,7 @@
         <java.version>17</java.version>
         <poi.version>5.2.5</poi.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <minio.version>8.5.10</minio.version>
     </properties>
 
     <dependencies>
@@ -123,6 +124,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- MinIO (S3-compatible object storage) -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>${minio.version}</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -140,6 +148,22 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
+        </dependency>
+        <!-- PDF 元数据修改 -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>xmpbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+        <!-- Elasticsearch -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
         </dependency>
     </dependencies>
 

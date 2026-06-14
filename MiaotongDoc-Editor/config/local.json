@@ -55,6 +55,9 @@
             },
             "queue": {
                 "type": "rabbitmq"
+            },
+            "plugins": {
+                "aiPluginSettings": "{\"proxy\":\"/api/ai/proxy\",\"version\":4}"
             }
         }
     },
