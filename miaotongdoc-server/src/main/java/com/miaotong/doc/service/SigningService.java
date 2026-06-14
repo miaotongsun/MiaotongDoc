@@ -25,6 +25,7 @@ public class SigningService {
     private final SigningTaskRepository signingTaskRepository;
     private final SigningRecordRepository signingRecordRepository;
     private final DocumentRepository documentRepository;
+    private final DocumentShareRepository documentShareRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -63,10 +64,20 @@ public class SigningService {
             notificationService.notify(creatorId, request.getSignerUserIds().get(i),
                     request.getDocumentId(), "SIGN_REQUEST",
                     "请求你签署文档: " + doc.getTitle());
+
+            // 自动共享文档给签署人（只读），确保签署人能打开文档
+            if (!documentShareRepository.existsByDocumentIdAndUserId(request.getDocumentId(), request.getSignerUserIds().get(i))) {
+                DocumentShare share = new DocumentShare();
+                share.setDocumentId(request.getDocumentId());
+                share.setUserId(request.getSignerUserIds().get(i));
+                share.setSharedBy(creatorId);
+                share.setPermission("view");
+                documentShareRepository.save(share);
+            }
         }
 
         doc.setStatus("signing");
-        doc.setSigningLocked(true);
+        // 签署期间不锁定，签署人可以通过修订模式编辑
         documentRepository.save(doc);
 
         auditService.log(creatorId, "SIGN_INIT", "SIGNING", task.getId(), null);
@@ -103,7 +114,7 @@ public class SigningService {
             task.setStatus("completed");
             task.setCompletedAt(LocalDateTime.now());
             doc.setStatus("signed");
-            doc.setSigningLocked(false);
+            doc.setSigningLocked(true);
             documentRepository.save(doc);
         }
 
@@ -126,6 +137,15 @@ public class SigningService {
         record.setStatus("rejected");
         record.setRemark(remark);
         signingRecordRepository.save(record);
+
+        // 将其他待签署的记录也标记为取消
+        List<SigningRecord> otherRecords = signingRecordRepository.findByTaskIdOrderBySignOrderAsc(taskId);
+        for (SigningRecord r : otherRecords) {
+            if ("pending".equals(r.getStatus())) {
+                r.setStatus("cancelled");
+                signingRecordRepository.save(r);
+            }
+        }
 
         SigningTask task = signingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new NotFoundException("签署任务不存在"));
@@ -193,6 +213,10 @@ public class SigningService {
     public SigningTask getTask(Long taskId) {
         return signingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new NotFoundException("签署任务不存在"));
+    }
+
+    public List<SigningTask> getActiveTasksByDocumentId(Long docId) {
+        return signingTaskRepository.findActiveByDocumentId(docId);
     }
 
     public List<SigningRecord> getTaskRecords(Long taskId) {

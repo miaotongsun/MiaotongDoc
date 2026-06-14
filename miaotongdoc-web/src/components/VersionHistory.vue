@@ -39,7 +39,6 @@
               <span v-if="version.changeSummary" class="change-desc">{{ version.changeSummary }}</span>
             </div>
             <div class="version-actions">
-              <el-button size="small" @click="handlePreview(version)">预览</el-button>
               <el-button
                 v-if="isAdmin && version.versionNumber !== currentVersion"
                 size="small"
@@ -68,11 +67,8 @@ interface VersionItem {
   id: number
   documentId: number
   versionNumber: number
-  filePath: string
   fileSize: number
-  fileHash?: string
   changeSummary?: string
-  createdBy: number
   createdByName?: string
   createdAt: string
 }
@@ -138,23 +134,6 @@ function formatSize(bytes: number): string {
   return `${size.toFixed(1)} ${units[i]}`
 }
 
-async function handlePreview(version: VersionItem) {
-  try {
-    const token = sessionStorage.getItem('token') || ''
-    const response = await fetch(
-      `/api/versions/${props.docId}/${version.versionNumber}/preview`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    )
-    if (!response.ok) throw new Error('预览失败')
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    window.open(url, '_blank')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  } catch (err: any) {
-    ElMessage.error('预览失败: ' + (err.message || ''))
-  }
-}
-
 async function handleRestore(version: VersionItem) {
   try {
     await ElMessageBox.confirm(
@@ -179,7 +158,7 @@ async function handleDownload(version: VersionItem) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `v${version.versionNumber}.${props.currentVersion > 0 ? 'docx' : 'xlsx'}`
+    a.download = `v${version.versionNumber}.docx`
     a.click()
     URL.revokeObjectURL(url)
   } catch {

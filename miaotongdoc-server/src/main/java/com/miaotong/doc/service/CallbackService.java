@@ -66,27 +66,15 @@ public class CallbackService {
 
         log.info("文档内容变化，开始保存: key={}, oldHash={}, newHash={}", key, doc.getFileHash(), newHash);
 
-        int newVersion = doc.getCurrentVersion() + 1;
-        String filePath = saveFileAtomic(doc.getDocKey(), newVersion, doc.getFileType(), fileBytes);
+        String filePath = saveFileAtomic(doc.getDocKey(), doc.getCurrentVersion(), doc.getFileType(), fileBytes);
 
-        // 保存版本记录
-        DocumentVersion version = new DocumentVersion();
-        version.setDocumentId(doc.getId());
-        version.setVersionNumber(newVersion);
-        version.setFilePath(filePath);
-        version.setFileSize((long) fileBytes.length);
-        version.setFileHash(newHash);
-        version.setCreatedBy(userId);
-        versionRepository.save(version);
-
-        // 更新文档主记录
+        // 更新文档主记录（不创建版本记录，由 owner 手动创建）
         doc.setFilePath(filePath);
         doc.setFileHash(newHash);
-        doc.setCurrentVersion(newVersion);
         doc.setFileSize((long) fileBytes.length);
         documentRepository.save(doc);
 
-        log.info("文档保存成功: docId={}, newVersion={}", doc.getId(), newVersion);
+        log.info("文档保存成功（自动保存，未创建版本）: docId={}, version={}", doc.getId(), doc.getCurrentVersion());
     }
 
     private String saveFileAtomic(String docKey, int version, String fileType, byte[] content) {

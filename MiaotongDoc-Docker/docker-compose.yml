@@ -238,6 +238,21 @@ services:
         ipv4_address: 172.20.0.52
     restart: unless-stopped
 
+  # OnlyOffice 文件缓存定时清理（每天凌晨3点清理超过24h的缓存）
+  cache-cleaner:
+    image: alpine:latest
+    container_name: miaotongdoc-cache-cleaner
+    environment:
+      - CACHE_MAX_AGE_HOURS=24
+    volumes:
+      - editor-cache:/var/cache/onlyoffice
+      - ./scripts/clean-editor-cache.sh:/scripts/clean.sh:ro
+    entrypoint: /bin/sh
+    command: -c "echo '0 3 * * * /bin/sh /scripts/clean.sh >> /proc/1/fd/1 2>&1' | crontab - && crond -f -l 8"
+    networks:
+      - mtd-net
+    restart: unless-stopped
+
 networks:
   mtd-net:
     driver: bridge

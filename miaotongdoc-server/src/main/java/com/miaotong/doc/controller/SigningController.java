@@ -55,6 +55,19 @@ public class SigningController {
         return ResponseEntity.ok(tasks.map(this::toTaskDTO));
     }
 
+    @GetMapping("/tasks/by-document/{docId}")
+    public ResponseEntity<SigningTaskDTO> getTaskByDocument(@PathVariable Long docId) {
+        List<SigningTask> tasks = signingService.getActiveTasksByDocumentId(docId);
+        if (tasks.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        SigningTask task = tasks.get(0);
+        SigningTaskDTO dto = toTaskDTO(task);
+        List<SigningRecord> records = signingService.getTaskRecords(task.getId());
+        dto.setRecords(records.stream().map(this::toRecordDTO).collect(Collectors.toList()));
+        return ResponseEntity.ok(dto);
+    }
+
     @GetMapping("/tasks/{id}")
     public ResponseEntity<SigningTaskDTO> getTask(@PathVariable Long id) {
         SigningTask task = signingService.getTask(id);

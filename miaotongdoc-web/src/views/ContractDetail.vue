@@ -15,8 +15,6 @@
       <div class="header-actions">
         <el-button v-if="contract.status === 'draft' || contract.status === 'rejected'"
           type="primary" @click="showSubmit = true">提交审批</el-button>
-        <el-button v-if="contract.status === 'draft' || contract.status === 'rejected'"
-          @click="showEdit = true">编辑</el-button>
         <el-button v-if="canApprove" type="success" @click="handleApprove">通过</el-button>
         <el-button v-if="canApprove" type="danger" @click="showReject = true">拒绝</el-button>
         <el-button v-if="canCancel" type="warning" plain @click="handleCancel">撤回</el-button>

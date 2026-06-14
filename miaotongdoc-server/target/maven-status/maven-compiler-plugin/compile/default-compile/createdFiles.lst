@@ -79,6 +79,7 @@ com\miaotong\doc\service\CommentService.class
 com\miaotong\doc\repository\ContractRepository.class
 com\miaotong\doc\service\ContractService.class
 com\miaotong\doc\dto\CreateDocumentRequest.class
+com\miaotong\doc\scheduler\ContractExpirationScheduler.class
 com\miaotong\doc\controller\SsoController.class
 com\miaotong\doc\repository\DocumentVersionRepository.class
 com\miaotong\doc\dto\CommentDTO.class
@@ -91,7 +92,9 @@ com\miaotong\doc\controller\ActivityController.class
 com\miaotong\doc\entity\DocumentVersion.class
 com\miaotong\doc\controller\ContractController.class
 com\miaotong\doc\controller\PresenceController.class
+com\miaotong\doc\repository\ContractApprovalNodeRepository.class
 com\miaotong\doc\exception\NotFoundException.class
+com\miaotong\doc\entity\ContractApprovalNode.class
 com\miaotong\doc\dto\PresenceInfo.class
 com\miaotong\doc\repository\SigningTaskRepository.class
 com\miaotong\doc\service\PdfExportService.class

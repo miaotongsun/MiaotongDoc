@@ -74,5 +74,9 @@ export const documentApi = {
     return api.get<any, Blob>(`/documents/${id}/export/pdf`, {
       responseType: 'blob' as any
     })
+  },
+
+  createVersion(id: number, summary?: string) {
+    return api.post<any, { message: string; versionNumber: number }>(`/documents/${id}/versions`, { summary })
   }
 }

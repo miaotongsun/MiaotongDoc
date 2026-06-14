@@ -189,7 +189,11 @@ async function loadContracts() {
     })
     contracts.value = res.content || []
     total.value = res.totalElements || 0
-  } catch {} finally {
+  } catch (e: any) {
+    console.error('加载合同列表失败:', e)
+    contracts.value = []
+    total.value = 0
+  } finally {
     loading.value = false
   }
 }

@@ -227,6 +227,44 @@ public class DocumentService {
     }
 
     @Transactional
+    public DocumentVersion createVersion(Long docId, String summary, Long userId) {
+        Document doc = getDocument(docId);
+        Path currentFile = Paths.get(doc.getFilePath());
+        if (!Files.exists(currentFile)) {
+            throw new BusinessException("文档文件不存在");
+        }
+
+        int newVersion = doc.getCurrentVersion() + 1;
+        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
+        Path dir = Paths.get(storagePath, datePath, doc.getDocKey());
+        try {
+            Files.createDirectories(dir);
+            Path target = dir.resolve("v" + newVersion + "." + doc.getFileType());
+            Files.copy(currentFile, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            DocumentVersion version = new DocumentVersion();
+            version.setDocumentId(docId);
+            version.setVersionNumber(newVersion);
+            version.setFilePath(target.toString());
+            version.setFileSize(Files.size(target));
+            version.setFileHash(doc.getFileHash());
+            version.setChangeSummary(summary != null ? summary : "手动保存版本");
+            version.setCreatedBy(userId);
+            version = versionRepository.save(version);
+
+            doc.setCurrentVersion(newVersion);
+            doc.setFilePath(target.toString());
+            doc.setFileSize(Files.size(target));
+            documentRepository.save(doc);
+
+            auditService.log(userId, "CREATE_VERSION", "DOCUMENT", docId, "v" + newVersion);
+            return version;
+        } catch (IOException e) {
+            throw new BusinessException("创建版本失败");
+        }
+    }
+
+    @Transactional
     public void softDelete(Long id, Long userId) {
         Document doc = getDocument(id);
         doc.setIsDeleted(true);

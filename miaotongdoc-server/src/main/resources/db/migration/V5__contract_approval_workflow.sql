@@ -20,13 +20,3 @@ ALTER TABLE mt_contract ADD COLUMN current_step INT DEFAULT 0;
 ALTER TABLE mt_contract ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE;
 ALTER TABLE mt_contract ADD COLUMN approved_hash VARCHAR(64);
 ALTER TABLE mt_contract ADD COLUMN approved_version INT;
-
--- Fix stale signing records: mark records as cancelled/expired for non-active tasks
-UPDATE mt_signing_record SET status = 'cancelled'
-WHERE status = 'pending' AND task_id IN (
-    SELECT id FROM mt_signing_task WHERE status = 'cancelled'
-);
-UPDATE mt_signing_record SET status = 'expired'
-WHERE status = 'pending' AND task_id IN (
-    SELECT id FROM mt_signing_task WHERE status = 'expired'
-);

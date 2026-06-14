@@ -6,12 +6,14 @@ import com.miaotong.doc.exception.BusinessException;
 import com.miaotong.doc.service.DocumentService;
 import com.miaotong.doc.service.ShareService;
 import com.miaotong.doc.service.VersionService;
+import com.miaotong.doc.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
 @RestController
 @RequestMapping("/api/versions")
@@ -21,6 +23,7 @@ public class VersionController {
     private final VersionService versionService;
     private final DocumentService documentService;
     private final ShareService shareService;
+    private final UserRepository userRepository;
 
     private static final Map<String, Integer> PERM_LEVEL = Map.of(
             "view", 1, "comment", 2, "edit", 3, "admin", 4
@@ -36,24 +39,49 @@ public class VersionController {
     }
 
     @GetMapping("/{docId}")
-    public ResponseEntity<List<DocumentVersion>> getVersionHistory(
+    public ResponseEntity<List<Map<String, Object>>> getVersionHistory(
             @PathVariable Long docId,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
         String role = (String) httpRequest.getAttribute("role");
         requirePermission(docId, userId, role, "view");
-        return ResponseEntity.ok(versionService.getVersionHistory(docId));
+        List<DocumentVersion> versions = versionService.getVersionHistory(docId);
+        List<Map<String, Object>> result = versions.stream().map(v -> {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", v.getId());
+            map.put("documentId", v.getDocumentId());
+            map.put("versionNumber", v.getVersionNumber());
+            map.put("fileSize", v.getFileSize());
+            map.put("changeSummary", v.getChangeSummary());
+            map.put("createdAt", v.getCreatedAt());
+            userRepository.findById(v.getCreatedBy()).ifPresent(user -> {
+                map.put("createdByName", user.getRealName() != null ? user.getRealName() : user.getUsername());
+            });
+            return map;
+        }).toList();
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/{docId}/{versionNumber}")
-    public ResponseEntity<DocumentVersion> getVersion(
+    public ResponseEntity<Map<String, Object>> getVersion(
             @PathVariable Long docId,
             @PathVariable Integer versionNumber,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
         String role = (String) httpRequest.getAttribute("role");
         requirePermission(docId, userId, role, "view");
-        return ResponseEntity.ok(versionService.getVersion(docId, versionNumber));
+        DocumentVersion v = versionService.getVersion(docId, versionNumber);
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", v.getId());
+        map.put("documentId", v.getDocumentId());
+        map.put("versionNumber", v.getVersionNumber());
+        map.put("fileSize", v.getFileSize());
+        map.put("changeSummary", v.getChangeSummary());
+        map.put("createdAt", v.getCreatedAt());
+        userRepository.findById(v.getCreatedBy()).ifPresent(user -> {
+            map.put("createdByName", user.getRealName() != null ? user.getRealName() : user.getUsername());
+        });
+        return ResponseEntity.ok(map);
     }
 
     @GetMapping("/{docId}/{versionNumber}/download")

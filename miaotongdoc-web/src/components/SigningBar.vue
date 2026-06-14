@@ -88,7 +88,7 @@ interface SigningRecord {
   signerUserId: number
   signerName: string
   signerOrder: number
-  status: 'pending' | 'signed' | 'rejected'
+  status: 'pending' | 'confirmed' | 'rejected'
   comment?: string
   signedAt?: string
 }
@@ -152,11 +152,11 @@ const canCancel = computed(() => {
 
 const activeStep = computed(() => {
   if (!props.task?.records) return 0
-  return props.task.records.filter(r => r.status === 'signed').length
+  return props.task.records.filter(r => r.status === 'confirmed').length
 })
 
 function getStepDescription(record: SigningRecord) {
-  if (record.status === 'signed') {
+  if (record.status === 'confirmed') {
     return `已签署 ${record.signedAt ? formatDateTime(record.signedAt) : ''}`
   }
   if (record.status === 'rejected') {
@@ -166,7 +166,7 @@ function getStepDescription(record: SigningRecord) {
 }
 
 function getStepStatus(record: SigningRecord) {
-  if (record.status === 'signed') return 'success'
+  if (record.status === 'confirmed') return 'success'
   if (record.status === 'rejected') return 'error'
   return 'wait'
 }

@@ -25,16 +25,17 @@ export interface SigningRecord {
   signerUserId: number
   signerName: string
   signerOrder: number
-  status: 'pending' | 'signed' | 'rejected'
+  status: 'pending' | 'confirmed' | 'rejected'
   comment?: string
   signedAt?: string
 }
 
 export interface CreateSigningTaskRequest {
   documentId: number
+  title: string
+  description?: string
   signerUserIds: number[]
-  dueDate?: string
-  message?: string
+  deadline?: string
 }
 
 export const signingApi = {
@@ -44,6 +45,10 @@ export const signingApi = {
 
   getMyTasks(params?: { type?: 'initiated' | 'todo'; status?: string; page?: number; size?: number }) {
     return api.get<any, any>('/signing/tasks', { params })
+  },
+
+  getByDocumentId(docId: number) {
+    return api.get<any, SigningTask>(`/signing/tasks/by-document/${docId}`)
   },
 
   getTask(taskId: number) {

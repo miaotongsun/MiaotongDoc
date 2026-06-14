@@ -2,10 +2,12 @@ package com.miaotong.doc.controller;
 
 import com.miaotong.doc.dto.*;
 import com.miaotong.doc.entity.Document;
+import com.miaotong.doc.entity.SigningRecord;
 import com.miaotong.doc.entity.User;
 import com.miaotong.doc.service.DocumentService;
 import com.miaotong.doc.service.ShareService;
 import com.miaotong.doc.service.PdfExportService;
+import com.miaotong.doc.service.SigningService;
 import com.miaotong.doc.util.JwtUtil;
 import com.miaotong.doc.util.EditorJwtUtil;
 import com.miaotong.doc.repository.UserRepository;
@@ -34,6 +36,7 @@ public class DocumentController {
     private final DocumentService documentService;
     private final ShareService shareService;
     private final PdfExportService pdfExportService;
+    private final SigningService signingService;
     private final EditorJwtUtil editorJwtUtil;
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
@@ -169,6 +172,22 @@ public class DocumentController {
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping("/{id}/versions")
+    public ResponseEntity<Map<String, Object>> createVersion(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
+        requirePermission(id, userId, "admin", role);
+        String summary = body != null ? body.get("summary") : null;
+        var version = documentService.createVersion(id, summary, userId);
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("message", "版本已保存");
+        result.put("versionNumber", version.getVersionNumber());
+        return ResponseEntity.ok(result);
+    }
+
     @PutMapping("/{id}/restore")
     public ResponseEntity<Map<String, String>> restoreDocument(
             @PathVariable Long id,
@@ -200,7 +219,31 @@ public class DocumentController {
         String permission = shareService.getUserPermission(id, userId);
 
         boolean canEdit = "edit".equals(permission) || "admin".equals(permission);
-        if (doc.getSigningLocked()) canEdit = false;
+        boolean reviewMode = false;
+
+        // 签署锁定后（signed状态），所有人只读
+        if (Boolean.TRUE.equals(doc.getSigningLocked())) {
+            canEdit = false;
+        }
+
+        // 签署中：文档发起人可编辑，签署人进入修订模式，其他人只读
+        if ("signing".equals(doc.getStatus()) && !Boolean.TRUE.equals(doc.getSigningLocked())) {
+            boolean isOwner = doc.getOwnerUserId().equals(userId);
+            boolean isAdmin = "admin".equals(httpRequest.getAttribute("role"));
+            if (isOwner || isAdmin) {
+                canEdit = true;
+            } else {
+                // 检查是否是签署人
+                java.util.List<SigningRecord> records = signingService.getActiveTasksByDocumentId(id)
+                    .stream().flatMap(t -> signingService.getTaskRecords(t.getId()).stream())
+                    .filter(r -> r.getSignerUserId().equals(userId) && "pending".equals(r.getStatus()))
+                    .toList();
+                if (!records.isEmpty()) {
+                    canEdit = false;
+                    reviewMode = true; // 修订模式：只能通过修订来编辑
+                }
+            }
+        }
 
         EditorConfig config = new EditorConfig();
 
@@ -215,7 +258,7 @@ public class DocumentController {
         permissions.setDownload(true);
         permissions.setEdit(canEdit);
         permissions.setPrint(true);
-        permissions.setReview(true);
+        permissions.setReview(reviewMode || canEdit);
         document.setPermissions(permissions);
 
         config.setDocument(document);
@@ -279,7 +322,7 @@ public class DocumentController {
         Document doc = documentService.getDocument(id);
         byte[] content = documentService.getFileContent(id);
 
-        String filename = doc.getTitle() + "." + doc.getFileType();
+        String filename = doc.getTitle() + "_v" + doc.getCurrentVersion() + "." + doc.getFileType();
         String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
 
         HttpHeaders headers = new HttpHeaders();
@@ -295,7 +338,7 @@ public class DocumentController {
         Document doc = documentService.getDocument(id);
         byte[] pdfContent = pdfExportService.convertToPdf(id);
 
-        String filename = doc.getTitle() + ".pdf";
+        String filename = doc.getTitle() + "_v" + doc.getCurrentVersion() + ".pdf";
         String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
 
         HttpHeaders headers = new HttpHeaders();

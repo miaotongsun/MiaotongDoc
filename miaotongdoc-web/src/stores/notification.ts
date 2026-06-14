@@ -5,8 +5,10 @@ import { notificationApi } from '@/api/notification'
 
 export interface NotificationItem {
   id: number
-  fromUserId: number
-  documentId: number
+  fromUserId?: number
+  fromUserName?: string
+  documentId?: number
+  documentTitle?: string
   type: string
   content: string
   isRead: boolean
@@ -32,6 +34,16 @@ export const useNotificationStore = defineStore('notification', () => {
 
   function disconnect() {
     ws.disconnect()
+  }
+
+  async function loadNotifications() {
+    try {
+      const res = await notificationApi.getAll({ page: 0, size: 50 })
+      notifications.value = res.content || []
+      unreadCount.value = notifications.value.filter(n => !n.isRead).length
+    } catch {
+      // ignore
+    }
   }
 
   async function markAsRead(id: number) {
@@ -65,6 +77,7 @@ export const useNotificationStore = defineStore('notification', () => {
     unreadCount,
     connect,
     disconnect,
+    loadNotifications,
     markAsRead,
     markAllAsRead
   }

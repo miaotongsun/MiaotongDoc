@@ -10,6 +10,10 @@
           <el-icon><Files /></el-icon>
           <span>全部文档</span>
         </li>
+        <li :class="{ active: activeTab === 'recent' }" @click="switchTab('recent')">
+          <el-icon><Clock /></el-icon>
+          <span>最近访问</span>
+        </li>
         <li class="nav-divider"></li>
         <li :class="{ active: activeTab === 'word' }" @click="switchTab('word')">
           <el-icon><Document /></el-icon>
@@ -32,6 +36,59 @@
           <el-icon><Star /></el-icon>
           <span>收藏文档</span>
         </li>
+        <li :class="{ active: activeTab === 'trash' }" @click="switchTab('trash')">
+          <el-icon><Delete /></el-icon>
+          <span>回收站</span>
+        </li>
+        <li class="nav-divider"></li>
+        <!-- 文件夹 -->
+        <li class="nav-section-header">
+          <span>文件夹</span>
+          <el-dropdown trigger="click" @command="handleFolderCreateCommand">
+            <el-button text size="small" @click.stop>
+              <el-icon><Plus /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="empty">新建空文件夹</el-dropdown-item>
+                <el-dropdown-item command="template">从模板创建</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </li>
+        <div class="folder-tree">
+          <div v-for="folder in flatFolders" :key="folder.id" class="folder-item"
+            :class="{ active: activeFolderId === folder.id, 'drag-over': dragOverFolderId === folder.id, 'folder-child': folder.depth > 0 }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px' }"
+            @click="selectFolder(folder.id)"
+            @dragover.prevent="onFolderDragOver(folder.id)"
+            @dragleave="onFolderDragLeave"
+            @drop.prevent="onFolderDrop($event, folder.id)">
+            <el-icon v-if="folder.hasChildren" class="folder-toggle" @click.stop="toggleFolder(folder.id)">
+              <ArrowRight v-if="!expandedFolders.has(folder.id)" />
+              <ArrowDown v-else />
+            </el-icon>
+            <el-icon v-else class="folder-toggle-placeholder"></el-icon>
+            <el-icon class="folder-icon" :style="{ color: folder.color || '#909399' }"><Folder /></el-icon>
+            <span class="folder-name">{{ folder.name }}</span>
+            <div class="folder-actions" @click.stop>
+              <el-dropdown trigger="click" @command="handleFolderCommand($event, folder)">
+                <el-icon class="folder-more"><MoreFilled /></el-icon>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item command="addSub">新建子文件夹</el-dropdown-item>
+                    <el-dropdown-item command="download">下载全部</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+          <div v-if="folders.length === 0" class="folder-empty">
+            暂无文件夹
+          </div>
+        </div>
         <li class="nav-divider"></li>
         <li :class="{ active: activeTab === 'contract' }" @click="switchTab('contract')">
           <el-icon><Notebook /></el-icon>
@@ -39,7 +96,7 @@
         </li>
         <li :class="{ active: activeTab === 'activity' }" @click="switchTab('activity')">
           <el-icon><Bell /></el-icon>
-          <span>团队动态</span>
+          <span>个人动态</span>
         </li>
         <li v-if="isAdmin" :class="{ active: activeTab === 'admin' }" @click="switchTab('admin')">
           <el-icon><Setting /></el-icon>
@@ -61,11 +118,32 @@
               上传文档
             </el-button>
           </el-upload>
+          <el-button v-if="isDocView && activeFolderId === null" @click="handleAiOrganize">
+            <el-icon><MagicStick /></el-icon>
+            AI 整理
+          </el-button>
           <h3 v-if="!isDocView" class="page-title">{{ activeTabLabel }}</h3>
         </div>
-        <el-input v-if="isDocView" v-model="searchKeyword" placeholder="搜索文档..." clearable
-          :prefix-icon="Search" @input="handleSearchInput" @clear="handleSearchClear"
-          class="search-input" />
+        <div v-if="isDocView" class="search-wrapper">
+          <el-input v-model="searchKeyword" placeholder="搜索文档..." clearable
+            :prefix-icon="Search" @input="handleSearchInput" @clear="handleSearchClear"
+            @keydown.enter="handleSearchEnter" class="search-input" />
+          <div v-if="suggestions.length > 0" class="search-suggestions">
+            <div v-for="item in suggestions" :key="item.id" class="suggestion-item" @click="goToDocument(item.id)">
+              <el-icon class="suggestion-icon"><Document /></el-icon>
+              <div class="suggestion-content">
+                <div class="suggestion-title">{{ item.title }}</div>
+                <div v-if="item.snippet" class="suggestion-snippet" v-html="item.snippet"></div>
+              </div>
+              <el-tag size="small" :type="item.matchType === 'title' ? 'primary' : 'info'">
+                {{ item.matchType === 'title' ? '标题' : '内容' }}
+              </el-tag>
+            </div>
+            <div class="suggestion-footer">
+              按回车搜索全部结果
+            </div>
+          </div>
+        </div>
         <div class="top-bar-right">
           <NotificationBell />
           <ThemeSwitch />
@@ -89,10 +167,25 @@
       <main class="content-area" v-if="isDocView">
         <div class="content-header">
           <div class="header-left">
-            <h3>{{ activeTabLabel }}</h3>
+            <div v-if="activeFolderId" class="folder-path">
+              <span class="path-item root" @click="selectFolder(null)">全部文档</span>
+              <span v-for="(crumb, idx) in folderBreadcrumbs" :key="crumb.id" class="path-segment">
+                <span class="path-sep">/</span>
+                <span class="path-item"
+                  :class="{ active: idx === folderBreadcrumbs.length - 1 }"
+                  @click="idx < folderBreadcrumbs.length - 1 && selectFolder(crumb.id)">{{ crumb.name }}</span>
+              </span>
+            </div>
+            <h3 v-else>{{ activeTabLabel }}</h3>
             <span class="doc-count">{{ documents.length }} 个文档</span>
           </div>
           <div class="header-right">
+            <el-select v-model="sortBy" size="small" style="width: 140px" @change="handleSortChange">
+              <el-option label="最近更新" value="updatedAt" />
+              <el-option label="最近创建" value="createdAt" />
+              <el-option label="名称" value="title" />
+              <el-option label="大小" value="fileSize" />
+            </el-select>
             <el-radio-group v-model="viewMode" size="small" class="view-toggle">
               <el-radio-button value="grid">
                 <el-icon><Grid /></el-icon>
@@ -118,6 +211,9 @@
               <el-button size="small" @click="batchShare">
                 <el-icon><Share /></el-icon> 批量共享
               </el-button>
+              <el-button size="small" @click="batchExport">
+                <el-icon><Download /></el-icon> 批量导出
+              </el-button>
               <el-button size="small" type="danger" plain @click="batchDelete">
                 <el-icon><Delete /></el-icon> 批量删除
               </el-button>
@@ -135,17 +231,21 @@
 
         <el-table v-else :data="filteredDocuments"
           class="doc-table" @selection-change="handleTableSelectionChange" row-key="id"
-          :row-class-name="tableRowClassName" @row-dblclick="handleRowDblClick">
+          :row-class-name="tableRowClassName" @row-dblclick="handleRowDblClick"
+          :row-attributes="{ draggable: true }">
           <el-table-column type="selection" width="40" />
           <el-table-column label="文档" min-width="240" sortable :sort-method="sortByTitle">
             <template #default="{ row }">
-              <div class="doc-name-cell">
+              <div class="doc-name-cell" draggable="true"
+                @dragstart="onDocDragStart($event, row)"
+                @dragend="onDocDragEnd">
                 <el-icon class="doc-type-icon" :style="{ color: docTypeColor(row.docType) }">
                   <Document v-if="row.docType === 'word'" />
                   <Grid v-else-if="row.docType === 'cell'" />
                   <Picture v-else-if="row.docType === 'slide'" />
                   <Files v-else />
                 </el-icon>
+                <el-icon v-if="row.signingLocked" class="lock-icon" color="#f56c6c"><Lock /></el-icon>
                 <span class="doc-title-text">{{ row.title }}</span>
               </div>
             </template>
@@ -182,7 +282,7 @@
               {{ formatTime(row.updatedAt) }}
             </template>
           </el-table-column>
-          <el-table-column label="最近更新人" width="110" prop="ownerName" />
+          <el-table-column label="最近更新人" width="110" prop="updatedByName" />
           <el-table-column label="版本号" width="80" align="center">
             <template #default="{ row }">
               v{{ row.currentVersion }}
@@ -191,6 +291,12 @@
           <el-table-column label="大小" width="90" sortable :sort-method="sortBySize" align="right">
             <template #default="{ row }">
               {{ formatFileSize(row.fileSize) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="模板" width="150" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.templateName" class="template-path">{{ row.templateName }}</span>
+              <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
           <el-table-column label="更多操作" width="80" fixed="right" align="center">
@@ -206,6 +312,10 @@
                     <el-dropdown-item command="rename">
                       <el-icon><Edit /></el-icon>
                       重命名
+                    </el-dropdown-item>
+                    <el-dropdown-item command="move">
+                      <el-icon><Folder /></el-icon>
+                      移动到文件夹
                     </el-dropdown-item>
                     <el-dropdown-item command="share">
                       <el-icon><Share /></el-icon>
@@ -224,6 +334,18 @@
             <el-empty :description="emptyText" />
           </template>
         </el-table>
+        <div class="pagination-bar">
+          <el-pagination
+            background
+            layout="total, sizes, prev, pager, next"
+            :total="documentStore.total"
+            :page-size="documentStore.pageSize"
+            :current-page="documentStore.page + 1"
+            :page-sizes="[10, 20, 50, 100]"
+            @current-change="handlePageChange"
+            @size-change="handleSizeChange"
+          />
+        </div>
       </main>
 
       <!-- Inline contract view -->
@@ -240,10 +362,122 @@
       <main class="content-area" v-else-if="activeTab === 'admin'">
         <AdminPanel />
       </main>
+
+      <!-- Trash view -->
+      <main class="content-area" v-else-if="activeTab === 'trash'">
+        <div class="trash-header">
+          <h3>回收站</h3>
+          <p class="trash-tip">文档删除后保留 30 天，之后将永久删除</p>
+          <el-input v-model="trashSearch" placeholder="搜索回收站..." clearable style="width: 240px" />
+          <el-button v-if="trashDocuments.length > 0" type="danger" plain size="small" @click="handleEmptyTrash">
+            清空回收站
+          </el-button>
+        </div>
+        <div v-if="filteredTrashDocuments.length === 0" class="empty-state">
+          <el-empty :description="trashSearch ? '未找到匹配文档' : '回收站为空'" />
+        </div>
+        <div v-else class="trash-list">
+          <div v-for="doc in filteredTrashDocuments" :key="doc.id" class="trash-item">
+            <div class="trash-item-info">
+              <el-icon class="trash-icon"><Delete /></el-icon>
+              <div class="trash-item-details">
+                <span class="trash-title">{{ doc.title }}</span>
+                <span class="trash-meta">
+                  创建人：{{ doc.ownerName || '-' }} · 删除人：{{ doc.updatedByName || '-' }} · 删除于 {{ formatDate(doc.updatedAt) }}
+                </span>
+              </div>
+            </div>
+            <div class="trash-item-actions">
+              <el-button size="small" @click="handleRestore(doc.id)">恢复</el-button>
+              <el-button size="small" type="danger" plain @click="handlePermanentDelete(doc.id)">永久删除</el-button>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
 
     <CreateDocDialog v-model="showCreate" @created="handleCreated" />
     <ShareDialog v-model="showShareDialog" :doc-id="shareDocId" :doc-ids="shareDocIds" />
+
+    <!-- 移动到文件夹弹窗 -->
+    <el-dialog v-model="moveDialogVisible" title="移动到文件夹" width="400px">
+      <el-select v-model="moveTargetFolder" placeholder="选择目标文件夹" style="width: 100%" clearable>
+        <el-option label="根目录（无文件夹）" :value="null" />
+        <el-option v-for="folder in folders" :key="folder.id" :label="folder.name" :value="folder.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="moveDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleMoveToFolder">移动</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 创建文件夹弹窗 -->
+    <el-dialog v-model="createFolderVisible" title="新建文件夹" width="450px">
+      <el-form :model="{ name: newFolderName, color: newFolderColor, templateId: newFolderTemplateId }" label-width="80px">
+        <el-form-item label="文件夹名称">
+          <el-input v-model="newFolderName" placeholder="请输入文件夹名称" maxlength="50" show-word-limit />
+        </el-form-item>
+        <el-form-item label="颜色标记">
+          <div class="color-picker">
+            <div v-for="c in folderColors" :key="c.value" class="color-option"
+              :class="{ selected: newFolderColor === c.value }"
+              :style="{ background: c.value }"
+              @click="newFolderColor = c.value">
+              <el-icon v-if="newFolderColor === c.value" :size="12" color="white"><Check /></el-icon>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="上级文件夹">
+          <el-select v-model="newFolderParentId" placeholder="根目录（无上级）" clearable style="width: 100%">
+            <el-option label="根目录（无上级）" :value="null" />
+            <el-option v-for="f in folders" :key="f.id" :label="f.name" :value="f.id" />
+          </el-select>
+          <div v-if="activeFolderId && !newFolderParentId" class="form-tip">
+            当前位于「{{ folders.find(f => f.id === activeFolderId)?.name }}」内，新文件夹将创建在该目录下
+          </div>
+        </el-form-item>
+        <el-form-item label="从模板创建">
+          <el-select v-model="newFolderTemplateId" placeholder="不使用模板" clearable style="width: 100%">
+            <el-option label="不使用模板" :value="0" />
+            <el-option v-for="tpl in folderTemplates" :key="tpl.id" :label="tpl.name" :value="tpl.id" />
+          </el-select>
+          <div class="form-tip">选择模板将自动创建子文件夹结构</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createFolderVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleCreateFolder">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑文件夹弹窗 -->
+    <el-dialog v-model="editFolderVisible" title="编辑文件夹" width="450px">
+      <el-form label-width="80px">
+        <el-form-item label="文件夹名称">
+          <el-input v-model="editFolderName" placeholder="请输入文件夹名称" maxlength="50" show-word-limit />
+        </el-form-item>
+        <el-form-item label="颜色标记">
+          <div class="color-picker">
+            <div v-for="c in folderColors" :key="c.value" class="color-option"
+              :class="{ selected: editFolderColor === c.value }"
+              :style="{ background: c.value }"
+              @click="editFolderColor = c.value">
+              <el-icon v-if="editFolderColor === c.value" :size="12" color="white"><Check /></el-icon>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="上级文件夹">
+          <el-select v-model="editFolderParentId" placeholder="根目录（无上级）" clearable style="width: 100%">
+            <el-option label="根目录（无上级）" :value="null" />
+            <el-option v-for="f in availableParentFolders" :key="f.id" :label="f.name" :value="f.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editFolderVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleUpdateFolder">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -253,9 +487,11 @@ import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
-import { Search, List, MoreFilled } from '@element-plus/icons-vue'
+import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { departmentApi, type Department } from '@/api/department'
+import { folderApi, type Folder as FolderType } from '@/api/folder'
+import { folderTemplateApi } from '@/api/folderTemplate'
 import DocCard from '@/components/DocCard.vue'
 import CreateDocDialog from '@/components/CreateDocDialog.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
@@ -279,30 +515,285 @@ const shareDocId = ref(0)
 const shareDocIds = ref<number[]>([])
 const selectedIds = ref<Set<number>>(new Set())
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('viewMode') as 'grid' | 'list') || 'grid')
+const suggestions = ref<any[]>([])
+const trashDocuments = ref<any[]>([])
+const trashSearch = ref('')
+
+const filteredTrashDocuments = computed(() => {
+  if (!trashSearch.value.trim()) return trashDocuments.value
+  const keyword = trashSearch.value.trim().toLowerCase()
+  return trashDocuments.value.filter(doc =>
+    doc.title?.toLowerCase().includes(keyword) ||
+    doc.ownerName?.toLowerCase().includes(keyword) ||
+    doc.updatedByName?.toLowerCase().includes(keyword)
+  )
+})
 watch(viewMode, (val) => localStorage.setItem('viewMode', val))
 const deptTreeRef = ref<InstanceType<typeof ElTree>>()
 const sortBy = ref('updatedAt')
 
+// 列表拖拽
+function onDocDragStart(e: DragEvent, doc: any) {
+  e.dataTransfer?.setData('text/plain', String(doc.id))
+  e.dataTransfer!.effectAllowed = 'move'
+  // 创建小预览
+  const ghost = document.createElement('div')
+  ghost.className = 'drag-ghost'
+  ghost.textContent = doc.title
+  ghost.style.cssText = 'position:absolute;top:-1000px;padding:6px 12px;background:white;border:1px solid #409eff;border-radius:4px;font-size:12px;color:#303133;box-shadow:0 2px 6px rgba(0,0,0,0.15);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+  document.body.appendChild(ghost)
+  e.dataTransfer!.setDragImage(ghost, 0, 0)
+  setTimeout(() => document.body.removeChild(ghost), 0)
+}
+
+function onDocDragEnd() {
+  // no-op
+}
+
+// 文件夹
+const folders = ref<FolderType[]>([])
+const activeFolderId = ref<number | null>(null)
+const dragOverFolderId = ref<number | null>(null)
+const expandedFolders = ref<Set<number>>(new Set())
+
+function toggleFolder(id: number) {
+  const newSet = new Set(expandedFolders.value)
+  if (newSet.has(id)) {
+    newSet.delete(id)
+  } else {
+    newSet.add(id)
+  }
+  expandedFolders.value = newSet
+}
+
+// 计算扁平化的文件夹列表（支持任意层级嵌套）
+const flatFolders = computed(() => {
+  const result: (FolderType & { depth: number; hasChildren: boolean })[] = []
+  function addChildren(parentId: number | null | undefined, depth: number) {
+    const children = folders.value.filter(f => {
+      if (parentId === null || parentId === undefined) {
+        return !f.parentId
+      }
+      return f.parentId === parentId
+    })
+    for (const folder of children) {
+      const childCount = folders.value.filter(f => f.parentId === folder.id).length
+      const hasChildren = childCount > 0
+      result.push({ ...folder, depth, hasChildren })
+      if (hasChildren && expandedFolders.value.has(folder.id)) {
+        addChildren(folder.id, depth + 1)
+      }
+    }
+  }
+  addChildren(null, 0)
+  return result
+})
+
+// 面包屑导航
+const folderBreadcrumbs = computed(() => {
+  if (!activeFolderId.value) return []
+  const crumbs: { id: number; name: string }[] = []
+  let currentId: number | null = activeFolderId.value
+  while (currentId) {
+    const folder = folders.value.find(f => f.id === currentId)
+    if (folder) {
+      crumbs.unshift({ id: folder.id, name: folder.name })
+      currentId = folder.parentId || null
+    } else {
+      break
+    }
+  }
+  return crumbs
+})
+
+function onFolderDragOver(folderId: number) {
+  dragOverFolderId.value = folderId
+}
+
+function onFolderDragLeave() {
+  dragOverFolderId.value = null
+}
+
+async function onFolderDrop(event: DragEvent, folderId: number) {
+  dragOverFolderId.value = null
+  const docId = event.dataTransfer?.getData('text/plain')
+  if (docId) {
+    try {
+      await documentApi.moveToFolder(parseInt(docId), folderId)
+      ElMessage.success('已移动到文件夹')
+      documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+      loadFolders()
+    } catch {
+      ElMessage.error('移动失败')
+    }
+  }
+}
+
+async function loadFolders() {
+  try {
+    folders.value = await folderApi.getAll()
+  } catch {}
+}
+
+function handleFolderCreateCommand(cmd: string) {
+  if (cmd === 'empty') {
+    showCreateFolder()
+  } else if (cmd === 'template') {
+    showTemplateFolderDialog()
+  }
+}
+
+function showTemplateFolderDialog() {
+  ElMessage.info('项目空间模板功能开发中...')
+}
+
+function selectFolder(id: number | null) {
+  activeFolderId.value = activeFolderId.value === id ? null : id
+  // 自动展开选中的文件夹及其父级
+  if (activeFolderId.value) {
+    const newExpanded = new Set(expandedFolders.value)
+    let currentId: number | null = activeFolderId.value
+    while (currentId) {
+      newExpanded.add(currentId)
+      const folder = folders.value.find(f => f.id === currentId)
+      currentId = folder?.parentId || null
+    }
+    expandedFolders.value = newExpanded
+  }
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10, ...(activeFolderId.value ? { folderId: activeFolderId.value } : {}) })
+}
+
+async function handleFolderCommand(cmd: string, folder: any) {
+  if (cmd === 'edit') {
+    showEditFolder(folder)
+  } else if (cmd === 'addSub') {
+    showAddSubFolder(folder)
+  } else if (cmd === 'download') {
+    try {
+      ElMessage.info('正在打包下载...')
+      const blob = await folderApi.download(folder.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${folder.name}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      ElMessage.success('下载完成')
+    } catch {
+      ElMessage.error('下载失败')
+    }
+  } else if (cmd === 'delete') {
+    try {
+      await ElMessageBox.confirm('删除文件夹后，其中的文档将移至根目录。确定删除吗？', '删除文件夹', { type: 'warning' })
+      await folderApi.delete(folder.id)
+      ElMessage.success('文件夹已删除')
+      if (activeFolderId.value === folder.id) {
+        activeFolderId.value = null
+        documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+      }
+      loadFolders()
+    } catch {}
+  }
+}
+
+// AI 智能整理
+async function handleAiOrganize() {
+  try {
+    await ElMessageBox.confirm(
+      'AI 将根据文档标题自动分类到对应文件夹。确定继续吗？',
+      'AI 智能整理',
+      { confirmButtonText: '开始整理', cancelButtonText: '取消' }
+    )
+    ElMessage.info('AI 正在整理文档...')
+    const allDocs = documentStore.documents
+    const allFolders = folders.value
+    if (allFolders.length === 0) {
+      ElMessage.warning('请先创建文件夹')
+      return
+    }
+    const folderNames = allFolders.map(f => f.name)
+
+    // 从后端获取 AI 配置
+    let llmUrl = 'http://192.24.129.1:31000'
+    let llmKey = ''
+    let model = 'qwen3-coder'
+    try {
+      const configRes = await fetch('/api/ai/config')
+      const config = await configRes.json()
+      const provider = config.providers?.OpenAI || {}
+      llmUrl = provider.url?.replace('/v1', '') || llmUrl
+      llmKey = provider.key || llmKey
+      model = config.actions?.Chat?.model || model
+    } catch {}
+
+    let moved = 0
+    for (const doc of allDocs) {
+      if (doc.folderId) continue
+      try {
+        const result = await fetch('/api/ai/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target: llmUrl + '/v1/chat/completions',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + llmKey },
+            data: JSON.stringify({
+              model: model,
+              messages: [{ role: 'user', content: `根据文档标题"${doc.title}"，从以下文件夹中选择最匹配的一个，只回答文件夹名称，不要其他文字：${folderNames.join('、')}` }],
+              max_tokens: 50,
+              stream: false
+            })
+          })
+        })
+        const data = await result.json()
+        const content = data.choices?.[0]?.message?.content?.trim() || ''
+        const matchedFolder = allFolders.find(f => content.includes(f.name))
+        if (matchedFolder) {
+          await documentApi.moveToFolder(doc.id, matchedFolder.id)
+          moved++
+        }
+      } catch {}
+    }
+    if (moved > 0) {
+      ElMessage.success(`AI 已整理 ${moved} 个文档到对应文件夹`)
+      documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+      loadFolders()
+    } else {
+      ElMessage.info('没有需要整理的文档')
+    }
+  } catch {}
+}
 const documents = computed(() => documentStore.documents)
 const userName = computed(() => sessionStorage.getItem('name') || '用户')
 const employeeId = computed(() => sessionStorage.getItem('employeeId') || '')
 const isAdmin = computed(() => sessionStorage.getItem('role') === 'admin')
 
-const isDocView = computed(() => !['activity', 'admin', 'contract'].includes(activeTab.value))
+const isDocView = computed(() => {
+  if (activeFolderId.value) return true
+  return !['activity', 'admin', 'contract', 'trash'].includes(activeTab.value)
+})
 
 const tabLabels: Record<string, string> = {
   all: '全部文档',
+  recent: '最近访问',
   word: 'Word',
   cell: 'Sheet',
   slide: 'PPT',
   shared: '与我共享',
   starred: '收藏文档',
-  activity: '团队动态',
+  trash: '回收站',
+  activity: '个人动态',
   admin: '管理后台',
   contract: '合同管理'
 }
 
-const activeTabLabel = computed(() => tabLabels[activeTab.value] || '全部文档')
+const activeTabLabel = computed(() => {
+  if (activeFolderId.value) {
+    const folder = folders.value.find((f: any) => f.id === activeFolderId.value)
+    return folder ? folder.name : '文件夹'
+  }
+  return tabLabels[activeTab.value] || '全部文档'
+})
 
 const emptyText = computed(() => {
   if (searchKeyword.value) return '未找到匹配的文档'
@@ -313,7 +804,8 @@ const emptyText = computed(() => {
 })
 
 onMounted(async () => {
-  documentStore.fetchDocuments({ sort: sortBy.value })
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+  loadFolders()
   try {
     departments.value = await departmentApi.getAll()
   } catch {
@@ -323,13 +815,22 @@ onMounted(async () => {
 
 function switchTab(tab: string) {
   activeTab.value = tab
+  activeFolderId.value = null  // 切换标签时清除文件夹选择
   selectedIds.value = new Set()
   if (['activity', 'admin', 'contract'].includes(tab)) return
+  if (tab === 'trash') {
+    loadTrash()
+    return
+  }
+  if (tab === 'recent') {
+    documentStore.fetchDocuments({ sort: 'updatedAt', size: 50 })
+    return
+  }
 
   selectedDeptIds.value = new Set()
   searchKeyword.value = ''
 
-  const params: any = { page: 0, size: 50, sort: sortBy.value }
+  const params: any = { page: 0, size: 10, sort: sortBy.value }
   if (tab !== 'all') {
     params.type = tab
   }
@@ -340,26 +841,66 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 function handleSearchInput() {
   if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    if (!searchKeyword.value.trim()) {
-      documentStore.fetchDocuments({ sort: sortBy.value })
-      return
+  const keyword = searchKeyword.value.trim()
+
+  if (!keyword) {
+    suggestions.value = []
+    documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+    return
+  }
+
+  // 防抖获取搜索建议
+  searchTimer = setTimeout(async () => {
+    try {
+      const result = await documentApi.suggest(keyword)
+      suggestions.value = result.suggestions || []
+    } catch {
+      suggestions.value = []
     }
-    activeTab.value = 'all'
-    selectedDeptIds.value = new Set()
-    documentStore.fetchDocuments({ keyword: searchKeyword.value.trim(), sort: sortBy.value })
   }, 300)
 }
 
+function handleSearchEnter() {
+  suggestions.value = []
+  if (!searchKeyword.value.trim()) return
+  activeTab.value = 'all'
+  selectedDeptIds.value = new Set()
+  documentStore.fetchDocuments({ keyword: searchKeyword.value.trim(), sort: sortBy.value, size: 10 })
+}
+
 function handleSearchClear() {
-  documentStore.fetchDocuments({ sort: sortBy.value })
+  suggestions.value = []
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+}
+
+function goToDocument(docId: number) {
+  suggestions.value = []
+  router.push(`/editor/${docId}`)
+}
+
+function handlePageChange(newPage: number) {
+  const params: any = { page: newPage - 1, size: documentStore.pageSize, sort: sortBy.value }
+  if (activeTab.value !== 'all') params.type = activeTab.value
+  if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
+  documentStore.fetchDocuments(params)
+}
+
+function handleSizeChange(newSize: number) {
+  const params: any = { page: 0, size: newSize, sort: sortBy.value }
+  if (activeTab.value !== 'all') params.type = activeTab.value
+  if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
+  documentStore.fetchDocuments(params)
+}
+
+function handleSortChange() {
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
 }
 
 async function handleUpload(file: File) {
   try {
     await documentApi.upload(file)
     ElMessage.success('上传成功')
-    documentStore.fetchDocuments({ sort: sortBy.value })
+    documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
   } catch {
     ElMessage.error('上传失败')
   }
@@ -383,7 +924,7 @@ async function handleDelete(id: number) {
 }
 
 function handleCreated() {
-  documentStore.fetchDocuments({ sort: sortBy.value })
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
 }
 
 function openShareDialog(docId: number) {
@@ -417,7 +958,7 @@ async function batchDelete() {
     await documentApi.batchDelete(ids)
     ElMessage.success(`成功删除 ${ids.length} 个文档`)
     selectedIds.value = new Set()
-    documentStore.fetchDocuments({ sort: sortBy.value })
+    documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
   } catch (err: any) {
     if (err !== 'cancel') {
       ElMessage.error('批量删除失败')
@@ -429,6 +970,23 @@ function batchShare() {
   shareDocIds.value = Array.from(selectedIds.value)
   shareDocId.value = 0
   showShareDialog.value = true
+}
+
+async function batchExport() {
+  try {
+    const ids = Array.from(selectedIds.value)
+    ElMessage.info(`正在导出 ${ids.length} 个文档...`)
+    const blob = await documentApi.exportZip(ids)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `documents_${new Date().toISOString().slice(0, 10)}.zip`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败')
+  }
 }
 
 function handleLogout() {
@@ -453,6 +1011,54 @@ function formatTime(time?: string) {
   const d = new Date(time)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function formatDate(time?: string) {
+  if (!time) return '-'
+  const d = new Date(time)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// 回收站功能
+async function loadTrash() {
+  try {
+    trashDocuments.value = await documentApi.getTrash()
+  } catch {
+    ElMessage.error('加载回收站失败')
+  }
+}
+
+async function handleRestore(id: number) {
+  try {
+    await documentApi.restoreFromTrash(id)
+    ElMessage.success('文档已恢复')
+    loadTrash()
+  } catch {
+    ElMessage.error('恢复失败')
+  }
+}
+
+async function handlePermanentDelete(id: number) {
+  try {
+    await ElMessageBox.confirm('永久删除后无法恢复，确定要删除吗？', '确认永久删除', { type: 'warning' })
+    await documentApi.permanentDelete(id)
+    ElMessage.success('文档已永久删除')
+    loadTrash()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+async function handleEmptyTrash() {
+  try {
+    await ElMessageBox.confirm('确定要清空回收站吗？所有文档将被永久删除。', '确认清空', { type: 'warning' })
+    const result = await documentApi.emptyTrash()
+    ElMessage.success(`已清空 ${result.deleted} 个文档`)
+    loadTrash()
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('清空失败')
+  }
 }
 
 function handleTableSelectionChange(rows: any[]) {
@@ -536,11 +1142,155 @@ function onDeptFilterHide() {
   // no-op, tree state persists
 }
 
+// 移动到文件夹
+const moveDialogVisible = ref(false)
+const moveTargetFolder = ref<number | null>(null)
+const moveDocId = ref(0)
+const createFolderVisible = ref(false)
+const newFolderName = ref('')
+const newFolderColor = ref('#409eff')
+const newFolderTemplateId = ref(0)
+const newFolderParentId = ref<number | null>(null)
+const folderTemplates = ref<any[]>([])
+
+// 编辑文件夹
+const editFolderVisible = ref(false)
+const editingFolder = ref<FolderType | null>(null)
+const editFolderName = ref('')
+const editFolderColor = ref('#409eff')
+const editFolderParentId = ref<number | null>(null)
+
+const folderColors = [
+  { value: '#409eff', name: '蓝色' },
+  { value: '#67c23a', name: '绿色' },
+  { value: '#e6a23c', name: '橙色' },
+  { value: '#f56c6c', name: '红色' },
+  { value: '#909399', name: '灰色' },
+  { value: '#9b59b6', name: '紫色' },
+  { value: '#1abc9c', name: '青色' },
+  { value: '#e91e63', name: '粉色' }
+]
+
+function showCreateFolder() {
+  newFolderName.value = ''
+  newFolderColor.value = '#409eff'
+  newFolderTemplateId.value = 0
+  newFolderParentId.value = null
+  loadFolderTemplates()
+  createFolderVisible.value = true
+}
+
+async function loadFolderTemplates() {
+  try {
+    folderTemplates.value = await folderTemplateApi.getAll()
+  } catch {}
+}
+
+async function handleCreateFolder() {
+  if (!newFolderName.value.trim()) {
+    ElMessage.warning('请输入文件夹名称')
+    return
+  }
+  try {
+    const parentId = newFolderParentId.value || activeFolderId.value || undefined
+    const folder = await folderApi.create({ name: newFolderName.value.trim(), color: newFolderColor.value, parentId })
+    ElMessage.success('文件夹已创建')
+    createFolderVisible.value = false
+    // 如果选择了模板，创建子文件夹
+    if (newFolderTemplateId.value) {
+      const tpl = folderTemplates.value.find((t: any) => t.id === newFolderTemplateId.value)
+      if (tpl && tpl.structure) {
+        const structure = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure) : tpl.structure
+        if (Array.isArray(structure)) {
+          for (const item of structure) {
+            const childFolder = await folderApi.create({ name: item.name, parentId: folder.id })
+            // 如果有子文件夹，递归创建
+            if (item.children && Array.isArray(item.children)) {
+              for (const childName of item.children) {
+                await folderApi.create({ name: childName, parentId: childFolder.id })
+              }
+            }
+          }
+          ElMessage.success('已从模板创建子文件夹')
+        }
+      }
+    }
+    loadFolders()
+  } catch {
+    ElMessage.error('创建失败')
+  }
+}
+
+// 编辑文件夹：排除当前文件夹及其子文件夹作为可选上级
+const availableParentFolders = computed(() => {
+  if (!editingFolder.value) return folders.value
+  const excluded = new Set<number>()
+  function collectDescendants(id: number) {
+    excluded.add(id)
+    folders.value.filter(f => f.parentId === id).forEach(f => collectDescendants(f.id))
+  }
+  collectDescendants(editingFolder.value.id)
+  return folders.value.filter(f => !excluded.has(f.id))
+})
+
+function showEditFolder(folder: FolderType) {
+  editingFolder.value = folder
+  editFolderName.value = folder.name
+  editFolderColor.value = folder.color || '#409eff'
+  editFolderParentId.value = folder.parentId ?? null
+  editFolderVisible.value = true
+}
+
+function showAddSubFolder(parentFolder: FolderType) {
+  newFolderName.value = ''
+  newFolderColor.value = '#409eff'
+  newFolderTemplateId.value = 0
+  newFolderParentId.value = parentFolder.id
+  createFolderVisible.value = true
+}
+
+async function handleUpdateFolder() {
+  if (!editFolderName.value.trim()) {
+    ElMessage.warning('请输入文件夹名称')
+    return
+  }
+  if (!editingFolder.value) return
+  try {
+    await folderApi.update(editingFolder.value.id, {
+      name: editFolderName.value.trim(),
+      color: editFolderColor.value,
+      parentId: editFolderParentId.value
+    })
+    ElMessage.success('文件夹已更新')
+    editFolderVisible.value = false
+    loadFolders()
+  } catch {
+    ElMessage.error('更新失败')
+  }
+}
+
+function showMoveDialog(doc: any) {
+  moveDocId.value = doc.id
+  moveTargetFolder.value = null
+  moveDialogVisible.value = true
+}
+
+async function handleMoveToFolder() {
+  try {
+    await documentApi.moveToFolder(moveDocId.value, moveTargetFolder.value)
+    ElMessage.success('已移动到文件夹')
+    moveDialogVisible.value = false
+    documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+  } catch {
+    ElMessage.error('移动失败')
+  }
+}
+
 async function handleTableCommand(cmd: string, row: any) {
   if (cmd === 'star') {
     try {
       await documentApi.toggleStar(row.id)
-      documentStore.fetchDocuments({ sort: sortBy.value })
+      documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
     } catch {
       ElMessage.error('操作失败')
     }
@@ -553,11 +1303,13 @@ async function handleTableCommand(cmd: string, row: any) {
       })
       if (value && value.trim()) {
         await documentApi.rename(row.id, value.trim())
-        documentStore.fetchDocuments({ sort: sortBy.value })
+        documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
       }
     } catch {
       // cancelled
     }
+  } else if (cmd === 'move') {
+    showMoveDialog(row)
   } else if (cmd === 'share') {
     openShareDialog(row.id)
   } else if (cmd === 'delete') {
@@ -687,13 +1439,169 @@ async function handleTableCommand(cmd: string, row: any) {
   line-height: 1;
 }
 
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0;
+}
+
+
 .search-input {
-  width: 300px;
+  width: 500px;
   margin-left: auto;
 }
 
 .search-input :deep(.el-input__wrapper) {
   border-radius: 20px;
+}
+
+.search-wrapper {
+  position: relative;
+  margin-left: auto;
+}
+
+.search-wrapper .search-input {
+  margin-left: 0;
+}
+
+.folder-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  font-size: 13px;
+}
+
+.breadcrumb-item {
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.breadcrumb-item:hover {
+  color: #409eff;
+}
+
+.breadcrumb-item.active {
+  color: #303133;
+  font-weight: 500;
+  cursor: default;
+}
+
+.breadcrumb-segment {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.breadcrumb-segment .el-icon {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+/* 文件夹路径面包屑 */
+.folder-path {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.path-item {
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.path-item:hover {
+  color: var(--el-color-primary);
+}
+
+.path-item.active {
+  color: #303133;
+  cursor: default;
+}
+
+.path-item.root {
+  color: #606266;
+}
+
+.path-sep {
+  color: #c0c4cc;
+  margin: 0 2px;
+  font-weight: 400;
+}
+
+.search-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.suggestion-item:hover {
+  background: #f5f7fa;
+}
+
+.suggestion-icon {
+  color: #909399;
+  flex-shrink: 0;
+}
+
+.suggestion-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.suggestion-title {
+  font-size: 14px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-snippet {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+  max-height: 40px;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+.suggestion-snippet :deep(mark) {
+  background: #fef08a;
+  color: #303133;
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 500;
+}
+
+.suggestion-footer {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #909399;
+  border-top: 1px solid #f0f0f0;
+  text-align: center;
 }
 
 .top-bar-right {
@@ -911,7 +1819,7 @@ async function handleTableCommand(cmd: string, row: any) {
 }
 
 .doc-type-icon {
-  font-size: 20px;
+  font-size: 10px;
   flex-shrink: 0;
 }
 
@@ -919,6 +1827,213 @@ async function handleTableCommand(cmd: string, row: any) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 回收站样式 */
+.trash-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.trash-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+  margin: 0;
+}
+
+.trash-tip {
+  font-size: 13px;
+  color: #909399;
+  margin: 0;
+}
+
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+}
+
+.trash-item:hover {
+  border-color: #d0d0d0;
+}
+
+.trash-item-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trash-icon {
+  color: #909399;
+}
+
+.trash-item-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.trash-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.trash-meta {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.trash-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.empty-state {
+  padding: 60px 0;
+}
+
+.template-path {
+  font-size: 12px;
+  color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-muted {
+  color: #c0c4cc;
+  font-size: 12px;
+}
+
+.nav-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #909399;
+  text-transform: uppercase;
+}
+
+.folder-tree {
+  padding: 0 8px;
+}
+
+.folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #606266;
+  font-size: 13px;
+}
+
+.folder-item:hover {
+  background: #f5f7fa;
+}
+
+.folder-item.active {
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.folder-item.drag-over {
+  background: #e6f7ff;
+  border: 1px dashed #409eff;
+  color: #409eff;
+}
+
+.folder-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-actions {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.folder-item:hover .folder-actions {
+  opacity: 1;
+}
+
+.folder-more {
+  cursor: pointer;
+  color: #909399;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.folder-more:hover {
+  background: #e4e7ed;
+  color: #606266;
+}
+
+.color-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.color-option {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.color-option:hover {
+  transform: scale(1.1);
+}
+
+.color-option.selected {
+  border-color: #303133;
+  box-shadow: 0 0 0 2px white, 0 0 0 4px #303133;
+}
+
+.folder-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 </style>

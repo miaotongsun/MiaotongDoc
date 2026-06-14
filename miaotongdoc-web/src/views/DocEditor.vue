@@ -16,6 +16,7 @@
         <el-button v-if="canAdmin" @click="showShareDialog = true">共享</el-button>
         <el-button @click="showCommentPanel = !showCommentPanel">评论</el-button>
         <el-button @click="showVersions = true">版本历史</el-button>
+        <el-button v-if="isOwner" @click="handleSaveVersion">保存版本</el-button>
         <el-button v-if="isOwner && docStatus === 'draft'" @click="showSigningDialog = true">
           提交签署
         </el-button>
@@ -39,6 +40,18 @@
     <VersionHistory v-model="showVersions" :doc-id="docId" :current-version="doc?.currentVersion || 1"
       @restore="onVersionRestore" />
     <SigningDialog v-model="showSigningDialog" :doc-id="docId" @submitted="onSigningSubmitted" />
+
+    <el-dialog v-model="showSaveVersionDialog" title="保存版本" width="400px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="版本说明">
+          <el-input v-model="versionSummary" type="textarea" :rows="3" placeholder="请输入版本说明（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSaveVersionDialog = false">取消</el-button>
+        <el-button type="primary" @click="confirmSaveVersion">确定保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -70,6 +83,8 @@ const showCommentPanel = ref(false)
 const showShareDialog = ref(false)
 const showVersions = ref(false)
 const showSigningDialog = ref(false)
+const showSaveVersionDialog = ref(false)
+const versionSummary = ref('')
 const saveStatus = ref('')
 const signingTask = ref<SigningTask | null>(null)
 const currentUserId = computed(() => Number(sessionStorage.getItem('userId')) || 0)
@@ -109,13 +124,10 @@ onMounted(async () => {
 
 async function loadSigningTask() {
   try {
-    const res = await signingApi.getMyTasks({ type: 'todo', page: 0, size: 100 })
-    const task = res.content?.find((t: any) => t.documentId === docId.value)
-    if (task) {
-      signingTask.value = task
-    }
-  } catch (error) {
-    console.error('加载签署任务失败', error)
+    const task = await signingApi.getByDocumentId(docId.value)
+    signingTask.value = task
+  } catch {
+    // no active signing task for this document
   }
 }
 
@@ -141,7 +153,7 @@ async function exportPdf() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${doc.value?.title || 'document'}.pdf`
+    a.download = `${doc.value?.title || 'document'}_v${doc.value?.currentVersion || 1}.pdf`
     a.click()
     URL.revokeObjectURL(url)
   } catch {
@@ -151,6 +163,22 @@ async function exportPdf() {
 
 function onVersionRestore() {
   location.reload()
+}
+
+async function handleSaveVersion() {
+  versionSummary.value = ''
+  showSaveVersionDialog.value = true
+}
+
+async function confirmSaveVersion() {
+  try {
+    const res = await documentApi.createVersion(docId.value, versionSummary.value || undefined)
+    ElMessage.success(`版本 v${res.versionNumber} 已保存`)
+    if (doc.value) doc.value.currentVersion = res.versionNumber
+    showSaveVersionDialog.value = false
+  } catch {
+    ElMessage.error('保存版本失败')
+  }
 }
 
 function onSigningSubmitted() {

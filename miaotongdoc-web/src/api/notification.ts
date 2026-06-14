@@ -3,12 +3,17 @@ import api from './index'
 export interface Notification {
   id: number
   userId: number
+  fromUserId?: number
+  fromUserName?: string
+  documentId?: number
+  documentTitle?: string
   type: string
   title: string
   content: string
   relatedId?: number
   relatedType?: string
   isRead: boolean
+  readAt?: string
   createdAt: string
 }
 

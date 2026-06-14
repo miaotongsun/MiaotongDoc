@@ -9,8 +9,10 @@ export function renderMentions(content: string): string {
   let safe = escapeHtml(content)
 
   // Then restore mention tags (they were escaped, so match escaped format)
-  safe = safe.replace(/@\{userId:(\d+):([^}]+)\}/g, (_, id, name) => {
-    return `<span class="mention-tag" data-user-id="${id}">@${name}</span>`
+  // Format: @{userId:X:Name:employeeId} or @{userId:X:Name}
+  safe = safe.replace(/@\{userId:(\d+):([^:}]+)(?::([^}]*))?\}/g, (_, id, name, empId) => {
+    const display = empId ? `@${name}(${empId})` : `@${name}`
+    return `<span class="mention-tag" data-user-id="${id}">${display}</span>`
   })
 
   return safe

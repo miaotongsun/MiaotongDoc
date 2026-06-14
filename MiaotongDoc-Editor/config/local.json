@@ -1,6 +1,9 @@
 {
     "services": {
         "CoAuthoring": {
+            "server": {
+                "appName": "miaotongDoc/1.0"
+            },
             "sql": {
                 "type": "postgres",
                 "dbHost": "postgres",
@@ -24,10 +27,12 @@
                 },
                 "algorithm": "HS256",
                 "inbox": {
-                    "header": "Authorization"
+                    "header": "Authorization",
+                    "inBody": true
                 },
                 "outbox": {
-                    "header": "Authorization"
+                    "header": "Authorization",
+                    "inBody": true
                 }
             },
             "secret": {
