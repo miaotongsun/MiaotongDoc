@@ -42,9 +42,9 @@
         </li>
         <li class="nav-divider"></li>
         <!-- 文件夹 -->
-        <li class="nav-section-header">
-          <span class="nav-section-title" :class="{ active: activeTab === 'folders' }" @click="switchTab('folders')">文件夹</span>
-          <div class="nav-section-actions">
+        <li class="nav-section-header" @click="switchTab('folders')">
+          <span class="nav-section-title" :class="{ active: activeTab === 'folders' }">文件夹</span>
+          <div class="nav-section-actions" @click.stop>
             <el-button text size="small" @click.stop="collapseAllFolders" title="全部折叠">
               <svg viewBox="0 0 1024 1024" width="14" height="14" style="vertical-align: middle">
                 <path fill="currentColor" d="M128 256h768a42.667 42.667 0 0 0 0-85.333H128a42.667 42.667 0 1 0 0 85.333zm768 426.667H128a42.667 42.667 0 0 0 0 85.333h768a42.667 42.667 0 0 0 0-85.333zm-256-213.334H128a42.667 42.667 0 0 0 0 85.334h512a42.667 42.667 0 0 0 0-85.334z"/>
@@ -60,6 +60,7 @@
             :class="{ active: activeFolderId === folder.id, 'drag-over': dragOverFolderId === folder.id, 'folder-child': folder.depth > 0 }"
             :style="{ paddingLeft: (12 + folder.depth * 16) + 'px' }"
             @click="selectFolder(folder.id)"
+            @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
             @dragleave="onFolderDragLeave"
             @drop.prevent="onFolderDrop($event, folder.id)">
@@ -381,8 +382,19 @@
         </div>
         <div v-else class="folder-mgmt-list">
           <div v-for="folder in flatFolders" :key="folder.id" class="folder-mgmt-item"
-            :style="{ paddingLeft: (16 + folder.depth * 24) + 'px' }">
+            :style="{ paddingLeft: (16 + folder.depth * 24) + 'px' }"
+            draggable="true"
+            @dragstart="onMgmtDragStart($event, folder)"
+            @dragover.prevent="onMgmtDragOver($event, folder)"
+            @dragleave="mgmtDragOverId = null"
+            @drop.prevent="onMgmtDrop($event, folder)"
+            :class="{ 'drag-over': mgmtDragOverId === folder.id }">
             <div class="folder-mgmt-info">
+              <el-icon v-if="folder.hasChildren" class="folder-toggle" @click="toggleFolder(folder.id)">
+                <ArrowRight v-if="!expandedFolders.has(folder.id)" />
+                <ArrowDown v-else />
+              </el-icon>
+              <el-icon v-else class="folder-toggle-placeholder"></el-icon>
               <span class="folder-icon-wrapper" :style="{ color: folder.color || '#909399' }">
                 <svg class="folder-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
                   <path d="M880 298.4H521L403.7 186.2c-1.5-1.4-3.5-2.2-5.5-2.2H144c-17.7 0-32 14.3-32 32v592c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V330.4c0-17.7-14.3-32-32-32z" :fill="folder.color || '#909399'" />
@@ -394,7 +406,7 @@
             <div class="folder-mgmt-actions">
               <el-button size="small" @click="showEditFolder(folder)">编辑</el-button>
               <el-button size="small" @click="showAddSubFolder(folder)">新建子文件夹</el-button>
-              <el-button size="small" @click="selectFolder(folder.id); switchTab('all')">查看文档</el-button>
+              <el-button size="small" @click="enterFolder(folder.id)">查看文档</el-button>
               <el-button size="small" type="danger" plain @click="handleDeleteFolder(folder)">删除</el-button>
             </div>
           </div>
@@ -691,6 +703,21 @@ function selectFolder(id: number | null) {
     expandedFolders.value = newExpanded
   }
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10, ...(activeFolderId.value ? { folderId: activeFolderId.value } : {}) })
+}
+
+function enterFolder(id: number) {
+  activeFolderId.value = id
+  activeTab.value = 'all'
+  // 自动展开
+  const newExpanded = new Set(expandedFolders.value)
+  let currentId: number | null = id
+  while (currentId) {
+    newExpanded.add(currentId)
+    const folder = folders.value.find(f => f.id === currentId)
+    currentId = folder?.parentId || null
+  }
+  expandedFolders.value = newExpanded
+  documentStore.fetchDocuments({ sort: sortBy.value, size: 10, ...(id ? { folderId: id } : {}) } as any)
 }
 
 async function handleFolderCommand(cmd: string, folder: any) {
@@ -1202,6 +1229,36 @@ const editFolderName = ref('')
 const editFolderColor = ref('#409eff')
 const editFolderParentId = ref<number | null>(null)
 
+// 文件夹管理页拖拽
+const mgmtDragFolder = ref<FolderType | null>(null)
+const mgmtDragOverId = ref<number | null>(null)
+
+function onMgmtDragStart(e: DragEvent, folder: FolderType) {
+  mgmtDragFolder.value = folder
+  e.dataTransfer!.effectAllowed = 'move'
+}
+
+function onMgmtDragOver(_e: DragEvent, folder: FolderType) {
+  if (mgmtDragFolder.value && mgmtDragFolder.value.id !== folder.id) {
+    mgmtDragOverId.value = folder.id
+  }
+}
+
+async function onMgmtDrop(_e: DragEvent, targetFolder: FolderType) {
+  mgmtDragOverId.value = null
+  const src = mgmtDragFolder.value
+  if (!src || src.id === targetFolder.id) return
+  try {
+    // 拖到目标文件夹上 = 移动到目标文件夹下作为子文件夹
+    await folderApi.update(src.id, { parentId: targetFolder.id })
+    ElMessage.success(`已将「${src.name}」移至「${targetFolder.name}」下`)
+    loadFolders()
+  } catch {
+    ElMessage.error('移动失败')
+  }
+  mgmtDragFolder.value = null
+}
+
 const folderColors = [
   { value: '#409eff', name: '蓝色' },
   { value: '#67c23a', name: '绿色' },
@@ -1690,14 +1747,14 @@ async function handleTableCommand(cmd: string, row: any) {
 .content-area {
   flex: 1;
   padding: 24px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  overflow-y: auto;
 }
 
 .content-area.doc-list-wrapper {
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .content-scroll {

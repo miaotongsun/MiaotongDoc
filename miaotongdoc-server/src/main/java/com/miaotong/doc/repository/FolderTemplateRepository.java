@@ -8,4 +8,5 @@ import java.util.List;
 @Repository
 public interface FolderTemplateRepository extends JpaRepository<FolderTemplate, Long> {
     List<FolderTemplate> findByIsActiveTrue();
+    List<FolderTemplate> findAllByOrderByIdDesc();
 }

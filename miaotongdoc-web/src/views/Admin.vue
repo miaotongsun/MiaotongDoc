@@ -58,9 +58,13 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="pagination-bar" v-if="userTotal > 0">
+            <el-pagination background :total="userTotal" :page-size="userPageSize"
+              :current-page="userPage + 1" :page-sizes="[10, 20, 50, 100]"
+              @current-change="handleUserPageChange" @size-change="handleUserSizeChange"
+              layout="total, sizes, prev, pager, next" />
+          </div>
         </el-tab-pane>
-
-        <!-- 部门管理 -->
         <el-tab-pane label="部门管理" name="departments">
           <div class="tab-header">
             <div style="flex:1"></div>
@@ -218,7 +222,7 @@
 
             <!-- 模板网格 -->
             <div class="template-grid">
-              <div v-for="tpl in filteredTemplates" :key="tpl.id" class="template-card-item">
+              <div v-for="tpl in pagedTemplates" :key="tpl.id" class="template-card-item">
                 <div class="template-card-header">
                   <el-icon class="template-type-icon" :style="{ color: docTypeColor(tpl.docType) }">
                     <Document v-if="tpl.docType === 'word'" />
@@ -248,6 +252,12 @@
                 </div>
               </div>
               <el-empty v-if="filteredTemplates.length === 0" description="暂无模板" />
+            </div>
+            <div class="pagination-bar" v-if="filteredTemplates.length > templatePageSize">
+              <el-pagination background :total="filteredTemplates.length" :page-size="templatePageSize"
+                :current-page="templatePage + 1" :page-sizes="[12, 24, 48]"
+                @current-change="handleTemplatePageChange" @size-change="handleTemplateSizeChange"
+                layout="total, sizes, prev, pager, next" />
             </div>
           </div>
         </el-tab-pane>
@@ -282,6 +292,41 @@
               </el-form>
             </el-card>
           </div>
+        </el-tab-pane>
+
+        <!-- 文件夹模板 -->
+        <el-tab-pane label="文件夹模板" name="folder-templates">
+          <div class="tab-header">
+            <div style="flex:1"></div>
+            <el-button type="primary" @click="openFolderTemplateDialog()">
+              <el-icon><Plus /></el-icon> 新建模板
+            </el-button>
+          </div>
+          <el-table :data="folderTemplates" stripe>
+            <el-table-column prop="name" label="模板名称" show-overflow-tooltip />
+            <el-table-column prop="description" label="描述" show-overflow-tooltip />
+            <el-table-column label="子文件夹结构" min-width="200">
+              <template #default="{ row }">
+                <span class="template-path">{{ formatFolderStructure(row.structure) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.isActive ? 'success' : 'info'" size="small" effect="plain">{{ row.isActive ? '启用' : '禁用' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right" align="center">
+              <template #default="{ row }">
+                <div class="action-btns">
+                  <el-button size="small" text @click="openFolderTemplateDialog(row)">编辑</el-button>
+                  <el-divider direction="vertical" />
+                  <el-button size="small" text @click="toggleFolderTemplateStatus(row)">{{ row.isActive ? '禁用' : '启用' }}</el-button>
+                  <el-divider direction="vertical" />
+                  <el-button size="small" text type="danger" @click="deleteFolderTemplate(row.id)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -387,6 +432,39 @@
         <el-button type="primary" @click="saveDept" :loading="saving">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 文件夹模板弹窗 -->
+    <el-dialog v-model="showFolderTemplateDialog" :title="editingFolderTemplate ? '编辑模板' : '新建模板'" width="560px" destroy-on-close>
+      <el-form :model="folderTemplateForm" label-width="90px" class="dialog-form">
+        <el-form-item label="模板名称" required>
+          <el-input v-model="folderTemplateForm.name" placeholder="如：项目文档模板" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="folderTemplateForm.description" placeholder="模板用途说明" />
+        </el-form-item>
+        <el-form-item label="子文件夹">
+          <div class="folder-structure-editor">
+            <div v-for="(item, idx) in folderTemplateForm.structure" :key="idx" class="structure-row">
+              <el-input v-model="item.name" placeholder="文件夹名称" style="width: 180px" />
+              <el-input v-model="item.childrenStr" placeholder="子目录（逗号分隔）" style="flex:1; margin: 0 8px" />
+              <el-button text type="danger" @click="folderTemplateForm.structure.splice(idx, 1)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+            <el-button size="small" @click="folderTemplateForm.structure.push({ name: '', childrenStr: '' })">
+              <el-icon><Plus /></el-icon> 添加文件夹
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="folderTemplateForm.isActive" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFolderTemplateDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveFolderTemplate" :loading="saving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -400,6 +478,7 @@ import { departmentApi, type Department } from '@/api/department'
 import { auditApi, type AuditLogItem } from '@/api/audit'
 import { watermarkApi, type WatermarkConfig } from '@/api/watermark'
 import { templateApi, type DocumentTemplate } from '@/api/template'
+import { folderTemplateApi, type FolderTemplate } from '@/api/folderTemplate'
 
 const activeTab = ref('users')
 const saving = ref(false)
@@ -407,6 +486,9 @@ const saving = ref(false)
 // --- 用户管理 ---
 const userSearch = ref('')
 const users = ref<UserItem[]>([])
+const userTotal = ref(0)
+const userPage = ref(0)
+const userPageSize = ref(20)
 const showUserDialog = ref(false)
 const editingUser = ref<UserItem | null>(null)
 const userForm = ref<any>({})
@@ -455,6 +537,8 @@ const templateTypeFilter = ref('')
 const templateSearch = ref('')
 const templateCategoryFilter = ref('')
 const selectedAdminCategory = ref('')
+const templatePage = ref(0)
+const templatePageSize = ref(12)
 
 const filteredTemplates = computed(() => {
   let list = templates.value
@@ -472,6 +556,11 @@ const filteredTemplates = computed(() => {
     list = list.filter(t => t.name.toLowerCase().includes(search) || t.category?.toLowerCase().includes(search))
   }
   return list
+})
+
+const pagedTemplates = computed(() => {
+  const start = templatePage.value * templatePageSize.value
+  return filteredTemplates.value.slice(start, start + templatePageSize.value)
 })
 
 async function loadTemplateCategories() {
@@ -500,6 +589,113 @@ async function addTemplateCategory() {
   }
 }
 const templateForm = ref({ name: '', description: '', docType: 'word', category: '' })
+
+// --- 文件夹模板 ---
+const folderTemplates = ref<FolderTemplate[]>([])
+const showFolderTemplateDialog = ref(false)
+const editingFolderTemplate = ref<FolderTemplate | null>(null)
+const folderTemplateForm = ref<{ name: string; description: string; structure: { name: string; childrenStr: string }[]; isActive: boolean }>({
+  name: '', description: '', structure: [], isActive: true
+})
+
+async function loadFolderTemplates() {
+  try {
+    folderTemplates.value = await folderTemplateApi.getAll()
+  } catch {}
+}
+
+function formatFolderStructure(structure: any): string {
+  if (!structure) return '-'
+  try {
+    const arr = typeof structure === 'string' ? JSON.parse(structure) : structure
+    if (!Array.isArray(arr)) return '-'
+    return arr.map((item: any) => {
+      const children = item.children ? (Array.isArray(item.children) ? item.children.join('/') : item.children) : ''
+      return children ? `${item.name}(${children})` : item.name
+    }).join('、')
+  } catch { return '-' }
+}
+
+function openFolderTemplateDialog(tpl?: FolderTemplate) {
+  if (tpl) {
+    editingFolderTemplate.value = tpl
+    let structure: any[] = []
+    try {
+      const parsed = typeof tpl.structure === 'string' ? JSON.parse(tpl.structure) : tpl.structure
+      if (Array.isArray(parsed)) {
+        structure = parsed.map((item: any) => ({
+          name: item.name || '',
+          childrenStr: Array.isArray(item.children) ? item.children.join(',') : (item.children || '')
+        }))
+      }
+    } catch {}
+    folderTemplateForm.value = { name: tpl.name, description: tpl.description || '', structure, isActive: tpl.isActive ?? true }
+  } else {
+    editingFolderTemplate.value = null
+    folderTemplateForm.value = { name: '', description: '', structure: [], isActive: true }
+  }
+  showFolderTemplateDialog.value = true
+}
+
+async function saveFolderTemplate() {
+  if (!folderTemplateForm.value.name.trim()) {
+    ElMessage.warning('请输入模板名称')
+    return
+  }
+  const structure = folderTemplateForm.value.structure
+    .filter(item => item.name.trim())
+    .map(item => ({
+      name: item.name.trim(),
+      children: item.childrenStr ? item.childrenStr.split(',').map(s => s.trim()).filter(Boolean) : []
+    }))
+  const data = {
+    name: folderTemplateForm.value.name.trim(),
+    description: folderTemplateForm.value.description.trim(),
+    structure,
+    isActive: folderTemplateForm.value.isActive
+  }
+  try {
+    if (editingFolderTemplate.value) {
+      await folderTemplateApi.update(editingFolderTemplate.value.id, data)
+      ElMessage.success('模板已更新')
+    } else {
+      await folderTemplateApi.create(data)
+      ElMessage.success('模板已创建')
+    }
+    showFolderTemplateDialog.value = false
+    loadFolderTemplates()
+  } catch {
+    ElMessage.error('保存失败')
+  }
+}
+
+async function toggleFolderTemplateStatus(tpl: FolderTemplate) {
+  try {
+    await folderTemplateApi.update(tpl.id, { isActive: !tpl.isActive })
+    ElMessage.success(tpl.isActive ? '已禁用' : '已启用')
+    loadFolderTemplates()
+  } catch {
+    ElMessage.error('操作失败')
+  }
+}
+
+async function deleteFolderTemplate(id: number) {
+  try {
+    await ElMessageBox.confirm('确定删除此文件夹模板吗？', '删除模板', { type: 'warning' })
+    await folderTemplateApi.delete(id)
+    ElMessage.success('模板已删除')
+    loadFolderTemplates()
+  } catch {}
+}
+
+function handleTemplatePageChange(page: number) {
+  templatePage.value = page - 1
+}
+
+function handleTemplateSizeChange(size: number) {
+  templatePageSize.value = size
+  templatePage.value = 0
+}
 
 const watermarkPreviewText = computed(() => {
   const now = new Date()
@@ -676,19 +872,33 @@ onMounted(() => {
   loadTemplates()
   loadTemplateCategories()
   loadAiConfig()
+  loadFolderTemplates()
 })
 
 async function loadUsers() {
   try {
     if (userSearch.value) {
       users.value = await api.get<any, any[]>('/admin/users/search', { params: { keyword: userSearch.value } })
+      userTotal.value = users.value.length
     } else {
-      const res = await api.get<any, any>('/admin/users', { params: { page: 0, size: 100 } })
+      const res = await api.get<any, any>('/admin/users', { params: { page: userPage.value, size: userPageSize.value } })
       users.value = res.content || res
+      userTotal.value = res.totalElements ?? users.value.length
     }
   } catch {
     users.value = []
   }
+}
+
+function handleUserPageChange(page: number) {
+  userPage.value = page - 1
+  loadUsers()
+}
+
+function handleUserSizeChange(size: number) {
+  userPageSize.value = size
+  userPage.value = 0
+  loadUsers()
 }
 
 async function loadDepartments() {
@@ -1190,5 +1400,15 @@ function formatTime(str: string) {
   gap: 8px;
   border-top: 1px solid #f0f0f0;
   padding-top: 10px;
+}
+
+.folder-structure-editor {
+  width: 100%;
+}
+
+.structure-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
 }
 </style>
