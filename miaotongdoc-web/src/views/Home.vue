@@ -384,10 +384,9 @@
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-mgmt-item"
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
-              marginTop: mgmtInsertIdx === idx ? '4px' : '0',
-              marginBottom: mgmtInsertIdx === idx ? '4px' : '0',
-              borderTop: mgmtInsertIdx === idx ? '2px solid var(--el-color-primary)' : '',
-              opacity: mgmtDragIdx === idx ? 0.3 : 1
+              marginTop: mgmtInsertIdx === idx ? '48px' : '0',
+              opacity: mgmtDragIdx === idx ? 0.3 : 1,
+              transition: 'margin-top 0.2s ease, opacity 0.2s ease'
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
@@ -412,8 +411,6 @@
               <el-button size="small" type="danger" plain @click="handleDeleteFolder(folder)">删除</el-button>
             </div>
           </div>
-          <!-- 底部插入线 -->
-          <div v-if="mgmtInsertIdx === flatFolders.length" class="insert-indicator"></div>
         </div>
       </main>
 
