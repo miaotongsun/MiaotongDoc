@@ -79,6 +79,7 @@ com\miaotong\doc\repository\TokenBlacklistRepository.class
 com\miaotong\doc\service\PresenceService.class
 com\miaotong\doc\repository\DepartmentRepository.class
 com\miaotong\doc\repository\WatermarkConfigRepository.class
+com\miaotong\doc\config\JsonbConverter.class
 com\miaotong\doc\dto\EditorConfig$EditorConfigData.class
 com\miaotong\doc\websocket\JwtWebSocketInterceptor.class
 com\miaotong\doc\config\SsoConfig.class

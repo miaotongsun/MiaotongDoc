@@ -1,5 +1,6 @@
 package com.miaotong.doc.entity;
 
+import com.miaotong.doc.config.JsonbConverter;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -20,6 +21,7 @@ public class FolderTemplate {
     private String description;
 
     @Column(columnDefinition = "JSONB")
+    @Convert(converter = JsonbConverter.class)
     private String structure;
 
     @Column(name = "is_active")
