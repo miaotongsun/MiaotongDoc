@@ -647,31 +647,27 @@ function onSidebarDragStart(e: MouseEvent, folder: FolderType, idx: number) {
   // 缓存原始位置
   const items = document.querySelectorAll('.folder-tree .folder-item')
   sidebarOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
-  // 创建简化的幽灵元素
+  // 克隆原文件夹元素作为幽灵
   const el = (e.target as HTMLElement).closest('.folder-item') as HTMLElement
   const rect = el.getBoundingClientRect()
-  sidebarGhost = document.createElement('div')
-  sidebarGhost.textContent = folder.name
-  sidebarGhost.style.cssText = [
-    'position:fixed',
-    `left:${rect.left}px`,
-    `top:${rect.top}px`,
-    `width:${rect.width}px`,
-    `height:${rect.height}px`,
-    'display:flex',
-    'align-items:center',
-    'padding:6px 12px',
-    'opacity:0.9',
-    'pointer-events:none',
-    'z-index:9999',
-    'box-shadow:0 4px 16px rgba(0,0,0,0.2)',
-    'border-radius:6px',
-    'background:#fff',
-    'border:1px solid var(--el-color-primary)',
-    'font-size:13px',
-    'color:#303133',
-    'cursor:grabbing'
-  ].join(';')
+  sidebarGhost = el.cloneNode(true) as HTMLElement
+  sidebarGhost.style.cssText = ''
+  sidebarGhost.style.position = 'fixed'
+  sidebarGhost.style.left = rect.left + 'px'
+  sidebarGhost.style.top = rect.top + 'px'
+  sidebarGhost.style.width = rect.width + 'px'
+  sidebarGhost.style.height = rect.height + 'px'
+  sidebarGhost.style.margin = '0'
+  sidebarGhost.style.opacity = '0.9'
+  sidebarGhost.style.pointerEvents = 'none'
+  sidebarGhost.style.zIndex = '9999'
+  sidebarGhost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.2)'
+  sidebarGhost.style.borderRadius = '6px'
+  sidebarGhost.style.background = '#fff'
+  sidebarGhost.style.border = '1px solid var(--el-color-primary)'
+  sidebarGhost.style.transition = 'none'
+  sidebarGhost.style.cursor = 'grabbing'
+  sidebarGhost.classList.remove('active', 'dragging', 'drag-over')
   document.body.appendChild(sidebarGhost)
   document.addEventListener('mousemove', onSidebarMouseMove)
   document.addEventListener('mouseup', onSidebarMouseUp)
@@ -1385,31 +1381,27 @@ function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
   const items = document.querySelectorAll('.folder-mgmt-item')
   mgmtOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
 
-  // 创建简化的幽灵元素
+  // 克隆原元素作为幽灵
   const el = (e.currentTarget as HTMLElement)
   const rect = el.getBoundingClientRect()
-  mgmtGhost = document.createElement('div')
-  mgmtGhost.textContent = folder.name
-  mgmtGhost.style.cssText = [
-    'position:fixed',
-    `left:${rect.left}px`,
-    `top:${rect.top}px`,
-    `width:${rect.width}px`,
-    `height:${rect.height}px`,
-    'display:flex',
-    'align-items:center',
-    'padding:12px 16px',
-    'opacity:0.9',
-    'pointer-events:none',
-    'z-index:9999',
-    'box-shadow:0 4px 16px rgba(0,0,0,0.2)',
-    'border-radius:8px',
-    'background:#fff',
-    'border:1px solid var(--el-color-primary)',
-    'font-size:14px',
-    'color:#303133',
-    'cursor:grabbing'
-  ].join(';')
+  mgmtGhost = el.cloneNode(true) as HTMLElement
+  mgmtGhost.style.cssText = ''
+  mgmtGhost.style.position = 'fixed'
+  mgmtGhost.style.left = rect.left + 'px'
+  mgmtGhost.style.top = rect.top + 'px'
+  mgmtGhost.style.width = rect.width + 'px'
+  mgmtGhost.style.height = rect.height + 'px'
+  mgmtGhost.style.margin = '0'
+  mgmtGhost.style.opacity = '0.9'
+  mgmtGhost.style.pointerEvents = 'none'
+  mgmtGhost.style.zIndex = '9999'
+  mgmtGhost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.2)'
+  mgmtGhost.style.borderRadius = '8px'
+  mgmtGhost.style.background = '#fff'
+  mgmtGhost.style.border = '1px solid var(--el-color-primary)'
+  mgmtGhost.style.transition = 'none'
+  mgmtGhost.style.cursor = 'grabbing'
+  mgmtGhost.classList.remove('dragging')
   document.body.appendChild(mgmtGhost)
 
   document.addEventListener('mousemove', onMgmtMouseMove)
