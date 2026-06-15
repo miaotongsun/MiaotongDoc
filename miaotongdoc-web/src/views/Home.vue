@@ -58,11 +58,7 @@
         <div class="folder-tree" style="position:relative">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{
-              paddingLeft: (12 + folder.depth * 16) + 'px',
-              opacity: sidebarDragIdx === idx ? 0.3 : 1,
-              transform: getSidebarTransform(idx)
-            }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', transform: getSidebarTransform(idx) }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -634,11 +630,15 @@ const SHIFT_PX = 36
 let sidebarOrigRects: DOMRect[] = []
 
 function getSidebarTransform(idx: number): string {
-  const src = sidebarDragFolder
-  if (!src || sidebarInsertIdx.value < 0) return ''
+  if (sidebarInsertIdx.value < 0) return ''
   if (idx === sidebarDragIdx.value) return ''
   const ins = sidebarInsertIdx.value
   const srcIdx = sidebarDragIdx.value
+  // 只对同级的文件夹应用位移
+  const src = sidebarDragFolder
+  if (!src) return ''
+  const folder = flatFolders.value[idx]
+  if (!folder || (folder.parentId ?? null) !== (src.parentId ?? null)) return ''
   if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
   if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${SHIFT_PX}px)`
   return ''
@@ -729,12 +729,21 @@ function onSidebarMouseMove(e: MouseEvent) {
   }
   if (newInsert >= 0) {
     const src = sidebarDragFolder
-    const sameParent = flatFolders.value.filter(f => f.parentId === src.parentId)
-    const srcLocal = sameParent.findIndex(f => f.id === src.id)
-    const offset = flatFolders.value.findIndex(f => f.id === sameParent[0]?.id)
-    const local = newInsert - offset
-    if (local >= 0 && local <= sameParent.length && local !== srcLocal && local !== srcLocal + 1) {
-      sidebarInsertIdx.value = newInsert
+    // 找到同级文件夹在 flatFolders 中的索引
+    const siblingIndices: number[] = []
+    flatFolders.value.forEach((f, i) => {
+      if ((f.parentId ?? null) === (src.parentId ?? null) && i !== sidebarDragIdx.value) {
+        siblingIndices.push(i)
+      }
+    })
+    if (siblingIndices.length > 0) {
+      const minIdx = siblingIndices[0]
+      const maxIdx = siblingIndices[siblingIndices.length - 1] + 1
+      if (newInsert >= minIdx && newInsert <= maxIdx) {
+        sidebarInsertIdx.value = newInsert
+      } else {
+        sidebarInsertIdx.value = -1
+      }
     } else {
       sidebarInsertIdx.value = -1
     }
@@ -1383,9 +1392,12 @@ const mgmtInsertIdx = ref(-1)
 let mgmtOrigRects: DOMRect[] = []
 
 function getMgmtTransform(idx: number): string {
-  const src = mgmtDragFolder.value
-  if (!src || mgmtInsertIdx.value < 0) return ''
+  if (mgmtInsertIdx.value < 0) return ''
   if (idx === mgmtDragIdx.value) return ''
+  const src = mgmtDragFolder.value
+  if (!src) return ''
+  const folder = flatFolders.value[idx]
+  if (!folder || (folder.parentId ?? null) !== (src.parentId ?? null)) return ''
   const ins = mgmtInsertIdx.value
   const srcIdx = mgmtDragIdx.value
   if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
@@ -1477,12 +1489,20 @@ function onMgmtMouseMove(e: MouseEvent) {
 
   if (newInsert >= 0) {
     const src = mgmtDragFolder.value
-    const sameParentItems = flatFolders.value.filter(f => f.parentId === src.parentId)
-    const srcLocalIdx = sameParentItems.findIndex(f => f.id === src.id)
-    const globalOffset = flatFolders.value.findIndex(f => f.id === sameParentItems[0]?.id)
-    const localInsert = newInsert - globalOffset
-    if (localInsert >= 0 && localInsert <= sameParentItems.length && localInsert !== srcLocalIdx && localInsert !== srcLocalIdx + 1) {
-      mgmtInsertIdx.value = newInsert
+    const siblingIndices: number[] = []
+    flatFolders.value.forEach((f, i) => {
+      if ((f.parentId ?? null) === (src.parentId ?? null) && i !== mgmtDragIdx.value) {
+        siblingIndices.push(i)
+      }
+    })
+    if (siblingIndices.length > 0) {
+      const minIdx = siblingIndices[0]
+      const maxIdx = siblingIndices[siblingIndices.length - 1] + 1
+      if (newInsert >= minIdx && newInsert <= maxIdx) {
+        mgmtInsertIdx.value = newInsert
+      } else {
+        mgmtInsertIdx.value = -1
+      }
     } else {
       mgmtInsertIdx.value = -1
     }
@@ -2351,11 +2371,16 @@ async function handleTableCommand(cmd: string, row: any) {
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: transform 0.2s ease, opacity 0.2s ease, background 0.2s, color 0.2s;
+  transition: background 0.2s, color 0.2s;
   color: #606266;
   font-size: 13px;
   user-select: none;
   -webkit-user-select: none;
+  will-change: transform;
+}
+
+.folder-item.dragging {
+  opacity: 0.3;
 }
 
 .folder-item:hover {
