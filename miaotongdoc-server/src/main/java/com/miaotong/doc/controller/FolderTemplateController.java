@@ -20,7 +20,7 @@ public class FolderTemplateController {
 
     @GetMapping
     public ResponseEntity<List<FolderTemplate>> getTemplates() {
-        return ResponseEntity.ok(folderTemplateRepository.findAllByOrderByIdDesc());
+        return ResponseEntity.ok(folderTemplateRepository.findAllByOrderBySortOrderAsc());
     }
 
     @GetMapping("/{id}")
@@ -58,5 +58,23 @@ public class FolderTemplateController {
     public ResponseEntity<Map<String, String>> deleteTemplate(@PathVariable Long id) {
         folderTemplateRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "模板已删除"));
+    }
+
+    /** 批量更新模板排序 */
+    @PutMapping("/reorder")
+    public ResponseEntity<Map<String, String>> reorderTemplates(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        if (ids != null) {
+            for (int i = 0; i < ids.size(); i++) {
+                Long id = ids.get(i).longValue();
+                FolderTemplate tpl = folderTemplateRepository.findById(id).orElse(null);
+                if (tpl != null) {
+                    tpl.setSortOrder(i);
+                    folderTemplateRepository.save(tpl);
+                }
+            }
+        }
+        return ResponseEntity.ok(Map.of("message", "排序已更新"));
     }
 }

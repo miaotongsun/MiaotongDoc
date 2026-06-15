@@ -28,6 +28,9 @@ public class FolderTemplate {
     @Column(name = "is_active")
     private Boolean isActive = true;
 
+    @Column(name = "sort_order")
+    private Integer sortOrder = 0;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

@@ -61,6 +61,20 @@ public class FolderController {
         return ResponseEntity.ok(Map.of("message", "文件夹已删除"));
     }
 
+    /** 批量更新文件夹排序 */
+    @PutMapping("/reorder")
+    public ResponseEntity<Map<String, String>> reorderFolders(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        if (ids != null) {
+            for (int i = 0; i < ids.size(); i++) {
+                Long id = ids.get(i).longValue();
+                folderService.updateSortOrder(id, i);
+            }
+        }
+        return ResponseEntity.ok(Map.of("message", "排序已更新"));
+    }
+
     // 下载文件夹内所有文档（ZIP打包）
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> downloadFolder(@PathVariable Long id) {

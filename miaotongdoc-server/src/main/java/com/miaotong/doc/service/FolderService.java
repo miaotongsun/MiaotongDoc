@@ -30,15 +30,15 @@ public class FolderService {
     private final StorageService storageService;
 
     public List<Folder> getUserFolders(Long userId) {
-        return folderRepository.findByOwnerUserIdOrderByCreatedAtDesc(userId);
+        return folderRepository.findByOwnerUserIdOrderBySortOrderAsc(userId);
     }
 
     public List<Folder> getChildFolders(Long parentId) {
-        return folderRepository.findByParentIdOrderByCreatedAtDesc(parentId);
+        return folderRepository.findByParentIdOrderBySortOrderAsc(parentId);
     }
 
     public List<Folder> getDepartmentFolders(Long departmentId) {
-        return folderRepository.findByDepartmentIdOrderByCreatedAtDesc(departmentId);
+        return folderRepository.findByDepartmentIdOrderBySortOrderAsc(departmentId);
     }
 
     public Folder getFolder(Long id) {
@@ -108,6 +108,13 @@ public class FolderService {
     }
 
     @Transactional
+    public void updateSortOrder(Long id, int sortOrder) {
+        Folder folder = getFolder(id);
+        folder.setSortOrder(sortOrder);
+        folderRepository.save(folder);
+    }
+
+    @Transactional
     public void deleteFolder(Long id, Long moveToParentId) {
         Folder folder = getFolder(id);
         // 将当前文件夹下的文档移动到目标文件夹
@@ -118,7 +125,7 @@ public class FolderService {
             documentRepository.save(doc);
         }
         // 递归删除子文件夹（子文件夹的文档也移到目标文件夹）
-        List<Folder> children = folderRepository.findByParentIdOrderByCreatedAtDesc(id);
+        List<Folder> children = folderRepository.findByParentIdOrderBySortOrderAsc(id);
         for (Folder child : children) {
             deleteFolder(child.getId(), moveToParentId);
         }
@@ -149,7 +156,7 @@ public class FolderService {
             }
 
             // 递归添加子文件夹的文档
-            List<Folder> children = folderRepository.findByParentIdOrderByCreatedAtDesc(folderId);
+            List<Folder> children = folderRepository.findByParentIdOrderBySortOrderAsc(folderId);
             for (Folder child : children) {
                 addFolderToZip(zos, child, "");
             }
@@ -172,7 +179,7 @@ public class FolderService {
         }
 
         // 递归添加子文件夹
-        List<Folder> children = folderRepository.findByParentIdOrderByCreatedAtDesc(folder.getId());
+        List<Folder> children = folderRepository.findByParentIdOrderBySortOrderAsc(folder.getId());
         for (Folder child : children) {
             addFolderToZip(zos, child, folderPath);
         }

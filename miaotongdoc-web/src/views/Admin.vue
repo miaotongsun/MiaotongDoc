@@ -302,7 +302,14 @@
               <el-icon><Plus /></el-icon> 新建模板
             </el-button>
           </div>
-          <el-table :data="folderTemplates" stripe>
+          <el-table :data="folderTemplates" stripe row-key="id"
+            @row-dragstart="onTplDragStart" @row-dragover="onTplDragOver" @row-drop="onTplDrop"
+            :row-attributes="{ draggable: true }">
+            <el-table-column width="40" align="center">
+              <template #default>
+                <el-icon class="drag-handle" style="cursor: grab; color: #c0c4cc"><Rank /></el-icon>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="模板名称" show-overflow-tooltip />
             <el-table-column prop="description" label="描述" show-overflow-tooltip />
             <el-table-column label="子文件夹结构" min-width="200">
@@ -471,7 +478,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Close, Document, Grid, Picture } from '@element-plus/icons-vue'
+import { Search, Close, Document, Grid, Picture, Rank } from '@element-plus/icons-vue'
 import api from '@/api/index'
 import { userApi, type UserItem } from '@/api/user'
 import { departmentApi, type Department } from '@/api/department'
@@ -602,6 +609,33 @@ async function loadFolderTemplates() {
   try {
     folderTemplates.value = await folderTemplateApi.getAll()
   } catch {}
+}
+
+// 文件夹模板拖拽排序
+let tplDragRow: FolderTemplate | null = null
+
+function onTplDragStart(row: FolderTemplate) {
+  tplDragRow = row
+}
+
+function onTplDragOver(_row: FolderTemplate) {
+  // 允许拖拽
+}
+
+async function onTplDrop(targetRow: FolderTemplate) {
+  if (!tplDragRow || tplDragRow.id === targetRow.id) return
+  const ids = folderTemplates.value.map(t => t.id)
+  const fromIdx = ids.indexOf(tplDragRow.id)
+  const toIdx = ids.indexOf(targetRow.id)
+  ids.splice(fromIdx, 1)
+  ids.splice(toIdx, 0, tplDragRow.id)
+  try {
+    await folderTemplateApi.reorder(ids)
+    loadFolderTemplates()
+  } catch {
+    ElMessage.error('排序失败')
+  }
+  tplDragRow = null
 }
 
 function formatFolderStructure(structure: any): string {

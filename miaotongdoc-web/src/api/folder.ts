@@ -7,6 +7,7 @@ export interface Folder {
   ownerUserId: number
   departmentId?: number
   color?: string
+  sortOrder?: number
   createdAt: string
   updatedAt: string
 }
@@ -41,5 +42,9 @@ export const folderApi = {
     return api.get<any, Blob>(`/folders/${id}/download`, {
       responseType: 'blob' as any
     })
+  },
+
+  reorder(ids: number[]) {
+    return api.put('/folders/reorder', { ids })
   }
 }

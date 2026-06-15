@@ -7,8 +7,8 @@ import java.util.List;
 
 @Repository
 public interface FolderRepository extends JpaRepository<Folder, Long> {
-    List<Folder> findByOwnerUserIdOrderByCreatedAtDesc(Long ownerUserId);
-    List<Folder> findByParentIdOrderByCreatedAtDesc(Long parentId);
-    List<Folder> findByDepartmentIdOrderByCreatedAtDesc(Long departmentId);
+    List<Folder> findByOwnerUserIdOrderBySortOrderAsc(Long ownerUserId);
+    List<Folder> findByParentIdOrderBySortOrderAsc(Long parentId);
+    List<Folder> findByDepartmentIdOrderBySortOrderAsc(Long departmentId);
     boolean existsByParentId(Long parentId);
 }

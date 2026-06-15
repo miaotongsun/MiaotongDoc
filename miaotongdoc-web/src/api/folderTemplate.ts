@@ -32,5 +32,9 @@ export const folderTemplateApi = {
 
   delete(id: number) {
     return api.delete(`/folder-templates/${id}`)
+  },
+
+  reorder(ids: number[]) {
+    return api.put('/folder-templates/reorder', { ids })
   }
 }

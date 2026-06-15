@@ -1249,12 +1249,24 @@ async function onMgmtDrop(_e: DragEvent, targetFolder: FolderType) {
   const src = mgmtDragFolder.value
   if (!src || src.id === targetFolder.id) return
   try {
-    // 拖到目标文件夹上 = 移动到目标文件夹下作为子文件夹
-    await folderApi.update(src.id, { parentId: targetFolder.id })
-    ElMessage.success(`已将「${src.name}」移至「${targetFolder.name}」下`)
+    if (src.parentId === targetFolder.parentId) {
+      // 同级：排序 - 将 src 移到 target 的位置
+      const siblings = folders.value
+        .filter(f => f.parentId === src.parentId)
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      const ids = siblings.filter(f => f.id !== src.id).map(f => f.id)
+      const targetIdx = ids.indexOf(targetFolder.id)
+      ids.splice(targetIdx, 0, src.id)
+      await folderApi.reorder(ids)
+      ElMessage.success('排序已更新')
+    } else {
+      // 不同级：移动到目标文件夹下
+      await folderApi.update(src.id, { parentId: targetFolder.id })
+      ElMessage.success(`已将「${src.name}」移至「${targetFolder.name}」下`)
+    }
     loadFolders()
   } catch {
-    ElMessage.error('移动失败')
+    ElMessage.error('操作失败')
   }
   mgmtDragFolder.value = null
 }

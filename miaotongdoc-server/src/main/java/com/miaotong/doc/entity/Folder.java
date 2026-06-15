@@ -28,6 +28,9 @@ public class Folder {
     @Column(length = 20)
     private String color;
 
+    @Column(name = "sort_order")
+    private Integer sortOrder = 0;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
