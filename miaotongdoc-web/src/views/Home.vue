@@ -399,7 +399,7 @@
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
             <div class="folder-mgmt-info">
-              <el-icon v-if="folder.hasChildren" class="folder-toggle" @click="toggleFolder(folder.id)">
+              <el-icon v-if="folder.hasChildren" class="folder-toggle" @mousedown.stop @click="toggleFolder(folder.id)">
                 <ArrowRight v-if="!expandedFolders.has(folder.id)" />
                 <ArrowDown v-else />
               </el-icon>
@@ -412,7 +412,7 @@
               <span class="folder-mgmt-name">{{ folder.name }}</span>
               <span class="folder-mgmt-meta">{{ folder.hasChildren ? '含子文件夹' : '空文件夹' }}</span>
             </div>
-            <div class="folder-mgmt-actions">
+            <div class="folder-mgmt-actions" @mousedown.stop>
               <el-button size="small" @click="showEditFolder(folder)">编辑</el-button>
               <el-button size="small" @click="showAddSubFolder(folder)">新建子文件夹</el-button>
               <el-button size="small" @click="enterFolder(folder.id)">查看文档</el-button>
