@@ -57,11 +57,10 @@
         </li>
         <div class="folder-tree">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
-            :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx }"
+            :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
             :style="{
               paddingLeft: (12 + folder.depth * 16) + 'px',
               marginTop: sidebarInsertIdx === idx ? '36px' : '0',
-              transition: 'margin-top 0.2s ease, opacity 0.2s ease',
               opacity: sidebarDragIdx === idx ? 0.3 : 1
             }"
             @click="onSidebarFolderClick(folder.id)"
@@ -694,7 +693,16 @@ function onSidebarMouseMove(e: MouseEvent) {
     if (i === sidebarDragIdx.value) continue
     const rect = items[i].getBoundingClientRect()
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      newInsert = e.clientY < rect.top + rect.height / 2 ? i : i + 1
+      // 用 30%/70% 分界，中间 40% 为死区，减少抖动
+      const relY = (e.clientY - rect.top) / rect.height
+      if (relY < 0.3) {
+        newInsert = i
+      } else if (relY > 0.7) {
+        newInsert = i + 1
+      } else {
+        // 死区：保持上一次的 insertIdx
+        newInsert = sidebarInsertIdx.value >= 0 ? sidebarInsertIdx.value : -1
+      }
       break
     }
   }
@@ -1414,7 +1422,14 @@ function onMgmtMouseMove(e: MouseEvent) {
     if (i === mgmtDragIdx.value) continue
     const rect = items[i].getBoundingClientRect()
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      newInsert = e.clientY < rect.top + rect.height / 2 ? i : i + 1
+      const relY = (e.clientY - rect.top) / rect.height
+      if (relY < 0.3) {
+        newInsert = i
+      } else if (relY > 0.7) {
+        newInsert = i + 1
+      } else {
+        newInsert = mgmtInsertIdx.value >= 0 ? mgmtInsertIdx.value : -1
+      }
       break
     }
   }
