@@ -384,16 +384,13 @@
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-mgmt-item"
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
-              transform: getMgmtItemTransform(folder, idx),
-              zIndex: mgmtDragFolder?.id === folder.id ? 10 : 1
+              marginTop: mgmtInsertIdx === idx ? '4px' : '0',
+              marginBottom: mgmtInsertIdx === idx ? '4px' : '0',
+              borderTop: mgmtInsertIdx === idx ? '2px solid var(--el-color-primary)' : '',
+              opacity: mgmtDragIdx === idx ? 0.3 : 1
             }"
-            draggable="true"
-            @dragstart="onMgmtDragStart($event, folder, idx)"
-            @dragover.prevent="onMgmtDragOver($event, folder, idx)"
-            @dragleave="onMgmtDragLeave"
-            @dragend="onMgmtDragEnd"
-            @drop.prevent="onMgmtDrop($event, folder)"
-            :class="{ 'dragging': mgmtDragFolder?.id === folder.id }">
+            @mousedown.left="onMgmtMouseDown($event, folder, idx)"
+            :class="{ 'dragging': mgmtDragIdx === idx }">
             <div class="folder-mgmt-info">
               <el-icon v-if="folder.hasChildren" class="folder-toggle" @click="toggleFolder(folder.id)">
                 <ArrowRight v-if="!expandedFolders.has(folder.id)" />
@@ -415,6 +412,8 @@
               <el-button size="small" type="danger" plain @click="handleDeleteFolder(folder)">删除</el-button>
             </div>
           </div>
+          <!-- 底部插入线 -->
+          <div v-if="mgmtInsertIdx === flatFolders.length" class="insert-indicator"></div>
         </div>
       </main>
 
@@ -1234,83 +1233,89 @@ const editFolderName = ref('')
 const editFolderColor = ref('#409eff')
 const editFolderParentId = ref<number | null>(null)
 
-// 文件夹管理页拖拽
+// 文件夹管理页拖拽（鼠标事件实现）
 const mgmtDragFolder = ref<FolderType | null>(null)
-const mgmtDragIndex = ref(-1)
-const mgmtInsertIndex = ref(-1)
-const ITEM_HEIGHT = 52
+const mgmtDragIdx = ref(-1)
+const mgmtInsertIdx = ref(-1)
+let mgmtStartY = 0
+let mgmtMoved = false
 
-function onMgmtDragStart(e: DragEvent, folder: FolderType, idx: number) {
+function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
+  mgmtStartY = e.clientY
+  mgmtMoved = false
   mgmtDragFolder.value = folder
-  mgmtDragIndex.value = idx
-  mgmtInsertIndex.value = -1
-  e.dataTransfer!.effectAllowed = 'move'
-  e.dataTransfer!.setData('text/plain', String(folder.id))
-  const el = e.target as HTMLElement
-  requestAnimationFrame(() => el.classList.add('dragging'))
+  mgmtDragIdx.value = idx
+  mgmtInsertIdx.value = -1
+  document.addEventListener('mousemove', onMgmtMouseMove)
+  document.addEventListener('mouseup', onMgmtMouseUp)
 }
 
-function onMgmtDragOver(e: DragEvent, folder: FolderType, idx: number) {
-  const src = mgmtDragFolder.value
-  if (!src || src.id === folder.id) return
-  e.dataTransfer!.dropEffect = 'move'
-  if (src.parentId !== folder.parentId) {
-    mgmtInsertIndex.value = -1
-    return
-  }
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const isBelow = e.clientY > rect.top + rect.height / 2
-  mgmtInsertIndex.value = isBelow ? idx + 1 : idx
-}
+function onMgmtMouseMove(e: MouseEvent) {
+  if (!mgmtDragFolder.value) return
+  if (Math.abs(e.clientY - mgmtStartY) < 5) return
+  mgmtMoved = true
 
-function onMgmtDragLeave() { /* dragover 持续更新 */ }
-
-function onMgmtDragEnd() {
-  mgmtDragFolder.value = null
-  mgmtDragIndex.value = -1
-  mgmtInsertIndex.value = -1
-}
-
-function getMgmtItemTransform(folder: FolderType, idx: number): string {
-  const src = mgmtDragFolder.value
-  if (!src || src.id === folder.id || src.parentId !== folder.parentId) return ''
-  if (mgmtInsertIndex.value < 0) return ''
-  const srcIdx = mgmtDragIndex.value
-  const ins = mgmtInsertIndex.value
-  // 拖到下方：插入点及之后的元素下移
-  if (ins > srcIdx) {
-    if (idx >= ins) return `translateY(${ITEM_HEIGHT}px)`
-  }
-  // 拖到上方：插入点到源之间的元素下移
-  if (ins < srcIdx) {
-    if (idx >= ins && idx < srcIdx) return `translateY(${ITEM_HEIGHT}px)`
-  }
-  return ''
-}
-
-async function onMgmtDrop(_e: DragEvent, targetFolder: FolderType) {
-  const src = mgmtDragFolder.value
-  const insertIdx = mgmtInsertIndex.value
-  mgmtDragFolder.value = null
-  mgmtDragIndex.value = -1
-  mgmtInsertIndex.value = -1
-  if (!src || src.id === targetFolder.id) return
-  try {
-    if (src.parentId === targetFolder.parentId && insertIdx >= 0) {
-      const siblings = folders.value
-        .filter(f => f.parentId === src.parentId)
-        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      const ids = siblings.map(f => f.id)
-      const fromIdx = ids.indexOf(src.id)
-      ids.splice(fromIdx, 1)
-      const adjusted = insertIdx > fromIdx ? insertIdx - 1 : insertIdx
-      ids.splice(adjusted, 0, src.id)
-      await folderApi.reorder(ids)
-      ElMessage.success('排序已更新')
-    } else if (src.parentId !== targetFolder.parentId) {
-      await folderApi.update(src.id, { parentId: targetFolder.id })
-      ElMessage.success(`已将「${src.name}」移至「${targetFolder.name}」下`)
+  // 找到鼠标所在的行
+  const items = document.querySelectorAll('.folder-mgmt-item')
+  let newInsert = -1
+  for (let i = 0; i < items.length; i++) {
+    const rect = items[i].getBoundingClientRect()
+    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+      // 在该行内：判断上半还是下半
+      newInsert = e.clientY < rect.top + rect.height / 2 ? i : i + 1
+      break
     }
+  }
+  // 如果鼠标在列表底部
+  if (newInsert < 0 && items.length > 0) {
+    const lastRect = items[items.length - 1].getBoundingClientRect()
+    if (e.clientY > lastRect.bottom) newInsert = items.length
+  }
+
+  // 只处理同级拖拽
+  if (newInsert >= 0) {
+    const src = mgmtDragFolder.value
+    // 获取同级的索引范围
+    const sameParentItems = flatFolders.value.filter(f => f.parentId === src.parentId)
+    const srcLocalIdx = sameParentItems.findIndex(f => f.id === src.id)
+    // 计算同级在全局列表中的偏移
+    const globalOffset = flatFolders.value.findIndex(f => f.id === sameParentItems[0]?.id)
+    const localInsert = newInsert - globalOffset
+    if (localInsert >= 0 && localInsert <= sameParentItems.length && localInsert !== srcLocalIdx && localInsert !== srcLocalIdx + 1) {
+      mgmtInsertIdx.value = newInsert
+    } else {
+      mgmtInsertIdx.value = -1
+    }
+  } else {
+    mgmtInsertIdx.value = -1
+  }
+}
+
+async function onMgmtMouseUp() {
+  document.removeEventListener('mousemove', onMgmtMouseMove)
+  document.removeEventListener('mouseup', onMgmtMouseUp)
+
+  const src = mgmtDragFolder.value
+  const insertIdx = mgmtInsertIdx.value
+
+  mgmtDragFolder.value = null
+  mgmtDragIdx.value = -1
+  mgmtInsertIdx.value = -1
+
+  if (!src || !mgmtMoved || insertIdx < 0) return
+  mgmtMoved = false
+
+  try {
+    const siblings = flatFolders.value
+      .filter(f => f.parentId === src.parentId)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    const ids = siblings.map(f => f.id)
+    const fromIdx = ids.indexOf(src.id)
+    ids.splice(fromIdx, 1)
+    const adjusted = insertIdx > fromIdx ? insertIdx - 1 : insertIdx
+    ids.splice(adjusted, 0, src.id)
+    await folderApi.reorder(ids)
+    ElMessage.success('排序已更新')
     loadFolders()
   } catch {
     ElMessage.error('操作失败')
@@ -2310,6 +2315,14 @@ async function handleTableCommand(cmd: string, row: any) {
   background: var(--el-color-primary-light-9);
   border-color: var(--el-color-primary);
   box-shadow: 0 0 0 2px var(--el-color-primary-light-8);
+}
+
+.insert-indicator {
+  height: 3px;
+  background: var(--el-color-primary);
+  border-radius: 2px;
+  margin: 4px 0;
+  box-shadow: 0 0 6px var(--el-color-primary-light-5);
 }
 
 .folder-mgmt-info {
