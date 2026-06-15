@@ -386,9 +386,15 @@
             draggable="true"
             @dragstart="onMgmtDragStart($event, folder)"
             @dragover.prevent="onMgmtDragOver($event, folder)"
-            @dragleave="mgmtDragOverId = null"
+            @dragleave="onMgmtDragLeave"
+            @dragend="onMgmtDragEnd"
             @drop.prevent="onMgmtDrop($event, folder)"
-            :class="{ 'drag-over': mgmtDragOverId === folder.id }">
+            :class="{
+              'drag-over': mgmtDragOverId === folder.id && mgmtDragFolder?.id !== folder.id,
+              'drag-above': mgmtDragAboveId === folder.id,
+              'drag-below': mgmtDragBelowId === folder.id,
+              'dragging': mgmtDragFolder?.id === folder.id
+            }">
             <div class="folder-mgmt-info">
               <el-icon v-if="folder.hasChildren" class="folder-toggle" @click="toggleFolder(folder.id)">
                 <ArrowRight v-if="!expandedFolders.has(folder.id)" />
@@ -1232,35 +1238,65 @@ const editFolderParentId = ref<number | null>(null)
 // 文件夹管理页拖拽
 const mgmtDragFolder = ref<FolderType | null>(null)
 const mgmtDragOverId = ref<number | null>(null)
+const mgmtDragAboveId = ref<number | null>(null)
+const mgmtDragBelowId = ref<number | null>(null)
 
 function onMgmtDragStart(e: DragEvent, folder: FolderType) {
   mgmtDragFolder.value = folder
   e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', String(folder.id))
+  const el = e.target as HTMLElement
+  requestAnimationFrame(() => el.classList.add('dragging'))
 }
 
-function onMgmtDragOver(_e: DragEvent, folder: FolderType) {
-  if (mgmtDragFolder.value && mgmtDragFolder.value.id !== folder.id) {
-    mgmtDragOverId.value = folder.id
+function onMgmtDragOver(e: DragEvent, folder: FolderType) {
+  const src = mgmtDragFolder.value
+  if (!src || src.id === folder.id) return
+  e.dataTransfer!.dropEffect = 'move'
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const isAbove = e.clientY < rect.top + rect.height / 2
+  mgmtDragOverId.value = folder.id
+  if (src.parentId === folder.parentId) {
+    mgmtDragAboveId.value = isAbove ? folder.id : null
+    mgmtDragBelowId.value = isAbove ? null : folder.id
+  } else {
+    mgmtDragAboveId.value = null
+    mgmtDragBelowId.value = null
   }
 }
 
-async function onMgmtDrop(_e: DragEvent, targetFolder: FolderType) {
+function onMgmtDragLeave() {
   mgmtDragOverId.value = null
+  mgmtDragAboveId.value = null
+  mgmtDragBelowId.value = null
+}
+
+function onMgmtDragEnd() {
+  mgmtDragFolder.value = null
+  mgmtDragOverId.value = null
+  mgmtDragAboveId.value = null
+  mgmtDragBelowId.value = null
+}
+
+async function onMgmtDrop(e: DragEvent, targetFolder: FolderType) {
   const src = mgmtDragFolder.value
+  mgmtDragOverId.value = null
+  mgmtDragAboveId.value = null
+  mgmtDragBelowId.value = null
   if (!src || src.id === targetFolder.id) return
   try {
     if (src.parentId === targetFolder.parentId) {
-      // 同级：排序 - 将 src 移到 target 的位置
       const siblings = folders.value
         .filter(f => f.parentId === src.parentId)
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
       const ids = siblings.filter(f => f.id !== src.id).map(f => f.id)
       const targetIdx = ids.indexOf(targetFolder.id)
-      ids.splice(targetIdx, 0, src.id)
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const insertIdx = e.clientY < rect.top + rect.height / 2 ? targetIdx : targetIdx + 1
+      ids.splice(insertIdx, 0, src.id)
       await folderApi.reorder(ids)
       ElMessage.success('排序已更新')
     } else {
-      // 不同级：移动到目标文件夹下
       await folderApi.update(src.id, { parentId: targetFolder.id })
       ElMessage.success(`已将「${src.name}」移至「${targetFolder.name}」下`)
     }
@@ -2108,9 +2144,10 @@ async function handleTableCommand(cmd: string, row: any) {
 }
 
 .folder-item.drag-over {
-  background: #e6f7ff;
-  border: 1px dashed #409eff;
-  color: #409eff;
+  background: var(--el-color-primary-light-9);
+  border: 1px dashed var(--el-color-primary);
+  color: var(--el-color-primary);
+  box-shadow: 0 0 0 2px var(--el-color-primary-light-8);
 }
 
 .folder-icon-wrapper {
@@ -2223,6 +2260,10 @@ async function handleTableCommand(cmd: string, row: any) {
   gap: 8px;
 }
 
+.folder-mgmt-list .folder-mgmt-item {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .folder-mgmt-item {
   display: flex;
   align-items: center;
@@ -2231,12 +2272,41 @@ async function handleTableCommand(cmd: string, row: any) {
   background: #fff;
   border: 1px solid #ebeef5;
   border-radius: 8px;
-  transition: all 0.2s;
+  transition: all 0.25s ease;
+  cursor: grab;
+  user-select: none;
 }
 
 .folder-mgmt-item:hover {
-  border-color: #c0c4cc;
+  border-color: var(--el-color-primary-light-5);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.folder-mgmt-item:active {
+  cursor: grabbing;
+}
+
+.folder-mgmt-item.dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+  border-style: dashed;
+}
+
+.folder-mgmt-item.drag-over {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary);
+  border-style: dashed;
+  box-shadow: 0 0 0 2px var(--el-color-primary-light-8);
+}
+
+.folder-mgmt-item.drag-above {
+  border-top: 2px solid var(--el-color-primary);
+  margin-top: -1px;
+}
+
+.folder-mgmt-item.drag-below {
+  border-bottom: 2px solid var(--el-color-primary);
+  margin-bottom: -1px;
 }
 
 .folder-mgmt-info {

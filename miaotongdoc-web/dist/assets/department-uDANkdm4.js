@@ -1,1 +1,0 @@
-import{a as t}from"./_plugin-vue_export-helper-DFY7rKND.js";const n={getAll(){return t.get("/departments")},getChildren(e){return t.get(`/departments/${e}/children`)},create(e){return t.post("/departments",e)},update(e,r){return t.put(`/departments/${e}`,r)},deactivate(e){return t.delete(`/departments/${e}`)}};export{n as d};
