@@ -58,7 +58,7 @@
         <div class="folder-tree" style="position:relative">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', visibility: sidebarDragIdx === idx ? 'hidden' : 'visible' }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -388,7 +388,7 @@
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
               marginTop: mgmtInsertIdx === idx ? '36px' : '0',
-              visibility: mgmtDragIdx === idx ? 'hidden' : 'visible'
+              opacity: mgmtDragIdx === idx ? 0.3 : 1
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
