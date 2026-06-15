@@ -56,15 +56,23 @@
           </div>
         </li>
         <div class="folder-tree">
-          <div v-for="folder in flatFolders" :key="folder.id" class="folder-item"
-            :class="{ active: activeFolderId === folder.id, 'drag-over': dragOverFolderId === folder.id, 'folder-child': folder.depth > 0 }"
-            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px' }"
+          <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
+            :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx }"
+            :style="{
+              paddingLeft: (12 + folder.depth * 16) + 'px',
+              marginTop: sidebarInsertIdx === idx ? '36px' : '0',
+              transition: 'margin-top 0.2s ease, opacity 0.2s ease',
+              opacity: sidebarDragIdx === idx ? 0.3 : 1
+            }"
             @click="selectFolder(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
             @dragleave="onFolderDragLeave"
             @drop.prevent="onFolderDrop($event, folder.id)">
-            <el-icon v-if="folder.hasChildren" class="folder-toggle" @click.stop="toggleFolder(folder.id)">
+            <span class="folder-drag-handle" @mousedown.left.stop="onSidebarDragStart($event, folder, idx)">
+              <svg viewBox="0 0 1024 1024" width="12" height="12"><path fill="currentColor" d="M320 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm384-512a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128z"/></svg>
+            </span>
+            <el-icon v-if="folder.hasChildren" class="folder-toggle" @mousedown.stop @click.stop="toggleFolder(folder.id)">
               <ArrowRight v-if="!expandedFolders.has(folder.id)" />
               <ArrowDown v-else />
             </el-icon>
@@ -75,7 +83,7 @@
               </svg>
             </span>
             <span class="folder-name">{{ folder.name }}</span>
-            <div class="folder-actions" @click.stop>
+            <div class="folder-actions" @mousedown.stop @click.stop>
               <el-dropdown trigger="click" @command="handleFolderCommand($event, folder)">
                 <el-icon class="folder-more"><MoreFilled /></el-icon>
                 <template #dropdown>
@@ -619,6 +627,87 @@ function toggleFolder(id: number) {
 
 function collapseAllFolders() {
   expandedFolders.value = new Set()
+}
+
+// 侧边栏文件夹拖拽排序
+const sidebarDragIdx = ref(-1)
+const sidebarInsertIdx = ref(-1)
+let sidebarDragFolder: FolderType | null = null
+let sidebarStartY = 0
+let sidebarMoved = false
+let sidebarGhost: HTMLElement | null = null
+
+function onSidebarDragStart(e: MouseEvent, folder: FolderType, idx: number) {
+  sidebarDragFolder = folder
+  sidebarDragIdx.value = idx
+  sidebarInsertIdx.value = -1
+  sidebarStartY = e.clientY
+  sidebarMoved = false
+  const el = (e.target as HTMLElement).closest('.folder-item') as HTMLElement
+  const rect = el.getBoundingClientRect()
+  sidebarGhost = el.cloneNode(true) as HTMLElement
+  sidebarGhost.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;opacity:0.85;pointer-events:none;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.18);border-radius:6px;background:#fff;border:1px solid var(--el-color-primary);transition:none;font-size:13px;`
+  document.body.appendChild(sidebarGhost)
+  document.addEventListener('mousemove', onSidebarMouseMove)
+  document.addEventListener('mouseup', onSidebarMouseUp)
+}
+
+function onSidebarMouseMove(e: MouseEvent) {
+  if (!sidebarDragFolder) return
+  if (Math.abs(e.clientY - sidebarStartY) < 5 && !sidebarMoved) return
+  sidebarMoved = true
+  if (sidebarGhost) sidebarGhost.style.top = (e.clientY - 16) + 'px'
+  const items = document.querySelectorAll('.folder-tree .folder-item')
+  let newInsert = -1
+  for (let i = 0; i < items.length; i++) {
+    if (i === sidebarDragIdx.value) continue
+    const rect = items[i].getBoundingClientRect()
+    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+      newInsert = e.clientY < rect.top + rect.height / 2 ? i : i + 1
+      break
+    }
+  }
+  if (newInsert < 0 && items.length > 0) {
+    const lastRect = items[items.length - 1].getBoundingClientRect()
+    if (e.clientY > lastRect.bottom) newInsert = items.length
+  }
+  if (newInsert >= 0) {
+    const src = sidebarDragFolder
+    const sameParent = flatFolders.value.filter(f => f.parentId === src.parentId)
+    const srcLocal = sameParent.findIndex(f => f.id === src.id)
+    const offset = flatFolders.value.findIndex(f => f.id === sameParent[0]?.id)
+    const local = newInsert - offset
+    if (local >= 0 && local <= sameParent.length && local !== srcLocal && local !== srcLocal + 1) {
+      sidebarInsertIdx.value = newInsert
+    } else {
+      sidebarInsertIdx.value = -1
+    }
+  } else {
+    sidebarInsertIdx.value = -1
+  }
+}
+
+async function onSidebarMouseUp() {
+  document.removeEventListener('mousemove', onSidebarMouseMove)
+  document.removeEventListener('mouseup', onSidebarMouseUp)
+  if (sidebarGhost) { sidebarGhost.remove(); sidebarGhost = null }
+  const src = sidebarDragFolder
+  const insertIdx = sidebarInsertIdx.value
+  sidebarDragFolder = null
+  sidebarDragIdx.value = -1
+  sidebarInsertIdx.value = -1
+  if (!src || !sidebarMoved || insertIdx < 0) return
+  sidebarMoved = false
+  try {
+    const siblings = flatFolders.value.filter(f => f.parentId === src.parentId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    const ids = siblings.map(f => f.id)
+    const fromIdx = ids.indexOf(src.id)
+    ids.splice(fromIdx, 1)
+    const adj = insertIdx > fromIdx ? insertIdx - 1 : insertIdx
+    ids.splice(adj, 0, src.id)
+    await folderApi.reorder(ids)
+    loadFolders()
+  } catch {}
 }
 
 // 计算扁平化的文件夹列表（支持任意层级嵌套）
@@ -2180,6 +2269,29 @@ async function handleTableCommand(cmd: string, row: any) {
   border: 1px dashed var(--el-color-primary);
   color: var(--el-color-primary);
   box-shadow: 0 0 0 2px var(--el-color-primary-light-8);
+}
+
+.folder-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  cursor: grab;
+  color: #c0c4cc;
+  flex-shrink: 0;
+  margin-right: 2px;
+  border-radius: 3px;
+  transition: color 0.2s;
+}
+
+.folder-drag-handle:hover {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.folder-drag-handle:active {
+  cursor: grabbing;
 }
 
 .folder-icon-wrapper {
