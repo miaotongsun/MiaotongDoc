@@ -70,6 +70,7 @@ D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\c
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\entity\ContractApproval.java
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\controller\DocumentController.java
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\websocket\PresenceWebSocketHandler.java
+D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\config\JsonbType.java
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\repository\FolderRepository.java
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\repository\NotificationRepository.java
 D:\tiany\stycode\MiaotongDoc\miaotongdoc-server\src\main\java\com\miaotong\doc\service\UserService.java

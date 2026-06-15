@@ -1,8 +1,9 @@
 package com.miaotong.doc.entity;
 
-import com.miaotong.doc.config.JsonbConverter;
+import com.miaotong.doc.config.JsonbType;
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.Type;
 import java.time.LocalDateTime;
 
 @Data
@@ -20,8 +21,8 @@ public class FolderTemplate {
     @Column(length = 500)
     private String description;
 
+    @Type(JsonbType.class)
     @Column(columnDefinition = "JSONB")
-    @Convert(converter = JsonbConverter.class)
     private String structure;
 
     @Column(name = "is_active")

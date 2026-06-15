@@ -69,6 +69,7 @@ com\miaotong\doc\entity\DocumentShare.class
 com\miaotong\doc\entity\FolderTemplate.class
 com\miaotong\doc\entity\SsoIdentity.class
 com\miaotong\doc\entity\ContractApproval.class
+com\miaotong\doc\config\JsonbType.class
 com\miaotong\doc\config\StorageConfig.class
 com\miaotong\doc\controller\FolderTemplateController.class
 com\miaotong\doc\scheduler\OnlyOfficeCleanupScheduler.class
