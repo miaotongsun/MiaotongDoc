@@ -58,7 +58,7 @@
         <div class="folder-tree" style="position:relative">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', transform: getSidebarTransform(idx) }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -387,8 +387,8 @@
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-mgmt-item"
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
-              opacity: mgmtDragIdx === idx ? 0.3 : 1,
-              transform: getMgmtTransform(idx)
+              marginTop: mgmtInsertIdx === idx ? '36px' : '0',
+              opacity: mgmtDragIdx === idx ? 0.3 : 1
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
@@ -626,23 +626,7 @@ function collapseAllFolders() {
 // 侧边栏文件夹拖拽排序
 const sidebarDragIdx = ref(-1)
 const sidebarInsertIdx = ref(-1)
-const SHIFT_PX = 36
 let sidebarOrigRects: DOMRect[] = []
-
-function getSidebarTransform(idx: number): string {
-  if (sidebarInsertIdx.value < 0) return ''
-  if (idx === sidebarDragIdx.value) return ''
-  const ins = sidebarInsertIdx.value
-  const srcIdx = sidebarDragIdx.value
-  // 只对同级的文件夹应用位移
-  const src = sidebarDragFolder
-  if (!src) return ''
-  const folder = flatFolders.value[idx]
-  if (!folder || (folder.parentId ?? null) !== (src.parentId ?? null)) return ''
-  if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
-  if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${SHIFT_PX}px)`
-  return ''
-}
 let sidebarDragFolder: FolderType | null = null
 let sidebarStartY = 0
 let sidebarMoved = false
@@ -1390,20 +1374,6 @@ const mgmtDragFolder = ref<FolderType | null>(null)
 const mgmtDragIdx = ref(-1)
 const mgmtInsertIdx = ref(-1)
 let mgmtOrigRects: DOMRect[] = []
-
-function getMgmtTransform(idx: number): string {
-  if (mgmtInsertIdx.value < 0) return ''
-  if (idx === mgmtDragIdx.value) return ''
-  const src = mgmtDragFolder.value
-  if (!src) return ''
-  const folder = flatFolders.value[idx]
-  if (!folder || (folder.parentId ?? null) !== (src.parentId ?? null)) return ''
-  const ins = mgmtInsertIdx.value
-  const srcIdx = mgmtDragIdx.value
-  if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
-  if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${SHIFT_PX}px)`
-  return ''
-}
 let mgmtStartY = 0
 let mgmtMoved = false
 let mgmtGhost: HTMLElement | null = null
@@ -2371,16 +2341,11 @@ async function handleTableCommand(cmd: string, row: any) {
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition: margin-top 0.2s ease, background 0.2s, color 0.2s;
   color: #606266;
   font-size: 13px;
   user-select: none;
   -webkit-user-select: none;
-  will-change: transform;
-}
-
-.folder-item.dragging {
-  opacity: 0.3;
 }
 
 .folder-item:hover {
@@ -2560,7 +2525,7 @@ async function handleTableCommand(cmd: string, row: any) {
   background: #fff;
   border: 1px solid #ebeef5;
   border-radius: 8px;
-  transition: transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: margin-top 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
