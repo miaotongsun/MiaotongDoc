@@ -56,10 +56,13 @@
           </div>
         </li>
         <div class="folder-tree" style="position:relative">
-          <div v-if="sidebarInsertLineY > 0" class="insert-line" :style="{ top: sidebarInsertLineY + 'px' }"></div>
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
+            :style="{
+              paddingLeft: (12 + folder.depth * 16) + 'px',
+              opacity: sidebarDragIdx === idx ? 0.3 : 1,
+              transform: getSidebarTransform(idx)
+            }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -384,12 +387,12 @@
         <div v-if="folders.length === 0" class="empty-state">
           <el-empty description="暂无文件夹，点击上方按钮创建" />
         </div>
-        <div v-else class="folder-mgmt-list" style="position:relative">
-          <div v-if="mgmtInsertLineY > 0" class="insert-line-mgmt" :style="{ top: mgmtInsertLineY + 'px' }"></div>
+        <div v-else class="folder-mgmt-list">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-mgmt-item"
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
-              opacity: mgmtDragIdx === idx ? 0.3 : 1
+              opacity: mgmtDragIdx === idx ? 0.3 : 1,
+              transform: getMgmtTransform(idx)
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
@@ -627,7 +630,19 @@ function collapseAllFolders() {
 // 侧边栏文件夹拖拽排序
 const sidebarDragIdx = ref(-1)
 const sidebarInsertIdx = ref(-1)
-const sidebarInsertLineY = ref(0)
+const SHIFT_PX = 36
+let sidebarOrigRects: DOMRect[] = []
+
+function getSidebarTransform(idx: number): string {
+  const src = sidebarDragFolder
+  if (!src || sidebarInsertIdx.value < 0) return ''
+  if (idx === sidebarDragIdx.value) return ''
+  const ins = sidebarInsertIdx.value
+  const srcIdx = sidebarDragIdx.value
+  if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
+  if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${SHIFT_PX}px)`
+  return ''
+}
 let sidebarDragFolder: FolderType | null = null
 let sidebarStartY = 0
 let sidebarMoved = false
@@ -645,6 +660,9 @@ function onSidebarDragStart(e: MouseEvent, folder: FolderType, idx: number) {
   sidebarInsertIdx.value = -1
   sidebarStartY = e.clientY
   sidebarMoved = false
+  // 缓存原始位置
+  const items = document.querySelectorAll('.folder-tree .folder-item')
+  sidebarOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
   // 创建简化的幽灵元素
   const el = (e.target as HTMLElement).closest('.folder-item') as HTMLElement
   const rect = el.getBoundingClientRect()
@@ -684,36 +702,30 @@ function onSidebarMouseMove(e: MouseEvent) {
     const h = sidebarGhost.offsetHeight || 32
     sidebarGhost.style.top = (e.clientY - h / 2) + 'px'
   }
+  // 用缓存的原始位置做检测（transform不影响缓存）
   const items = document.querySelectorAll('.folder-tree .folder-item')
-  const treeEl = document.querySelector('.folder-tree') as HTMLElement
-  const treeRect = treeEl?.getBoundingClientRect()
+  if (sidebarOrigRects.length === 0) {
+    sidebarOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
+  }
   let newInsert = -1
-  let lineY = 0
-  for (let i = 0; i < items.length; i++) {
+  for (let i = 0; i < sidebarOrigRects.length; i++) {
     if (i === sidebarDragIdx.value) continue
-    const rect = items[i].getBoundingClientRect()
+    const rect = sidebarOrigRects[i]
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
       const relY = (e.clientY - rect.top) / rect.height
       if (relY < 0.4) {
         newInsert = i
-        lineY = rect.top - treeRect.top
       } else if (relY > 0.6) {
         newInsert = i + 1
-        lineY = rect.bottom - treeRect.top
       } else {
-        // 死区：保持上次
         newInsert = sidebarInsertIdx.value
-        lineY = sidebarInsertLineY.value
       }
       break
     }
   }
-  if (newInsert < 0 && items.length > 0) {
-    const lastRect = items[items.length - 1].getBoundingClientRect()
-    if (e.clientY > lastRect.bottom) {
-      newInsert = items.length
-      lineY = lastRect.bottom - treeRect.top
-    }
+  if (newInsert < 0 && sidebarOrigRects.length > 0) {
+    const lastRect = sidebarOrigRects[sidebarOrigRects.length - 1]
+    if (e.clientY > lastRect.bottom) newInsert = sidebarOrigRects.length
   }
   if (newInsert >= 0) {
     const src = sidebarDragFolder
@@ -723,14 +735,11 @@ function onSidebarMouseMove(e: MouseEvent) {
     const local = newInsert - offset
     if (local >= 0 && local <= sameParent.length && local !== srcLocal && local !== srcLocal + 1) {
       sidebarInsertIdx.value = newInsert
-      sidebarInsertLineY.value = lineY
     } else {
       sidebarInsertIdx.value = -1
-      sidebarInsertLineY.value = 0
     }
   } else {
     sidebarInsertIdx.value = -1
-    sidebarInsertLineY.value = 0
   }
 }
 
@@ -743,7 +752,7 @@ async function onSidebarMouseUp() {
   sidebarDragFolder = null
   sidebarDragIdx.value = -1
   sidebarInsertIdx.value = -1
-  sidebarInsertLineY.value = 0
+  sidebarOrigRects = []
   if (!src || !sidebarMoved || insertIdx < 0) return
   sidebarMoved = false
   try {
@@ -1371,7 +1380,18 @@ const editFolderParentId = ref<number | null>(null)
 const mgmtDragFolder = ref<FolderType | null>(null)
 const mgmtDragIdx = ref(-1)
 const mgmtInsertIdx = ref(-1)
-const mgmtInsertLineY = ref(0)
+let mgmtOrigRects: DOMRect[] = []
+
+function getMgmtTransform(idx: number): string {
+  const src = mgmtDragFolder.value
+  if (!src || mgmtInsertIdx.value < 0) return ''
+  if (idx === mgmtDragIdx.value) return ''
+  const ins = mgmtInsertIdx.value
+  const srcIdx = mgmtDragIdx.value
+  if (srcIdx < ins && idx >= ins) return `translateY(${SHIFT_PX}px)`
+  if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${SHIFT_PX}px)`
+  return ''
+}
 let mgmtStartY = 0
 let mgmtMoved = false
 let mgmtGhost: HTMLElement | null = null
@@ -1382,6 +1402,10 @@ function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
   mgmtDragFolder.value = folder
   mgmtDragIdx.value = idx
   mgmtInsertIdx.value = -1
+
+  // 缓存原始位置
+  const items = document.querySelectorAll('.folder-mgmt-item')
+  mgmtOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
 
   // 创建简化的幽灵元素
   const el = (e.currentTarget as HTMLElement)
@@ -1425,36 +1449,30 @@ function onMgmtMouseMove(e: MouseEvent) {
     mgmtGhost.style.top = (e.clientY - h / 2) + 'px'
   }
 
-  // 找到鼠标所在的行
+  // 用缓存的原始位置做检测
   const items = document.querySelectorAll('.folder-mgmt-item')
-  const listEl = document.querySelector('.folder-mgmt-list') as HTMLElement
-  const listRect = listEl?.getBoundingClientRect()
+  if (mgmtOrigRects.length === 0) {
+    mgmtOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
+  }
   let newInsert = -1
-  let lineY = 0
-  for (let i = 0; i < items.length; i++) {
+  for (let i = 0; i < mgmtOrigRects.length; i++) {
     if (i === mgmtDragIdx.value) continue
-    const rect = items[i].getBoundingClientRect()
+    const rect = mgmtOrigRects[i]
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
       const relY = (e.clientY - rect.top) / rect.height
       if (relY < 0.4) {
         newInsert = i
-        lineY = rect.top - listRect.top
       } else if (relY > 0.6) {
         newInsert = i + 1
-        lineY = rect.bottom - listRect.top
       } else {
         newInsert = mgmtInsertIdx.value
-        lineY = mgmtInsertLineY.value
       }
       break
     }
   }
-  if (newInsert < 0 && items.length > 0) {
-    const lastRect = items[items.length - 1].getBoundingClientRect()
-    if (e.clientY > lastRect.bottom) {
-      newInsert = items.length
-      lineY = lastRect.bottom - listRect.top
-    }
+  if (newInsert < 0 && mgmtOrigRects.length > 0) {
+    const lastRect = mgmtOrigRects[mgmtOrigRects.length - 1]
+    if (e.clientY > lastRect.bottom) newInsert = mgmtOrigRects.length
   }
 
   if (newInsert >= 0) {
@@ -1465,14 +1483,11 @@ function onMgmtMouseMove(e: MouseEvent) {
     const localInsert = newInsert - globalOffset
     if (localInsert >= 0 && localInsert <= sameParentItems.length && localInsert !== srcLocalIdx && localInsert !== srcLocalIdx + 1) {
       mgmtInsertIdx.value = newInsert
-      mgmtInsertLineY.value = lineY
     } else {
       mgmtInsertIdx.value = -1
-      mgmtInsertLineY.value = 0
     }
   } else {
     mgmtInsertIdx.value = -1
-    mgmtInsertLineY.value = 0
   }
 }
 
@@ -1492,7 +1507,7 @@ async function onMgmtMouseUp() {
   mgmtDragFolder.value = null
   mgmtDragIdx.value = -1
   mgmtInsertIdx.value = -1
-  mgmtInsertLineY.value = 0
+  mgmtOrigRects = []
 
   if (!src || !mgmtMoved || insertIdx < 0) return
   mgmtMoved = false
@@ -2327,19 +2342,6 @@ async function handleTableCommand(cmd: string, row: any) {
 
 .folder-tree {
   padding: 0 8px;
-  position: relative;
-}
-
-.insert-line {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  height: 2px;
-  background: var(--el-color-primary);
-  border-radius: 1px;
-  box-shadow: 0 0 6px var(--el-color-primary-light-5);
-  pointer-events: none;
-  z-index: 10;
 }
 
 .folder-item {
@@ -2349,7 +2351,7 @@ async function handleTableCommand(cmd: string, row: any) {
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: transform 0.2s ease, opacity 0.2s ease, background 0.2s, color 0.2s;
   color: #606266;
   font-size: 13px;
   user-select: none;
@@ -2523,19 +2525,6 @@ async function handleTableCommand(cmd: string, row: any) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  position: relative;
-}
-
-.insert-line-mgmt {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--el-color-primary);
-  border-radius: 1px;
-  box-shadow: 0 0 6px var(--el-color-primary-light-5);
-  pointer-events: none;
-  z-index: 10;
 }
 
 .folder-mgmt-item {
@@ -2546,10 +2535,7 @@ async function handleTableCommand(cmd: string, row: any) {
   background: #fff;
   border: 1px solid #ebeef5;
   border-radius: 8px;
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              box-shadow 0.25s ease,
-              border-color 0.25s ease,
-              opacity 0.25s ease;
+  transition: transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
