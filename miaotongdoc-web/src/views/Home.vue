@@ -649,10 +649,31 @@ function onSidebarDragStart(e: MouseEvent, folder: FolderType, idx: number) {
   sidebarInsertIdx.value = -1
   sidebarStartY = e.clientY
   sidebarMoved = false
+  // 创建简化的幽灵元素
   const el = (e.target as HTMLElement).closest('.folder-item') as HTMLElement
   const rect = el.getBoundingClientRect()
-  sidebarGhost = el.cloneNode(true) as HTMLElement
-  sidebarGhost.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;opacity:0.85;pointer-events:none;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.18);border-radius:6px;background:#fff;border:1px solid var(--el-color-primary);transition:none;font-size:13px;`
+  sidebarGhost = document.createElement('div')
+  sidebarGhost.textContent = folder.name
+  sidebarGhost.style.cssText = [
+    'position:fixed',
+    `left:${rect.left}px`,
+    `top:${rect.top}px`,
+    `width:${rect.width}px`,
+    `height:${rect.height}px`,
+    'display:flex',
+    'align-items:center',
+    'padding:6px 12px',
+    'opacity:0.9',
+    'pointer-events:none',
+    'z-index:9999',
+    'box-shadow:0 4px 16px rgba(0,0,0,0.2)',
+    'border-radius:6px',
+    'background:#fff',
+    'border:1px solid var(--el-color-primary)',
+    'font-size:13px',
+    'color:#303133',
+    'cursor:grabbing'
+  ].join(';')
   document.body.appendChild(sidebarGhost)
   document.addEventListener('mousemove', onSidebarMouseMove)
   document.addEventListener('mouseup', onSidebarMouseUp)
@@ -662,7 +683,11 @@ function onSidebarMouseMove(e: MouseEvent) {
   if (!sidebarDragFolder) return
   if (Math.abs(e.clientY - sidebarStartY) < 5 && !sidebarMoved) return
   sidebarMoved = true
-  if (sidebarGhost) sidebarGhost.style.top = (e.clientY - 16) + 'px'
+  // 幽灵垂直居中于鼠标
+  if (sidebarGhost) {
+    const h = sidebarGhost.offsetHeight || 32
+    sidebarGhost.style.top = (e.clientY - h / 2) + 'px'
+  }
   const items = document.querySelectorAll('.folder-tree .folder-item')
   let newInsert = -1
   for (let i = 0; i < items.length; i++) {
@@ -1340,15 +1365,31 @@ function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
   mgmtDragIdx.value = idx
   mgmtInsertIdx.value = -1
 
-  // 创建跟随鼠标的幽灵元素
+  // 创建简化的幽灵元素
   const el = (e.currentTarget as HTMLElement)
   const rect = el.getBoundingClientRect()
-  mgmtGhost = el.cloneNode(true) as HTMLElement
-  mgmtGhost.style.cssText = `
-    position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;
-    opacity:0.85;pointer-events:none;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.18);
-    border-radius:8px;background:#fff;border:1px solid var(--el-color-primary);transition:none;
-  `
+  mgmtGhost = document.createElement('div')
+  mgmtGhost.textContent = folder.name
+  mgmtGhost.style.cssText = [
+    'position:fixed',
+    `left:${rect.left}px`,
+    `top:${rect.top}px`,
+    `width:${rect.width}px`,
+    `height:${rect.height}px`,
+    'display:flex',
+    'align-items:center',
+    'padding:12px 16px',
+    'opacity:0.9',
+    'pointer-events:none',
+    'z-index:9999',
+    'box-shadow:0 4px 16px rgba(0,0,0,0.2)',
+    'border-radius:8px',
+    'background:#fff',
+    'border:1px solid var(--el-color-primary)',
+    'font-size:14px',
+    'color:#303133',
+    'cursor:grabbing'
+  ].join(';')
   document.body.appendChild(mgmtGhost)
 
   document.addEventListener('mousemove', onMgmtMouseMove)
@@ -1362,7 +1403,8 @@ function onMgmtMouseMove(e: MouseEvent) {
 
   // 幽灵跟随鼠标
   if (mgmtGhost) {
-    mgmtGhost.style.top = (e.clientY - 24) + 'px'
+    const h = mgmtGhost.offsetHeight || 48
+    mgmtGhost.style.top = (e.clientY - h / 2) + 'px'
   }
 
   // 找到鼠标所在的行
