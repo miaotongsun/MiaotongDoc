@@ -64,7 +64,7 @@
               transition: 'margin-top 0.2s ease, opacity 0.2s ease',
               opacity: sidebarDragIdx === idx ? 0.3 : 1
             }"
-            @click="selectFolder(folder.id)"
+            @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
             @dragleave="onFolderDragLeave"
@@ -636,6 +636,12 @@ let sidebarDragFolder: FolderType | null = null
 let sidebarStartY = 0
 let sidebarMoved = false
 let sidebarGhost: HTMLElement | null = null
+
+function onSidebarFolderClick(id: number) {
+  // 拖拽结束后不触发 click
+  if (sidebarMoved) return
+  selectFolder(id)
+}
 
 function onSidebarDragStart(e: MouseEvent, folder: FolderType, idx: number) {
   sidebarDragFolder = folder
@@ -2260,8 +2266,8 @@ async function handleTableCommand(cmd: string, row: any) {
 }
 
 .folder-item.active {
-  background: #ecf5ff;
-  color: #409eff;
+  background: var(--active-bg, #ecf5ff);
+  color: var(--el-color-primary);
 }
 
 .folder-item.drag-over {
