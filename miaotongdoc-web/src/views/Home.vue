@@ -2259,6 +2259,8 @@ async function handleTableCommand(cmd: string, row: any) {
   transition: all 0.2s;
   color: #606266;
   font-size: 13px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .folder-item:hover {
@@ -2448,6 +2450,7 @@ async function handleTableCommand(cmd: string, row: any) {
               opacity 0.25s ease;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .folder-mgmt-item:hover {
