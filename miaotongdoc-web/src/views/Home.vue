@@ -2308,6 +2308,26 @@ async function handleTableCommand(cmd: string, row: any) {
   height: 16px;
 }
 
+.folder-toggle {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: #909399;
+  font-size: 12px;
+  padding: 2px;
+  border-radius: 3px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.folder-toggle:hover {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.folder-toggle-placeholder {
+  flex-shrink: 0;
+  width: 16px;
+}
+
 .folder-name {
   flex: 1;
   overflow: hidden;
