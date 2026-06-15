@@ -69,7 +69,7 @@
             @dragover.prevent="onFolderDragOver(folder.id)"
             @dragleave="onFolderDragLeave"
             @drop.prevent="onFolderDrop($event, folder.id)">
-            <span class="folder-drag-handle" @mousedown.left.stop="onSidebarDragStart($event, folder, idx)">
+            <span class="folder-drag-handle" @mousedown.left.stop="onSidebarDragStart($event, folder, idx)" @click.stop>
               <svg viewBox="0 0 1024 1024" width="12" height="12"><path fill="currentColor" d="M320 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm384-512a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128zm0 256a64 64 0 1 0 0-128 64 64 0 0 0 0 128z"/></svg>
             </span>
             <el-icon v-if="folder.hasChildren" class="folder-toggle" @mousedown.stop @click.stop="toggleFolder(folder.id)">
@@ -2312,9 +2312,9 @@ async function handleTableCommand(cmd: string, row: any) {
   flex-shrink: 0;
   cursor: pointer;
   color: #909399;
-  font-size: 12px;
-  padding: 2px;
-  border-radius: 3px;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
   transition: color 0.2s, background 0.2s;
 }
 
