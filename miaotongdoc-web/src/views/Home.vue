@@ -58,7 +58,7 @@
         <div class="folder-tree" style="position:relative">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', visibility: sidebarDragIdx === idx ? 'hidden' : 'visible' }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -388,7 +388,7 @@
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
               marginTop: mgmtInsertIdx === idx ? '36px' : '0',
-              opacity: mgmtDragIdx === idx ? 0.3 : 1
+              visibility: mgmtDragIdx === idx ? 'hidden' : 'visible'
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
@@ -691,49 +691,37 @@ function onSidebarMouseMove(e: MouseEvent) {
   if (sidebarOrigRects.length === 0) {
     sidebarOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
   }
+  // 只检测同级文件夹之间的间隙
+  const srcParentId = sidebarDragFolder?.parentId ?? null
+  const srcIdx = sidebarDragIdx.value
+  // 收集同级项的索引（排除源项）
+  const sameLevel: number[] = []
+  flatFolders.value.forEach((f, i) => {
+    if (i !== srcIdx && (f.parentId ?? null) === srcParentId) sameLevel.push(i)
+  })
   let newInsert = -1
-  for (let i = 0; i < sidebarOrigRects.length; i++) {
-    if (i === sidebarDragIdx.value) continue
+  // 检测鼠标在同级项之间的位置
+  for (let j = 0; j < sameLevel.length; j++) {
+    const i = sameLevel[j]
     const rect = sidebarOrigRects[i]
-    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      const relY = (e.clientY - rect.top) / rect.height
-      if (relY < 0.4) {
-        newInsert = i
-      } else if (relY > 0.6) {
-        newInsert = i + 1
-      } else {
-        newInsert = sidebarInsertIdx.value
-      }
+    if (!rect) continue
+    const midY = rect.top + rect.height / 2
+    if (e.clientY < midY) {
+      // 鼠标在该项上半区 → 插到该项前面
+      // 但要确认是在源项原来位置的前面还是后面
+      newInsert = i
       break
     }
   }
-  if (newInsert < 0 && sidebarOrigRects.length > 0) {
-    const lastRect = sidebarOrigRects[sidebarOrigRects.length - 1]
-    if (e.clientY > lastRect.bottom) newInsert = sidebarOrigRects.length
-  }
-  if (newInsert >= 0) {
-    const src = sidebarDragFolder
-    // 找到同级文件夹在 flatFolders 中的索引
-    const siblingIndices: number[] = []
-    flatFolders.value.forEach((f, i) => {
-      if ((f.parentId ?? null) === (src.parentId ?? null) && i !== sidebarDragIdx.value) {
-        siblingIndices.push(i)
-      }
-    })
-    if (siblingIndices.length > 0) {
-      const minIdx = siblingIndices[0]
-      const maxIdx = siblingIndices[siblingIndices.length - 1] + 1
-      if (newInsert >= minIdx && newInsert <= maxIdx) {
-        sidebarInsertIdx.value = newInsert
-      } else {
-        sidebarInsertIdx.value = -1
-      }
-    } else {
-      sidebarInsertIdx.value = -1
+  // 如果鼠标在所有同级项下方 → 插到最后
+  if (newInsert < 0 && sameLevel.length > 0) {
+    const lastIdx = sameLevel[sameLevel.length - 1]
+    const lastRect = sidebarOrigRects[lastIdx]
+    if (lastRect && e.clientY >= lastRect.top + lastRect.height / 2) {
+      newInsert = lastIdx + 1
     }
-  } else {
-    sidebarInsertIdx.value = -1
   }
+  sidebarInsertIdx.value = newInsert >= 0 ? newInsert : -1
 }
 
 async function onSidebarMouseUp() {
@@ -749,12 +737,20 @@ async function onSidebarMouseUp() {
   if (!src || !sidebarMoved || insertIdx < 0) return
   sidebarMoved = false
   try {
-    const siblings = flatFolders.value.filter(f => f.parentId === src.parentId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    const srcParentId = src.parentId ?? null
+    const siblings = flatFolders.value.filter(f => (f.parentId ?? null) === srcParentId).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     const ids = siblings.map(f => f.id)
     const fromIdx = ids.indexOf(src.id)
     ids.splice(fromIdx, 1)
-    const adj = insertIdx > fromIdx ? insertIdx - 1 : insertIdx
-    ids.splice(adj, 0, src.id)
+    // insertIdx 是 flatFolders 中的索引，需要转换为 siblings 中的索引
+    // 找到 insertIdx 在 flatFolders 中对应的文件夹
+    const insertBeforeFolder = flatFolders.value[insertIdx]
+    let targetSiblingIdx = ids.length // 默认放最后
+    if (insertBeforeFolder && insertBeforeFolder.id !== src.id) {
+      const pos = ids.indexOf(insertBeforeFolder.id)
+      if (pos >= 0) targetSiblingIdx = pos
+    }
+    ids.splice(targetSiblingIdx, 0, src.id)
     await folderApi.reorder(ids)
     loadFolders()
   } catch {}
@@ -1431,54 +1427,32 @@ function onMgmtMouseMove(e: MouseEvent) {
     mgmtGhost.style.top = (e.clientY - h / 2) + 'px'
   }
 
-  // 用缓存的原始位置做检测
-  const items = document.querySelectorAll('.folder-mgmt-item')
-  if (mgmtOrigRects.length === 0) {
-    mgmtOrigRects = Array.from(items).map(el => el.getBoundingClientRect())
-  }
+  // 只检测同级文件夹之间的间隙
+  const mgmtSrcParentId = mgmtDragFolder.value?.parentId ?? null
+  const mgmtSrcIdx = mgmtDragIdx.value
+  const mgmtSameLevel: number[] = []
+  flatFolders.value.forEach((f, i) => {
+    if (i !== mgmtSrcIdx && (f.parentId ?? null) === mgmtSrcParentId) mgmtSameLevel.push(i)
+  })
   let newInsert = -1
-  for (let i = 0; i < mgmtOrigRects.length; i++) {
-    if (i === mgmtDragIdx.value) continue
+  for (let j = 0; j < mgmtSameLevel.length; j++) {
+    const i = mgmtSameLevel[j]
     const rect = mgmtOrigRects[i]
-    if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      const relY = (e.clientY - rect.top) / rect.height
-      if (relY < 0.4) {
-        newInsert = i
-      } else if (relY > 0.6) {
-        newInsert = i + 1
-      } else {
-        newInsert = mgmtInsertIdx.value
-      }
+    if (!rect) continue
+    const midY = rect.top + rect.height / 2
+    if (e.clientY < midY) {
+      newInsert = i
       break
     }
   }
-  if (newInsert < 0 && mgmtOrigRects.length > 0) {
-    const lastRect = mgmtOrigRects[mgmtOrigRects.length - 1]
-    if (e.clientY > lastRect.bottom) newInsert = mgmtOrigRects.length
-  }
-
-  if (newInsert >= 0) {
-    const src = mgmtDragFolder.value
-    const siblingIndices: number[] = []
-    flatFolders.value.forEach((f, i) => {
-      if ((f.parentId ?? null) === (src.parentId ?? null) && i !== mgmtDragIdx.value) {
-        siblingIndices.push(i)
-      }
-    })
-    if (siblingIndices.length > 0) {
-      const minIdx = siblingIndices[0]
-      const maxIdx = siblingIndices[siblingIndices.length - 1] + 1
-      if (newInsert >= minIdx && newInsert <= maxIdx) {
-        mgmtInsertIdx.value = newInsert
-      } else {
-        mgmtInsertIdx.value = -1
-      }
-    } else {
-      mgmtInsertIdx.value = -1
+  if (newInsert < 0 && mgmtSameLevel.length > 0) {
+    const lastIdx = mgmtSameLevel[mgmtSameLevel.length - 1]
+    const lastRect = mgmtOrigRects[lastIdx]
+    if (lastRect && e.clientY >= lastRect.top + lastRect.height / 2) {
+      newInsert = lastIdx + 1
     }
-  } else {
-    mgmtInsertIdx.value = -1
   }
+  mgmtInsertIdx.value = newInsert >= 0 ? newInsert : -1
 }
 
 async function onMgmtMouseUp() {
@@ -1503,14 +1477,20 @@ async function onMgmtMouseUp() {
   mgmtMoved = false
 
   try {
+    const srcParentId = src.parentId ?? null
     const siblings = flatFolders.value
-      .filter(f => f.parentId === src.parentId)
+      .filter(f => (f.parentId ?? null) === srcParentId)
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     const ids = siblings.map(f => f.id)
     const fromIdx = ids.indexOf(src.id)
     ids.splice(fromIdx, 1)
-    const adjusted = insertIdx > fromIdx ? insertIdx - 1 : insertIdx
-    ids.splice(adjusted, 0, src.id)
+    const insertBeforeFolder = flatFolders.value[insertIdx]
+    let targetSiblingIdx = ids.length
+    if (insertBeforeFolder && insertBeforeFolder.id !== src.id) {
+      const pos = ids.indexOf(insertBeforeFolder.id)
+      if (pos >= 0) targetSiblingIdx = pos
+    }
+    ids.splice(targetSiblingIdx, 0, src.id)
     await folderApi.reorder(ids)
     ElMessage.success('排序已更新')
     loadFolders()
