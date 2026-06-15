@@ -55,14 +55,11 @@
             </el-button>
           </div>
         </li>
-        <div class="folder-tree">
+        <div class="folder-tree" style="position:relative">
+          <div v-if="sidebarInsertLineY > 0" class="insert-line" :style="{ top: sidebarInsertLineY + 'px' }"></div>
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
-            :style="{
-              paddingLeft: (12 + folder.depth * 16) + 'px',
-              marginTop: sidebarInsertIdx === idx ? '36px' : '0',
-              opacity: sidebarDragIdx === idx ? 0.3 : 1
-            }"
+            :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
             @click="onSidebarFolderClick(folder.id)"
             @dblclick="enterFolder(folder.id)"
             @dragover.prevent="onFolderDragOver(folder.id)"
@@ -387,13 +384,12 @@
         <div v-if="folders.length === 0" class="empty-state">
           <el-empty description="暂无文件夹，点击上方按钮创建" />
         </div>
-        <div v-else class="folder-mgmt-list">
+        <div v-else class="folder-mgmt-list" style="position:relative">
+          <div v-if="mgmtInsertLineY > 0" class="insert-line-mgmt" :style="{ top: mgmtInsertLineY + 'px' }"></div>
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-mgmt-item"
             :style="{
               paddingLeft: (16 + folder.depth * 24) + 'px',
-              marginTop: mgmtInsertIdx === idx ? '48px' : '0',
-              opacity: mgmtDragIdx === idx ? 0.3 : 1,
-              transition: 'margin-top 0.2s ease, opacity 0.2s ease'
+              opacity: mgmtDragIdx === idx ? 0.3 : 1
             }"
             @mousedown.left="onMgmtMouseDown($event, folder, idx)"
             :class="{ 'dragging': mgmtDragIdx === idx }">
@@ -631,6 +627,7 @@ function collapseAllFolders() {
 // 侧边栏文件夹拖拽排序
 const sidebarDragIdx = ref(-1)
 const sidebarInsertIdx = ref(-1)
+const sidebarInsertLineY = ref(0)
 let sidebarDragFolder: FolderType | null = null
 let sidebarStartY = 0
 let sidebarMoved = false
@@ -688,27 +685,35 @@ function onSidebarMouseMove(e: MouseEvent) {
     sidebarGhost.style.top = (e.clientY - h / 2) + 'px'
   }
   const items = document.querySelectorAll('.folder-tree .folder-item')
+  const treeEl = document.querySelector('.folder-tree') as HTMLElement
+  const treeRect = treeEl?.getBoundingClientRect()
   let newInsert = -1
+  let lineY = 0
   for (let i = 0; i < items.length; i++) {
     if (i === sidebarDragIdx.value) continue
     const rect = items[i].getBoundingClientRect()
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      // 用 30%/70% 分界，中间 40% 为死区，减少抖动
       const relY = (e.clientY - rect.top) / rect.height
-      if (relY < 0.3) {
+      if (relY < 0.4) {
         newInsert = i
-      } else if (relY > 0.7) {
+        lineY = rect.top - treeRect.top
+      } else if (relY > 0.6) {
         newInsert = i + 1
+        lineY = rect.bottom - treeRect.top
       } else {
-        // 死区：保持上一次的 insertIdx
-        newInsert = sidebarInsertIdx.value >= 0 ? sidebarInsertIdx.value : -1
+        // 死区：保持上次
+        newInsert = sidebarInsertIdx.value
+        lineY = sidebarInsertLineY.value
       }
       break
     }
   }
   if (newInsert < 0 && items.length > 0) {
     const lastRect = items[items.length - 1].getBoundingClientRect()
-    if (e.clientY > lastRect.bottom) newInsert = items.length
+    if (e.clientY > lastRect.bottom) {
+      newInsert = items.length
+      lineY = lastRect.bottom - treeRect.top
+    }
   }
   if (newInsert >= 0) {
     const src = sidebarDragFolder
@@ -718,11 +723,14 @@ function onSidebarMouseMove(e: MouseEvent) {
     const local = newInsert - offset
     if (local >= 0 && local <= sameParent.length && local !== srcLocal && local !== srcLocal + 1) {
       sidebarInsertIdx.value = newInsert
+      sidebarInsertLineY.value = lineY
     } else {
       sidebarInsertIdx.value = -1
+      sidebarInsertLineY.value = 0
     }
   } else {
     sidebarInsertIdx.value = -1
+    sidebarInsertLineY.value = 0
   }
 }
 
@@ -735,6 +743,7 @@ async function onSidebarMouseUp() {
   sidebarDragFolder = null
   sidebarDragIdx.value = -1
   sidebarInsertIdx.value = -1
+  sidebarInsertLineY.value = 0
   if (!src || !sidebarMoved || insertIdx < 0) return
   sidebarMoved = false
   try {
@@ -1362,6 +1371,7 @@ const editFolderParentId = ref<number | null>(null)
 const mgmtDragFolder = ref<FolderType | null>(null)
 const mgmtDragIdx = ref(-1)
 const mgmtInsertIdx = ref(-1)
+const mgmtInsertLineY = ref(0)
 let mgmtStartY = 0
 let mgmtMoved = false
 let mgmtGhost: HTMLElement | null = null
@@ -1417,25 +1427,34 @@ function onMgmtMouseMove(e: MouseEvent) {
 
   // 找到鼠标所在的行
   const items = document.querySelectorAll('.folder-mgmt-item')
+  const listEl = document.querySelector('.folder-mgmt-list') as HTMLElement
+  const listRect = listEl?.getBoundingClientRect()
   let newInsert = -1
+  let lineY = 0
   for (let i = 0; i < items.length; i++) {
     if (i === mgmtDragIdx.value) continue
     const rect = items[i].getBoundingClientRect()
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
       const relY = (e.clientY - rect.top) / rect.height
-      if (relY < 0.3) {
+      if (relY < 0.4) {
         newInsert = i
-      } else if (relY > 0.7) {
+        lineY = rect.top - listRect.top
+      } else if (relY > 0.6) {
         newInsert = i + 1
+        lineY = rect.bottom - listRect.top
       } else {
-        newInsert = mgmtInsertIdx.value >= 0 ? mgmtInsertIdx.value : -1
+        newInsert = mgmtInsertIdx.value
+        lineY = mgmtInsertLineY.value
       }
       break
     }
   }
   if (newInsert < 0 && items.length > 0) {
     const lastRect = items[items.length - 1].getBoundingClientRect()
-    if (e.clientY > lastRect.bottom) newInsert = items.length
+    if (e.clientY > lastRect.bottom) {
+      newInsert = items.length
+      lineY = lastRect.bottom - listRect.top
+    }
   }
 
   if (newInsert >= 0) {
@@ -1446,11 +1465,14 @@ function onMgmtMouseMove(e: MouseEvent) {
     const localInsert = newInsert - globalOffset
     if (localInsert >= 0 && localInsert <= sameParentItems.length && localInsert !== srcLocalIdx && localInsert !== srcLocalIdx + 1) {
       mgmtInsertIdx.value = newInsert
+      mgmtInsertLineY.value = lineY
     } else {
       mgmtInsertIdx.value = -1
+      mgmtInsertLineY.value = 0
     }
   } else {
     mgmtInsertIdx.value = -1
+    mgmtInsertLineY.value = 0
   }
 }
 
@@ -1470,6 +1492,7 @@ async function onMgmtMouseUp() {
   mgmtDragFolder.value = null
   mgmtDragIdx.value = -1
   mgmtInsertIdx.value = -1
+  mgmtInsertLineY.value = 0
 
   if (!src || !mgmtMoved || insertIdx < 0) return
   mgmtMoved = false
@@ -2304,6 +2327,19 @@ async function handleTableCommand(cmd: string, row: any) {
 
 .folder-tree {
   padding: 0 8px;
+  position: relative;
+}
+
+.insert-line {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--el-color-primary);
+  border-radius: 1px;
+  box-shadow: 0 0 6px var(--el-color-primary-light-5);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .folder-item {
@@ -2487,10 +2523,19 @@ async function handleTableCommand(cmd: string, row: any) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative;
 }
 
-.folder-mgmt-list .folder-mgmt-item {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+.insert-line-mgmt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--el-color-primary);
+  border-radius: 1px;
+  box-shadow: 0 0 6px var(--el-color-primary-light-5);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .folder-mgmt-item {
