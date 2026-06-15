@@ -1,5 +1,6 @@
 package com.miaotong.doc.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miaotong.doc.entity.FolderTemplate;
 import com.miaotong.doc.repository.FolderTemplateRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +16,7 @@ import java.util.Map;
 public class FolderTemplateController {
 
     private final FolderTemplateRepository folderTemplateRepository;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     public ResponseEntity<List<FolderTemplate>> getTemplates() {
@@ -27,22 +29,27 @@ public class FolderTemplateController {
     }
 
     @PostMapping
-    public ResponseEntity<FolderTemplate> createTemplate(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<FolderTemplate> createTemplate(@RequestBody Map<String, Object> body) throws Exception {
         FolderTemplate tpl = new FolderTemplate();
         tpl.setName((String) body.get("name"));
         tpl.setDescription((String) body.get("description"));
-        tpl.setStructure(body.get("structure") != null ? body.get("structure").toString() : "[]");
+        // structure 必须序列化为合法 JSON 字符串存入 JSONB 列
+        Object structure = body.get("structure");
+        tpl.setStructure(structure != null ? objectMapper.writeValueAsString(structure) : "[]");
         tpl.setIsActive(body.get("isActive") != null ? (Boolean) body.get("isActive") : true);
         return ResponseEntity.ok(folderTemplateRepository.save(tpl));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<FolderTemplate> updateTemplate(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<FolderTemplate> updateTemplate(@PathVariable Long id, @RequestBody Map<String, Object> body) throws Exception {
         FolderTemplate tpl = folderTemplateRepository.findById(id).orElse(null);
         if (tpl == null) return ResponseEntity.notFound().build();
         if (body.containsKey("name")) tpl.setName((String) body.get("name"));
         if (body.containsKey("description")) tpl.setDescription((String) body.get("description"));
-        if (body.containsKey("structure")) tpl.setStructure(body.get("structure").toString());
+        if (body.containsKey("structure")) {
+            Object structure = body.get("structure");
+            tpl.setStructure(structure != null ? objectMapper.writeValueAsString(structure) : "[]");
+        }
         if (body.containsKey("isActive")) tpl.setIsActive((Boolean) body.get("isActive"));
         return ResponseEntity.ok(folderTemplateRepository.save(tpl));
     }
