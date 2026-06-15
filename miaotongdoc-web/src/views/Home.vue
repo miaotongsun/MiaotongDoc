@@ -1277,9 +1277,14 @@ function getMgmtItemTransform(folder: FolderType, idx: number): string {
   if (mgmtInsertIndex.value < 0) return ''
   const srcIdx = mgmtDragIndex.value
   const ins = mgmtInsertIndex.value
-  if (srcIdx < ins && idx > srcIdx && idx < ins) return ''
-  if (srcIdx > ins && idx >= ins && idx < srcIdx) return `translateY(${ITEM_HEIGHT}px)`
-  if (srcIdx < ins && idx >= ins) return ''
+  // 拖到下方：插入点及之后的元素下移
+  if (ins > srcIdx) {
+    if (idx >= ins) return `translateY(${ITEM_HEIGHT}px)`
+  }
+  // 拖到上方：插入点到源之间的元素下移
+  if (ins < srcIdx) {
+    if (idx >= ins && idx < srcIdx) return `translateY(${ITEM_HEIGHT}px)`
+  }
   return ''
 }
 
