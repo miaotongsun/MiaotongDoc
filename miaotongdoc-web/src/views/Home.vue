@@ -1236,6 +1236,7 @@ const mgmtDragIdx = ref(-1)
 const mgmtInsertIdx = ref(-1)
 let mgmtStartY = 0
 let mgmtMoved = false
+let mgmtGhost: HTMLElement | null = null
 
 function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
   mgmtStartY = e.clientY
@@ -1243,39 +1244,52 @@ function onMgmtMouseDown(e: MouseEvent, folder: FolderType, idx: number) {
   mgmtDragFolder.value = folder
   mgmtDragIdx.value = idx
   mgmtInsertIdx.value = -1
+
+  // 创建跟随鼠标的幽灵元素
+  const el = (e.currentTarget as HTMLElement)
+  const rect = el.getBoundingClientRect()
+  mgmtGhost = el.cloneNode(true) as HTMLElement
+  mgmtGhost.style.cssText = `
+    position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;
+    opacity:0.85;pointer-events:none;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.18);
+    border-radius:8px;background:#fff;border:1px solid var(--el-color-primary);transition:none;
+  `
+  document.body.appendChild(mgmtGhost)
+
   document.addEventListener('mousemove', onMgmtMouseMove)
   document.addEventListener('mouseup', onMgmtMouseUp)
 }
 
 function onMgmtMouseMove(e: MouseEvent) {
   if (!mgmtDragFolder.value) return
-  if (Math.abs(e.clientY - mgmtStartY) < 5) return
+  if (Math.abs(e.clientY - mgmtStartY) < 5 && !mgmtMoved) return
   mgmtMoved = true
+
+  // 幽灵跟随鼠标
+  if (mgmtGhost) {
+    mgmtGhost.style.top = (e.clientY - 24) + 'px'
+  }
 
   // 找到鼠标所在的行
   const items = document.querySelectorAll('.folder-mgmt-item')
   let newInsert = -1
   for (let i = 0; i < items.length; i++) {
+    if (i === mgmtDragIdx.value) continue
     const rect = items[i].getBoundingClientRect()
     if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-      // 在该行内：判断上半还是下半
       newInsert = e.clientY < rect.top + rect.height / 2 ? i : i + 1
       break
     }
   }
-  // 如果鼠标在列表底部
   if (newInsert < 0 && items.length > 0) {
     const lastRect = items[items.length - 1].getBoundingClientRect()
     if (e.clientY > lastRect.bottom) newInsert = items.length
   }
 
-  // 只处理同级拖拽
   if (newInsert >= 0) {
     const src = mgmtDragFolder.value
-    // 获取同级的索引范围
     const sameParentItems = flatFolders.value.filter(f => f.parentId === src.parentId)
     const srcLocalIdx = sameParentItems.findIndex(f => f.id === src.id)
-    // 计算同级在全局列表中的偏移
     const globalOffset = flatFolders.value.findIndex(f => f.id === sameParentItems[0]?.id)
     const localInsert = newInsert - globalOffset
     if (localInsert >= 0 && localInsert <= sameParentItems.length && localInsert !== srcLocalIdx && localInsert !== srcLocalIdx + 1) {
@@ -1291,6 +1305,12 @@ function onMgmtMouseMove(e: MouseEvent) {
 async function onMgmtMouseUp() {
   document.removeEventListener('mousemove', onMgmtMouseMove)
   document.removeEventListener('mouseup', onMgmtMouseUp)
+
+  // 移除幽灵
+  if (mgmtGhost) {
+    mgmtGhost.remove()
+    mgmtGhost = null
+  }
 
   const src = mgmtDragFolder.value
   const insertIdx = mgmtInsertIdx.value
