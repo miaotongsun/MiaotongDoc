@@ -142,7 +142,7 @@ const versionSummary = ref('')
 const saveStatus = ref('')
 const signingTask = ref<SigningTask | null>(null)
 const currentUserId = computed(() => Number(sessionStorage.getItem('userId')) || 0)
-const currentUserName = computed(() => sessionStorage.getItem('userName') || '用户')
+const currentUserName = computed(() => sessionStorage.getItem('name') || sessionStorage.getItem('userName') || '用户')
 
 // Markdown 状态
 const markdownContent = ref('')

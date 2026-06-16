@@ -40,28 +40,42 @@ public class DocGenerator {
     }
 
     /**
-     * 修改docx的styles.xml，注入文档默认语言
+     * 修改docx，注入中文语言的styles.xml
      */
     private static byte[] setDocxLanguage(byte[] docxBytes, String lang) {
         try {
             var baos = new java.io.ByteArrayOutputStream();
+            boolean hasStyles = false;
             try (var zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(docxBytes));
                  var zout = new java.util.zip.ZipOutputStream(baos)) {
                 java.util.zip.ZipEntry entry;
                 while ((entry = zin.getNextEntry()) != null) {
                     zout.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
                     if ("word/styles.xml".equals(entry.getName())) {
+                        hasStyles = true;
                         String xml = new String(zin.readAllBytes(), StandardCharsets.UTF_8);
-                        if (xml.contains("<w:rPr>") && !xml.contains("<w:lang ")) {
-                            xml = xml.replace(
-                                    "</w:rPr></w:rPrDefault>",
-                                    "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/></w:rPr></w:rPrDefault>"
-                            );
+                        if (!xml.contains("<w:lang ")) {
+                            xml = xml.replace("</w:rPr></w:rPrDefault>",
+                                    "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/></w:rPr></w:rPrDefault>");
                         }
                         zout.write(xml.getBytes(StandardCharsets.UTF_8));
                     } else {
                         zout.write(zin.readAllBytes());
                     }
+                    zout.closeEntry();
+                }
+                // 如果没有styles.xml，创建一个包含中文语言的
+                if (!hasStyles) {
+                    zout.putNextEntry(new java.util.zip.ZipEntry("word/styles.xml"));
+                    String stylesXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                            + "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+                            + "<w:docDefaults><w:rPrDefault><w:rPr>"
+                            + "<w:rFonts w:ascii=\"等线\" w:eastAsia=\"等线\" w:hAnsi=\"等线\"/>"
+                            + "<w:sz w:val=\"21\"/><w:szCs w:val=\"21\"/>"
+                            + "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/>"
+                            + "</w:rPr></w:rPrDefault></w:docDefaults>"
+                            + "</w:styles>";
+                    zout.write(stylesXml.getBytes(StandardCharsets.UTF_8));
                     zout.closeEntry();
                 }
             }
