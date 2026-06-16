@@ -2,7 +2,7 @@
   <div class="md-wrapper">
     <!-- 轻量工具栏 -->
     <div class="md-toolbar" v-if="editor">
-      <div class="tb-left">
+      <div class="tb-center">
         <el-dropdown trigger="click" @command="setBlockType">
           <button class="tb block-select">{{ blockLabel }} ▾</button>
           <template #dropdown>
@@ -313,11 +313,12 @@ defineExpose({ getContent })
 
 /* 工具栏 */
 .md-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 12px; background: #fcfcfc; border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0; min-height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4px 24px; background: #fcfcfc; border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0; min-height: 36px; position: relative;
 }
-.tb-left, .tb-right { display: flex; align-items: center; gap: 1px; }
+.tb-center { display: flex; align-items: center; gap: 1px; }
+.tb-right { position: absolute; right: 24px; display: flex; align-items: center; gap: 8px; }
 .tb-right { gap: 8px; }
 .tb-sep { width: 1px; height: 16px; background: #e8e8e8; margin: 0 4px; }
 .tb {
@@ -348,7 +349,7 @@ defineExpose({ getContent })
 .md-editor-content { height: 100%; padding: 0; }
 
 /* 编辑器排版 */
-.md-editor-content :deep(.tiptap) { outline: none; height: 100%; min-height: 100%; font-size: 15px; line-height: 1.8; color: #24292f; padding: 32px 48px; box-sizing: border-box; }
+.md-editor-content :deep(.tiptap) { outline: none; height: 100%; min-height: 100%; font-size: 15px; line-height: 1.8; color: #24292f; padding: 24px 32px; box-sizing: border-box; }
 .md-editor-content :deep(.tiptap p) { margin: 0.5em 0; }
 .md-editor-content :deep(.tiptap h1) { font-size: 26px; font-weight: 700; margin: 1.2em 0 0.4em; color: #1b1f23; }
 .md-editor-content :deep(.tiptap h2) { font-size: 20px; font-weight: 600; margin: 1em 0 0.3em; color: #1b1f23; }

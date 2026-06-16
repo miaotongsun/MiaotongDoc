@@ -44,35 +44,50 @@ public class DocGenerator {
      */
     private static byte[] setDocxLanguage(byte[] docxBytes, String lang) {
         try {
-            var baos = new java.io.ByteArrayOutputStream();
+            // 先检查是否已有styles.xml
             boolean hasStyles = false;
+            try (var zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(docxBytes))) {
+                java.util.zip.ZipEntry ze;
+                while ((ze = zin.getNextEntry()) != null) {
+                    if ("word/styles.xml".equals(ze.getName())) {
+                        hasStyles = true;
+                        break;
+                    }
+                }
+            }
+
+            var baos = new java.io.ByteArrayOutputStream();
             try (var zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(docxBytes));
                  var zout = new java.util.zip.ZipOutputStream(baos)) {
                 java.util.zip.ZipEntry entry;
                 while ((entry = zin.getNextEntry()) != null) {
                     zout.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
-                    if ("word/styles.xml".equals(entry.getName())) {
-                        hasStyles = true;
-                        String xml = new String(zin.readAllBytes(), StandardCharsets.UTF_8);
-                        if (!xml.contains("<w:lang ")) {
-                            xml = xml.replace("</w:rPr></w:rPrDefault>",
-                                    "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/></w:rPr></w:rPrDefault>");
-                        }
-                        zout.write(xml.getBytes(StandardCharsets.UTF_8));
+                    byte[] data = zin.readAllBytes();
+                    if ("[Content_Types].xml".equals(entry.getName()) && !hasStyles) {
+                        // 添加styles.xml的Content Type声明
+                        String ct = new String(data, StandardCharsets.UTF_8);
+                        ct = ct.replace("</Types>",
+                                "<Override ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\" PartName=\"/word/styles.xml\"/></Types>");
+                        zout.write(ct.getBytes(StandardCharsets.UTF_8));
+                    } else if ("word/_rels/document.xml.rels".equals(entry.getName()) && !hasStyles) {
+                        // 添加styles.xml的关系引用
+                        String rels = new String(data, StandardCharsets.UTF_8);
+                        rels = rels.replace("</Relationships>",
+                                "<Relationship Id=\"rIdStyles\" Target=\"styles.xml\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\"/></Relationships>");
+                        zout.write(rels.getBytes(StandardCharsets.UTF_8));
                     } else {
-                        zout.write(zin.readAllBytes());
+                        zout.write(data);
                     }
                     zout.closeEntry();
                 }
-                // 如果没有styles.xml，创建一个包含中文语言的
+                // 添加styles.xml
                 if (!hasStyles) {
                     zout.putNextEntry(new java.util.zip.ZipEntry("word/styles.xml"));
                     String stylesXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
                             + "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
                             + "<w:docDefaults><w:rPrDefault><w:rPr>"
-                            + "<w:rFonts w:ascii=\"等线\" w:eastAsia=\"等线\" w:hAnsi=\"等线\"/>"
-                            + "<w:sz w:val=\"21\"/><w:szCs w:val=\"21\"/>"
                             + "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/>"
+                            + "<w:sz w:val=\"21\"/><w:szCs w:val=\"21\"/>"
                             + "</w:rPr></w:rPrDefault></w:docDefaults>"
                             + "</w:styles>";
                     zout.write(stylesXml.getBytes(StandardCharsets.UTF_8));

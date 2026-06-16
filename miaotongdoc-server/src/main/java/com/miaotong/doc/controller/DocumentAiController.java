@@ -200,34 +200,46 @@ public class DocumentAiController {
     }
 
     /**
-     * 调用 LLM
+     * 调用 LLM（通过 AI 代理）
      */
     private String callLlm(String prompt) {
         try {
-            Map<String, Object> body = Map.of(
-                "target", "/v1/chat/completions",
-                "method", "POST",
-                "headers", Map.of(),
-                "data", new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
-                    "model", "gpt-4o-mini",
-                    "messages", java.util.List.of(
-                        Map.of("role", "user", "content", prompt)
-                    ),
-                    "max_tokens", 2000,
-                    "temperature", 0.7
-                ))
-            );
+            // 构建 OpenAI 格式的请求体
+            Map<String, Object> requestBody = new java.util.HashMap<>();
+            requestBody.put("model", "gpt-4o-mini");
+            requestBody.put("messages", java.util.List.of(
+                    Map.of("role", "user", "content", prompt)
+            ));
+            requestBody.put("max_tokens", 2000);
+            requestBody.put("temperature", 0.7);
 
-            Object result = aiProxyService.proxy(body);
+            String dataJson = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(requestBody);
+
+            // 构建代理请求
+            Map<String, Object> proxyBody = new java.util.HashMap<>();
+            proxyBody.put("target", "/v1/chat/completions");
+            proxyBody.put("method", "POST");
+            proxyBody.put("headers", new java.util.HashMap<String, String>());
+            proxyBody.put("data", dataJson);
+
+            Object result = aiProxyService.proxy(proxyBody);
             if (result instanceof org.springframework.http.ResponseEntity<?> resp) {
-                String bodyStr = (String) resp.getBody();
-                // 解析 OpenAI 格式的响应
-                Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readValue(bodyStr, Map.class);
-                java.util.List<Map<String, Object>> choices = (java.util.List<Map<String, Object>>) parsed.get("choices");
-                if (choices != null && !choices.isEmpty()) {
-                    Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-                    return (String) message.get("content");
+                Object respBody = resp.getBody();
+                if (respBody instanceof String bodyStr) {
+                    Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(bodyStr, Map.class);
+                    java.util.List<?> choices = (java.util.List<?>) parsed.get("choices");
+                    if (choices != null && !choices.isEmpty()) {
+                        Object first = choices.get(0);
+                        if (first instanceof Map<?, ?> choice) {
+                            Object message = choice.get("message");
+                            if (message instanceof Map<?, ?> msg) {
+                                Object content = msg.get("content");
+                                if (content instanceof String text) return text;
+                            }
+                        }
+                    }
                 }
             }
             return "AI 服务响应格式异常";
