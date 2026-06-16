@@ -57,6 +57,8 @@ public class DocumentService {
             case "word" -> "docx";
             case "cell" -> "xlsx";
             case "slide" -> "pptx";
+            case "markdown" -> "md";
+            case "pdf" -> "pdf";
             default -> throw new BusinessException("不支持的文档类型");
         };
 
@@ -129,6 +131,12 @@ public class DocumentService {
         } else if (originalName.endsWith(".pptx")) {
             docType = "slide";
             fileType = "pptx";
+        } else if (originalName.endsWith(".md")) {
+            docType = "markdown";
+            fileType = "md";
+        } else if (originalName.endsWith(".pdf")) {
+            docType = "pdf";
+            fileType = "pdf";
         } else {
             throw new BusinessException("不支持的文件格式");
         }
@@ -539,6 +547,14 @@ public class DocumentService {
     public Document toggleStar(Long id, Long userId) {
         Document doc = getDocument(id);
         doc.setIsStarred(!doc.getIsStarred());
+        return documentRepository.save(doc);
+    }
+
+    /**
+     * 更新文档元数据（文件哈希、大小、更新人等）
+     */
+    @Transactional
+    public Document updateDocument(Document doc) {
         return documentRepository.save(doc);
     }
 

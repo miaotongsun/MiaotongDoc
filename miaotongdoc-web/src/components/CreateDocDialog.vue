@@ -6,10 +6,11 @@
           <div v-for="(config, type) in DOC_TYPE_CONFIG" :key="type"
             class="doc-type-item" :class="{ selected: form.docType === type }"
             @click="form.docType = String(type); form.templateId = 0">
-            <el-icon :size="28" :style="{ color: config.color }">
+            <el-icon :size="26" :style="{ color: config.color }">
               <component :is="config.icon" />
             </el-icon>
-            <span class="type-name">{{ config.brandName }}</span>
+            <span class="type-name">{{ config.label }}</span>
+            <span class="type-ext">.{{ config.ext }}</span>
           </div>
         </div>
       </el-form-item>
@@ -123,17 +124,19 @@ async function handleCreate() {
 <style scoped>
 .doc-type-group {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
+  flex-wrap: wrap;
 }
 
 .doc-type-item {
   flex: 1;
+  min-width: 100px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 16px 12px;
+  gap: 6px;
+  padding: 14px 10px;
   border: 2px solid #e8e8e8;
   border-radius: 8px;
   cursor: pointer;

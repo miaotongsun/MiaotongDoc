@@ -1,4 +1,4 @@
-export type DocType = 'word' | 'cell' | 'slide'
+export type DocType = 'word' | 'cell' | 'slide' | 'markdown' | 'pdf'
 
 export interface DocTypeConfig {
   label: string
@@ -6,7 +6,8 @@ export interface DocTypeConfig {
   ext: string
   icon: string
   color: string
-  ooDocumentType: string
+  ooDocumentType?: string  // OnlyOffice 文档类型，markdown/pdf 不需要
+  editorType: 'onlyoffice' | 'markdown' | 'pdf'
 }
 
 export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
@@ -16,7 +17,8 @@ export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
     ext: 'docx',
     icon: 'Document',
     color: '#2B579A',
-    ooDocumentType: 'word'
+    ooDocumentType: 'word',
+    editorType: 'onlyoffice'
   },
   cell: {
     label: '电子表格',
@@ -24,7 +26,8 @@ export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
     ext: 'xlsx',
     icon: 'Grid',
     color: '#217346',
-    ooDocumentType: 'cell'
+    ooDocumentType: 'cell',
+    editorType: 'onlyoffice'
   },
   slide: {
     label: '演示文稿',
@@ -32,7 +35,24 @@ export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
     ext: 'pptx',
     icon: 'Picture',
     color: '#D24726',
-    ooDocumentType: 'slide'
+    ooDocumentType: 'slide',
+    editorType: 'onlyoffice'
+  },
+  markdown: {
+    label: 'Markdown',
+    brandName: 'MiaotongMD',
+    ext: 'md',
+    icon: 'EditPen',
+    color: '#7C3AED',
+    editorType: 'markdown'
+  },
+  pdf: {
+    label: 'PDF文档',
+    brandName: 'MiaotongPDF',
+    ext: 'pdf',
+    icon: 'Document',
+    color: '#DC2626',
+    editorType: 'pdf'
   }
 }
 
@@ -45,6 +65,8 @@ export function getFileTypeIcon(fileType: string): string {
     case 'docx': return 'Document'
     case 'xlsx': return 'Grid'
     case 'pptx': return 'Picture'
+    case 'md': return 'EditPen'
+    case 'pdf': return 'Document'
     default: return 'Document'
   }
 }

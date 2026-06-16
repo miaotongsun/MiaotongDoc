@@ -137,9 +137,26 @@ public class ContentIndexService {
             if ("docx".equals(fileType) || "xlsx".equals(fileType) || "pptx".equals(fileType)) {
                 return extractTextFromZip(fileBytes);
             }
+            if ("pdf".equals(fileType)) {
+                return extractTextFromPdf(fileBytes);
+            }
+            // md 和其他文本格式直接读取
             return new String(fileBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
             log.warn("文本提取失败: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 从 PDF 文件中提取文本
+     */
+    private String extractTextFromPdf(byte[] fileBytes) {
+        try (var pdf = org.apache.pdfbox.Loader.loadPDF(fileBytes)) {
+            org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
+            return stripper.getText(pdf);
+        } catch (Exception e) {
+            log.warn("PDF 文本提取失败: {}", e.getMessage());
             return "";
         }
     }

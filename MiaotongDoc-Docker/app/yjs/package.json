@@ -1,0 +1,13 @@
+{
+  "name": "miaotongdoc-yjs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MiaotongDoc Yjs WebSocket 协同编辑服务器",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "y-websocket": "^2.0.0",
+    "yjs": "^13.6.0"
+  }
+}

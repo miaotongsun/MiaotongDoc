@@ -14,6 +14,7 @@ com\miaotong\doc\config\WebSocketConfig.class
 com\miaotong\doc\service\ContractParser.class
 com\miaotong\doc\dto\SsoProviderDTO.class
 com\miaotong\doc\service\NotificationService.class
+com\miaotong\doc\controller\DocumentAiController.class
 com\miaotong\doc\controller\NotificationController.class
 com\miaotong\doc\dto\EditorConfig$Customization.class
 com\miaotong\doc\service\TemplateService.class
@@ -94,6 +95,7 @@ com\miaotong\doc\MiaotongDocApplication.class
 com\miaotong\doc\repository\TemplateCategoryRepository.class
 com\miaotong\doc\controller\CallbackController.class
 com\miaotong\doc\config\EditorConfig.class
+com\miaotong\doc\controller\PdfController.class
 com\miaotong\doc\service\storage\FileSystemStorageService.class
 com\miaotong\doc\entity\Comment.class
 com\miaotong\doc\repository\ActivityRepository.class
@@ -119,6 +121,7 @@ com\miaotong\doc\dto\LoginRequest.class
 com\miaotong\doc\controller\AuditController.class
 com\miaotong\doc\entity\SigningTask.class
 com\miaotong\doc\controller\ActivityController.class
+com\miaotong\doc\controller\MarkdownController.class
 com\miaotong\doc\entity\DocumentVersion.class
 com\miaotong\doc\controller\ContractController.class
 com\miaotong\doc\controller\PresenceController.class

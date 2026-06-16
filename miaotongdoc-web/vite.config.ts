@@ -16,8 +16,16 @@ export default defineConfig({
         target: 'http://localhost:9004',
         changeOrigin: true
       },
-      '/ws': {
+      '/ws/presence': {
         target: 'ws://localhost:9004',
+        ws: true
+      },
+      '/ws/notifications': {
+        target: 'ws://localhost:9004',
+        ws: true
+      },
+      '/ws/yjs': {
+        target: 'ws://localhost:1234',
         ws: true
       }
     }

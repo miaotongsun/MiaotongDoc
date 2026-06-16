@@ -1,11 +1,17 @@
 package com.miaotong.doc.util;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
+import org.apache.xmlbeans.XmlCursor;
 import org.springframework.stereotype.Component;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 @Component
 public class DocGenerator {
@@ -15,6 +21,8 @@ public class DocGenerator {
             case "word" -> createDocx(title);
             case "cell" -> createXlsx(title);
             case "slide" -> createPptx(title);
+            case "markdown" -> createMarkdown(title);
+            case "pdf" -> createPdf(title);
             default -> throw new IllegalArgumentException("不支持的文档类型: " + docType);
         };
     }
@@ -26,7 +34,40 @@ public class DocGenerator {
             doc.getProperties().getExtendedProperties().setApplication("MiaotongDoc");
             doc.getProperties().getExtendedProperties().setAppVersion("1.0");
             doc.createParagraph();
-            return toBytes(doc);
+            byte[] raw = toBytes(doc);
+            return setDocxLanguage(raw, "zh-CN");
+        }
+    }
+
+    /**
+     * 修改docx的styles.xml，注入文档默认语言
+     */
+    private static byte[] setDocxLanguage(byte[] docxBytes, String lang) {
+        try {
+            var baos = new java.io.ByteArrayOutputStream();
+            try (var zin = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(docxBytes));
+                 var zout = new java.util.zip.ZipOutputStream(baos)) {
+                java.util.zip.ZipEntry entry;
+                while ((entry = zin.getNextEntry()) != null) {
+                    zout.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
+                    if ("word/styles.xml".equals(entry.getName())) {
+                        String xml = new String(zin.readAllBytes(), StandardCharsets.UTF_8);
+                        if (xml.contains("<w:rPr>") && !xml.contains("<w:lang ")) {
+                            xml = xml.replace(
+                                    "</w:rPr></w:rPrDefault>",
+                                    "<w:lang w:val=\"" + lang + "\" w:eastAsia=\"" + lang + "\"/></w:rPr></w:rPrDefault>"
+                            );
+                        }
+                        zout.write(xml.getBytes(StandardCharsets.UTF_8));
+                    } else {
+                        zout.write(zin.readAllBytes());
+                    }
+                    zout.closeEntry();
+                }
+            }
+            return baos.toByteArray();
+        } catch (Exception e) {
+            return docxBytes;
         }
     }
 
@@ -47,8 +88,45 @@ public class DocGenerator {
             ppt.getProperties().getCoreProperties().setCreator("MiaotongDoc");
             ppt.getProperties().getExtendedProperties().setApplication("MiaotongDoc");
             ppt.getProperties().getExtendedProperties().setAppVersion("1.0");
+
+            // 设置默认字体为中文
+            if (ppt.getCTPresentation().getDefaultTextStyle() == null) {
+                ppt.getCTPresentation().addNewDefaultTextStyle();
+            }
+
             ppt.createSlide();
             return toBytes(ppt);
+        }
+    }
+
+    /**
+     * 创建空白 Markdown 文档
+     */
+    private static byte[] createMarkdown(String title) {
+        String content = "# " + title + "\n\n";
+        return content.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 创建空白 PDF 文档（使用 Apache PDFBox）
+     */
+    private static byte[] createPdf(String title) throws IOException {
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage();
+            doc.addPage(page);
+
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.beginText();
+                cs.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(FontName.HELVETICA_BOLD), 18);
+                cs.setLeading(24);
+                cs.newLineAtOffset(50, 750);
+                cs.showText(title);
+                cs.endText();
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            doc.save(baos);
+            return baos.toByteArray();
         }
     }
 

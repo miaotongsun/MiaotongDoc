@@ -394,6 +394,30 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  # Yjs WebSocket 协同编辑服务器（Markdown + PDF 注释实时同步）
+  yjs-server:
+    build: ./app/yjs
+    container_name: miaotongdoc-yjs
+    ports:
+      - "1234:1234"
+    environment:
+      - TZ=Asia/Shanghai
+      - YJS_PORT=1234
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:1234/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.80
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    restart: unless-stopped
+
 networks:
   mtd-net:
     driver: bridge

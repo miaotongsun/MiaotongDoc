@@ -41,6 +41,9 @@
           <el-button v-if="docStatus === 'signed'" size="small" type="success" plain @click="exportPdf">
             导出PDF
           </el-button>
+          <el-button v-if="isMarkdown || isPdf" size="small" plain @click="showAiPanel = !showAiPanel">
+            <el-icon><MagicStick /></el-icon>AI 助手
+          </el-button>
         </div>
       </div>
     </nav>
@@ -49,10 +52,38 @@
       @sign="onSign" @reject="onReject" @cancel="onCancelSigning" />
 
     <div class="editor-body">
-      <DocumentEditor v-if="config" :server-url="editorServerUrl" :config="config"
+      <!-- OnlyOffice 编辑器（Word/Sheet/Slide） -->
+      <DocumentEditor v-if="config && isOfficeDoc" :server-url="editorServerUrl" :config="config"
         @ready="onReady" @state-change="onStateChange" />
+
+      <!-- Markdown 编辑器 -->
+      <MarkdownEditor v-else-if="isMarkdown && markdownLoaded"
+        :doc-id="docId" :doc-key="doc?.docKey || ''"
+        :initial-content="markdownContent" :can-edit="canEdit"
+        :user-name="currentUserName" :user-id="currentUserId"
+        @ready="onReady" @state-change="onStateChange" @content-change="onMarkdownContentChange" />
+
+      <!-- PDF 编辑器 -->
+      <PdfViewer v-else-if="isPdf && pdfLoaded"
+        :doc-id="docId" :doc-key="doc?.docKey || ''"
+        :file-url="pdfFileUrl" :can-edit="canEdit"
+        :user-name="currentUserName" :user-id="currentUserId"
+        @ready="onReady" @state-change="onStateChange" />
+
+      <!-- 加载中 -->
+      <div v-else class="editor-loading">
+        <el-icon class="loading-icon" :size="32"><Loading /></el-icon>
+        <span>加载中...</span>
+      </div>
+
+      <!-- 评论面板（所有编辑器通用） -->
       <CommentPanel v-if="showCommentPanel" :doc-id="docId"
         @close="showCommentPanel = false" />
+
+      <!-- AI 面板（Markdown/PDF 专用） -->
+      <AiPanel v-if="showAiPanel && (isMarkdown || isPdf)"
+        :doc-id="docId" :doc-type="doc?.docType || ''"
+        @close="showAiPanel = false" />
     </div>
 
     <ShareDialog v-model="showShareDialog" :doc-id="docId" />
@@ -78,7 +109,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Share, ChatDotRound, Clock, User } from '@element-plus/icons-vue'
+import { Share, ChatDotRound, Clock, User, MagicStick, Loading } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { signingApi } from '@/api/signing'
 import { getDocTypeConfig } from '@/utils/docType'
@@ -86,11 +117,14 @@ import type { Document } from '@/api/document'
 import type { SigningTask } from '@/api/signing'
 import NotificationBell from '@/components/NotificationBell.vue'
 import DocumentEditor from '@/components/DocumentEditor.vue'
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import PdfViewer from '@/components/PdfViewer.vue'
 import CommentPanel from '@/components/CommentPanel.vue'
 import ShareDialog from '@/components/ShareDialog.vue'
 import VersionHistory from '@/components/VersionHistory.vue'
 import SigningDialog from '@/components/SigningDialog.vue'
 import SigningBar from '@/components/SigningBar.vue'
+import AiPanel from '@/components/AiPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -103,10 +137,20 @@ const showShareDialog = ref(false)
 const showVersions = ref(false)
 const showSigningDialog = ref(false)
 const showSaveVersionDialog = ref(false)
+const showAiPanel = ref(false)
 const versionSummary = ref('')
 const saveStatus = ref('')
 const signingTask = ref<SigningTask | null>(null)
 const currentUserId = computed(() => Number(sessionStorage.getItem('userId')) || 0)
+const currentUserName = computed(() => sessionStorage.getItem('userName') || '用户')
+
+// Markdown 状态
+const markdownContent = ref('')
+const markdownLoaded = ref(false)
+
+// PDF 状态
+const pdfFileUrl = ref('')
+const pdfLoaded = ref(false)
 
 const docTitle = computed(() => doc.value?.title || '加载中...')
 const docStatus = computed(() => doc.value?.status || 'draft')
@@ -121,6 +165,10 @@ const canComment = computed(() => {
   const perm = doc.value?.currentUserPermission
   return canAdmin.value || perm === 'comment' || perm === 'edit'
 })
+const canEdit = computed(() => {
+  const perm = doc.value?.currentUserPermission
+  return canAdmin.value || perm === 'edit' || isOwner.value
+})
 const permLabel = computed(() => {
   if (isOwner.value || canAdmin.value) return '管理'
   const map: Record<string, string> = { view: '只读', comment: '评论', edit: '编辑' }
@@ -131,17 +179,36 @@ const docTypeConfig = computed(() => {
   return getDocTypeConfig(doc.value?.docType || 'word')
 })
 
+// 编辑器类型判断
+const isOfficeDoc = computed(() => {
+  const dt = doc.value?.docType
+  return dt === 'word' || dt === 'cell' || dt === 'slide'
+})
+const isMarkdown = computed(() => doc.value?.docType === 'markdown')
+const isPdf = computed(() => doc.value?.docType === 'pdf')
+
 const editorServerUrl = computed(() => {
   return import.meta.env.VITE_EDITOR_SERVER_URL || '/ds-vpath'
 })
 
 onMounted(async () => {
-  // 清除协作模式设置，防止用户卡在严格模式
   localStorage.removeItem('de-settings-coauthmode')
 
   try {
     doc.value = await documentApi.getById(docId.value)
-    config.value = await documentApi.getConfig(docId.value)
+
+    if (isOfficeDoc.value) {
+      // OnlyOffice 编辑器：加载 config
+      config.value = await documentApi.getConfig(docId.value)
+    } else if (isMarkdown.value) {
+      // Markdown 编辑器：加载内容
+      await loadMarkdownContent()
+    } else if (isPdf.value) {
+      // PDF 编辑器：设置文件 URL
+      pdfFileUrl.value = `/api/documents/${docId.value}/file`
+      pdfLoaded.value = true
+    }
+
     if (doc.value?.status === 'signing') {
       await loadSigningTask()
     }
@@ -150,12 +217,28 @@ onMounted(async () => {
   }
 })
 
+async function loadMarkdownContent() {
+  try {
+    const token = sessionStorage.getItem('token')
+    const resp = await fetch(`/api/markdown/${docId.value}/content`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      markdownContent.value = data.content || ''
+    }
+  } catch (e) {
+    console.error('加载 Markdown 内容失败', e)
+  }
+  markdownLoaded.value = true
+}
+
 async function loadSigningTask() {
   try {
     const task = await signingApi.getByDocumentId(docId.value)
     signingTask.value = task
   } catch {
-    // no active signing task for this document
+    // no active signing task
   }
 }
 
@@ -173,6 +256,30 @@ function onStateChange(state: string) {
   } else if (state === 'saved') {
     saveStatus.value = '已保存'
   }
+}
+
+// Markdown 自动保存
+let mdSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onMarkdownContentChange(html: string) {
+  markdownContent.value = html
+  if (mdSaveTimer) clearTimeout(mdSaveTimer)
+  mdSaveTimer = setTimeout(async () => {
+    try {
+      const token = sessionStorage.getItem('token')
+      await fetch(`/api/markdown/${docId.value}/save`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: html }),
+      })
+      saveStatus.value = '已保存'
+    } catch (e) {
+      console.error('保存 Markdown 失败', e)
+      saveStatus.value = '保存失败'
+    }
+  }, 1500)
 }
 
 async function exportPdf() {
@@ -203,7 +310,6 @@ async function confirmSaveVersion() {
     const res = await documentApi.createVersion(docId.value, versionSummary.value || undefined)
     ElMessage.success(`版本 v${res.versionNumber} 已保存`)
     showSaveVersionDialog.value = false
-    // 更新本地版本号显示
     if (doc.value) {
       doc.value.currentVersion = res.versionNumber
     }
@@ -359,14 +465,12 @@ async function onCancelSigning() {
   gap: 4px;
 }
 
-/* 所有按钮统一样式 */
 .nav-actions :deep(.el-button) {
   transition: all 0.2s;
   border-radius: 6px;
   font-weight: 500;
 }
 
-/* 所有 plain 按钮：白底 + 渐变边框 */
 .nav-actions :deep(.el-button.is-plain) {
   position: relative;
   background: #fff !important;
@@ -388,7 +492,6 @@ async function onCancelSigning() {
   z-index: -1;
 }
 
-/* 所有 plain 按钮 hover：渐变背景 + 白色文字 */
 .nav-actions :deep(.el-button.is-plain):hover {
   color: #fff !important;
   background: var(--primary-gradient) !important;
@@ -408,5 +511,24 @@ async function onCancelSigning() {
   flex: 1;
   display: flex;
   overflow: hidden;
+}
+
+.editor-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #909399;
+}
+
+.loading-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

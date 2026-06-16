@@ -27,6 +27,14 @@
           <el-icon><Picture /></el-icon>
           <span>MiaotongPPT</span>
         </li>
+        <li :class="{ active: activeTab === 'markdown' }" @click="switchTab('markdown')">
+          <el-icon><EditPen /></el-icon>
+          <span>MiaotongMD</span>
+        </li>
+        <li :class="{ active: activeTab === 'pdf' }" @click="switchTab('pdf')">
+          <el-icon><Document /></el-icon>
+          <span>MiaotongPDF</span>
+        </li>
         <li class="nav-divider"></li>
         <li :class="{ active: activeTab === 'shared' }" @click="switchTab('shared')">
           <el-icon><Share /></el-icon>
@@ -119,7 +127,7 @@
             <el-icon><Plus /></el-icon>
             新建文档
           </el-button>
-          <el-upload v-if="isDocView" :show-file-list="false" :before-upload="handleUpload" accept=".docx,.xlsx,.pptx,.pdf">
+          <el-upload v-if="isDocView" :show-file-list="false" :before-upload="handleUpload" accept=".docx,.xlsx,.pptx,.md,.pdf">
             <el-button>
               <el-icon><Upload /></el-icon>
               上传文档
@@ -251,6 +259,8 @@
                   <Document v-if="row.docType === 'word'" />
                   <Grid v-else-if="row.docType === 'cell'" />
                   <Picture v-else-if="row.docType === 'slide'" />
+                  <EditPen v-else-if="row.docType === 'markdown'" />
+                  <Document v-else-if="row.docType === 'pdf'" />
                   <Files v-else />
                 </el-icon>
                 <el-icon v-if="row.signingLocked" class="lock-icon" color="#f56c6c"><Lock /></el-icon>
@@ -979,6 +989,8 @@ const tabLabels: Record<string, string> = {
   word: 'Word',
   cell: 'Sheet',
   slide: 'PPT',
+  markdown: 'Markdown',
+  pdf: 'PDF',
   shared: '与我共享',
   starred: '收藏文档',
   trash: '回收站',
@@ -1196,7 +1208,7 @@ function handleLogout() {
 }
 
 function docTypeColor(type: string) {
-  const map: Record<string, string> = { word: '#2b579a', cell: '#217346', slide: '#d24726' }
+  const map: Record<string, string> = { word: '#2b579a', cell: '#217346', slide: '#d24726', markdown: '#7C3AED', pdf: '#DC2626' }
   return map[type] || '#909399'
 }
 
