@@ -162,8 +162,6 @@ window.addSupportAgentMode = function(editorVersion) {
 
 async function initAssistants() {
 	let _this = window.Asc.plugin;
-	if (!_this.sendEvent)
-		return;
 
 	spellchecker = new SpellChecker(textAnnotatorPopup);
 	grammar = new GrammarChecker(textAnnotatorPopup);
