@@ -40,6 +40,7 @@ do_inject() {
     local global_models="$6"
 
     # 构建 aiPluginSettings JSON 字符串（给 AI 插件读取）
+    # proxy 使用后端代理地址，浏览器通过 /api/ai/proxy 转发到 LLM
     local ai_plugin_settings
     ai_plugin_settings=$(jq -n \
         --arg llm_url "$llm_url" \
@@ -48,7 +49,7 @@ do_inject() {
         --argjson provider_models "$provider_models" \
         --argjson global_models "$global_models" \
         '{
-            proxy: $llm_url,
+            proxy: "/api/ai/proxy",
             version: 4,
             timeout: "5m",
             actions: {
@@ -80,7 +81,7 @@ do_inject() {
             aiPluginSettings: $ai_plugin_settings
          } |
          .aiSettings = {
-            proxy: $llm_url,
+            proxy: "/api/ai/proxy",
             version: 4,
             timeout: "5m",
             actions: {

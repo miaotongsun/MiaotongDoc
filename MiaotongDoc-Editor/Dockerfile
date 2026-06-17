@@ -102,7 +102,7 @@ RUN PLUGIN_DIR="${EDITOR_HOME}/documentserver/sdkjs-plugins" && \
 
 # 更新插件列表，仅保留 AI 插件
 RUN PLUGIN_LIST="${EDITOR_HOME}/documentserver/sdkjs-plugins/plugin-list-default.json" && \
-    echo '["ai"]' > "$PLUGIN_LIST" && \
+    echo '["ai-plugin"]' > "$PLUGIN_LIST" && \
     gzip -kf "$PLUGIN_LIST" && \
     echo "plugin-list-default.json updated to AI only"
 
