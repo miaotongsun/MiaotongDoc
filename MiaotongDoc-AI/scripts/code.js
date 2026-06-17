@@ -905,36 +905,54 @@ function onTranslateSettingsModal() {
 
 async function onCheckGrammarSpelling(isCurrent)
 {
-	let paraIds = [];
-	
+	let paraData = [];
+
 	if (isCurrent)
 	{
-		paraIds = await Asc.Editor.callCommand(function(){
+		paraData = await Asc.Editor.callCommand(function(){
 			let result = [];
 			let range = Api.GetDocument().GetRangeBySelect();
 			if (!range)
 				return [];
-			
+
 			let paragraphs = range.GetAllParagraphs();
-			paragraphs.forEach(p => result.push(p.GetInternalId()));
+			paragraphs.forEach(p => result.push({id: p.GetInternalId(), text: p.GetText()}));
 			return result;
 		});
 	}
 	else
 	{
-		paraIds = await Asc.Editor.callCommand(function(){
+		paraData = await Asc.Editor.callCommand(function(){
 			let result = [];
 			let paragraphs = Api.GetDocument().GetAllParagraphs();
-			paragraphs.forEach(p => result.push(p.GetInternalId()));
+			paragraphs.forEach(p => result.push({id: p.GetInternalId(), text: p.GetText()}));
 			return result;
 		});
 	}
-	
-	if (spellchecker)
+
+	if (!paraData || paraData.length === 0)
+		return;
+
+	let paraIds = paraData.map(p => p.id);
+
+	// 主动填充 waitParagraphs（如果 onParagraphText 未触发）
+	if (spellchecker) {
+		paraData.forEach(p => {
+			if (!spellchecker.waitParagraphs[p.id]) {
+				spellchecker.waitParagraphs[p.id] = { recalcId: 0, text: p.text };
+			}
+		});
 		spellchecker.checkParagraphs(paraIds);
-	
-	if (grammar)
+	}
+
+	if (grammar) {
+		paraData.forEach(p => {
+			if (!grammar.waitParagraphs[p.id]) {
+				grammar.waitParagraphs[p.id] = { recalcId: 0, text: p.text };
+			}
+		});
 		grammar.checkParagraphs(paraIds);
+	}
 }
 
 /**
