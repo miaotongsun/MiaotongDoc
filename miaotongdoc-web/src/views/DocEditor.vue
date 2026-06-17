@@ -41,9 +41,6 @@
           <el-button v-if="docStatus === 'signed'" size="small" type="success" plain @click="exportPdf">
             导出PDF
           </el-button>
-          <el-button v-if="isMarkdown || isPdf" size="small" plain @click="showAiPanel = !showAiPanel">
-            <el-icon><MagicStick /></el-icon>AI 助手
-          </el-button>
         </div>
       </div>
     </nav>
@@ -80,10 +77,6 @@
       <CommentPanel v-if="showCommentPanel" :doc-id="docId"
         @close="showCommentPanel = false" />
 
-      <!-- AI 面板（Markdown/PDF 专用） -->
-      <AiPanel v-if="showAiPanel && (isMarkdown || isPdf)"
-        :doc-id="docId" :doc-type="doc?.docType || ''"
-        @close="showAiPanel = false" />
     </div>
 
     <ShareDialog v-model="showShareDialog" :doc-id="docId" />
@@ -109,7 +102,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Share, ChatDotRound, Clock, User, MagicStick, Loading } from '@element-plus/icons-vue'
+import { Share, ChatDotRound, Clock, User, Loading } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { signingApi } from '@/api/signing'
 import { getDocTypeConfig } from '@/utils/docType'
@@ -124,7 +117,6 @@ import ShareDialog from '@/components/ShareDialog.vue'
 import VersionHistory from '@/components/VersionHistory.vue'
 import SigningDialog from '@/components/SigningDialog.vue'
 import SigningBar from '@/components/SigningBar.vue'
-import AiPanel from '@/components/AiPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -137,7 +129,6 @@ const showShareDialog = ref(false)
 const showVersions = ref(false)
 const showSigningDialog = ref(false)
 const showSaveVersionDialog = ref(false)
-const showAiPanel = ref(false)
 const versionSummary = ref('')
 const saveStatus = ref('')
 const signingTask = ref<SigningTask | null>(null)
@@ -365,6 +356,7 @@ async function onCancelSigning() {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 .editor-nav {
@@ -374,8 +366,9 @@ async function onCancelSigning() {
   padding: 0 16px;
   background: #fff;
   border-bottom: 1px solid #e4e7ed;
-  height: 40px;
+  height: 48px;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .nav-left {

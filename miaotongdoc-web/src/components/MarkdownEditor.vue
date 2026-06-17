@@ -67,52 +67,46 @@
 
     <!-- 编辑器主体 -->
     <div class="md-body">
-      <div class="md-editor-scroll">
-        <editor-content :editor="editor" class="md-editor-content" />
-
-        <!-- BubbleMenu DOM 元素（由 BubbleMenu 扩展管理显示/隐藏） -->
-        <div ref="bubbleMenuEl" class="bubble-bar" v-show="false">
-          <button class="bubble-btn" @click="editor.chain().focus().toggleBold().run()"><b>B</b></button>
-          <button class="bubble-btn" @click="editor.chain().focus().toggleItalic().run()"><i>I</i></button>
-          <button class="bubble-btn" @click="editor.chain().focus().toggleCode().run()"><code>&lt;&gt;</code></button>
-          <button class="bubble-btn" @click="setLink">🔗</button>
-          <span class="bubble-sep" />
-          <el-dropdown trigger="click" @command="handleAiAction" size="small">
-            <button class="bubble-btn ai">✨ AI ▾</button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="rewrite">🔄 改写</el-dropdown-item>
-                <el-dropdown-item command="expand">📝 扩写</el-dropdown-item>
-                <el-dropdown-item command="shorten">✂️ 缩写</el-dropdown-item>
-                <el-dropdown-item command="formal">👔 更正式</el-dropdown-item>
-                <el-dropdown-item command="casual">😊 更随意</el-dropdown-item>
-                <el-dropdown-item command="translate-en">🌐 翻译英文</el-dropdown-item>
-                <el-dropdown-item command="translate-zh">🌐 翻译中文</el-dropdown-item>
-                <el-dropdown-item command="explain">💡 解释</el-dropdown-item>
-                <el-dropdown-item command="summarize">📋 摘要</el-dropdown-item>
-                <el-dropdown-item command="fix-grammar">✏️ 修正语法</el-dropdown-item>
-                <el-dropdown-item command="continue">➡️ 续写</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+      <div class="md-main">
+        <div class="md-editor-scroll">
+          <editor-content :editor="editor" class="md-editor-content" />
         </div>
 
-        <!-- FloatingMenu DOM 元素 -->
-        <div ref="floatMenuEl" class="float-bar" v-show="false">
-          <button class="float-btn" @click="editor.chain().focus().toggleHeading({level:1}).run()">H1</button>
-          <button class="float-btn" @click="editor.chain().focus().toggleHeading({level:2}).run()">H2</button>
-          <button class="float-btn" @click="editor.chain().focus().toggleBulletList().run()">•</button>
-          <button class="float-btn" @click="editor.chain().focus().toggleCodeBlock().run()">{ }</button>
-          <button class="float-btn" @click="insertTable">⊞</button>
-          <button class="float-btn ai" @click="aiSlashCommand">✨ AI</button>
-        </div>
-      </div>
+        <!-- 选中文本浮动菜单 -->
+        <transition name="fade">
+          <div v-if="showBubble" class="bubble-bar" :style="bubbleStyle">
+            <button class="bubble-btn" @click="editor.chain().focus().toggleBold().run()"><b>B</b></button>
+            <button class="bubble-btn" @click="editor.chain().focus().toggleItalic().run()"><i>I</i></button>
+            <button class="bubble-btn" @click="editor.chain().focus().toggleCode().run()"><code>&lt;&gt;</code></button>
+            <button class="bubble-btn" @click="setLink">🔗</button>
+            <span class="bubble-sep" />
+            <el-dropdown trigger="click" @command="handleAiAction" size="small">
+              <button class="bubble-btn ai">✨ AI ▾</button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rewrite">🔄 改写</el-dropdown-item>
+                  <el-dropdown-item command="expand">📝 扩写</el-dropdown-item>
+                  <el-dropdown-item command="shorten">✂️ 缩写</el-dropdown-item>
+                  <el-dropdown-item command="formal">👔 更正式</el-dropdown-item>
+                  <el-dropdown-item command="casual">😊 更随意</el-dropdown-item>
+                  <el-dropdown-item command="translate-en">🌐 翻译英文</el-dropdown-item>
+                  <el-dropdown-item command="translate-zh">🌐 翻译中文</el-dropdown-item>
+                  <el-dropdown-item command="explain">💡 解释</el-dropdown-item>
+                  <el-dropdown-item command="summarize">📋 摘要</el-dropdown-item>
+                  <el-dropdown-item command="fix-grammar">✏️ 修正语法</el-dropdown-item>
+                  <el-dropdown-item command="continue">➡️ 续写</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </transition>
 
-      <!-- 底部状态栏 -->
-      <div class="md-status-bar">
-        <span class="stat-item">{{ charCount }} 字符</span>
-        <span class="stat-item">{{ wordCount }} 词</span>
-        <span v-if="aiProcessing" class="stat-item ai-status">✨ AI 处理中...</span>
+        <!-- 底部状态栏 -->
+        <div class="md-status-bar">
+          <span class="stat-item">{{ charCount }} 字符</span>
+          <span class="stat-item">{{ wordCount }} 词</span>
+          <span v-if="aiProcessing" class="stat-item ai-status">✨ AI 处理中...</span>
+        </div>
       </div>
 
       <!-- AI 侧边面板 -->
@@ -170,11 +164,9 @@ function releaseYjsEntry(docKey: string) {
 </script>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, shallowRef, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { EditorContent } from '@tiptap/vue-3'
 import { Editor } from '@tiptap/core'
-import BubbleMenu from '@tiptap/extension-bubble-menu'
-import FloatingMenu from '@tiptap/extension-floating-menu'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
@@ -198,9 +190,9 @@ import { ElMessageBox, ElMessage } from 'element-plus'
 const props = defineProps<{ docId: number; docKey: string; initialContent?: string; canEdit: boolean; userName: string; userId: number }>()
 const emit = defineEmits(['ready', 'stateChange', 'contentChange'])
 
-const bubbleMenuEl = ref<HTMLElement | null>(null)
-const floatMenuEl = ref<HTMLElement | null>(null)
 const blockType = ref('paragraph')
+const showBubble = ref(false)
+const bubbleStyle = ref<Record<string, string>>({ top: '0px', left: '0px' })
 const blockLabel = computed(() => ({ paragraph:'正文', heading1:'标题 1', heading2:'标题 2', heading3:'标题 3', codeBlock:'代码块' }[blockType.value] || '正文'))
 const collabUsers = ref<Array<{ id: number; name: string; color: string }>>([])
 const showAi = ref(false)
@@ -230,7 +222,7 @@ const charCount = ref(0)
 const wordCount = ref(0)
 
 // 编辑器在 onMounted 中创建（需要 DOM refs 给 BubbleMenu/FloatingMenu）
-const editor = ref<Editor | null>(null)
+const editor = shallowRef<Editor | null>(null)
 
 onMounted(() => {
   const ed = new Editor({
@@ -246,20 +238,6 @@ onMounted(() => {
       CharacterCount,
       Collaboration.configure({ document: ydoc, field: 'content' }),
       CollaborationCursor.configure({ provider, user: { name: myName, color: myColor } }),
-      // BubbleMenu：选中文本时弹出
-      BubbleMenu.configure({
-        element: bubbleMenuEl.value,
-        pluginKey: 'bubbleMenu',
-        shouldShow: ({ editor: e, state }) => {
-          const { from, to } = state.selection
-          return from !== to && !e.isActive('codeBlock')
-        },
-      }),
-      // FloatingMenu：空行时弹出
-      FloatingMenu.configure({
-        element: floatMenuEl.value,
-        pluginKey: 'floatingMenu',
-      }),
     ],
     editable: props.canEdit,
     onUpdate: ({ editor: e }) => {
@@ -286,9 +264,41 @@ onMounted(() => {
 
   editor.value = ed
 
-  // v-show=false 默认隐藏，BubbleMenu/FloatingMenu 扩展会自动控制显示
-  if (bubbleMenuEl.value) bubbleMenuEl.value.style.display = ''
-  if (floatMenuEl.value) floatMenuEl.value.style.display = ''
+  // 监听选区变化，显示/隐藏浮动菜单
+  let bubbleTimer: ReturnType<typeof setTimeout> | null = null
+  const onSelectionChange = () => {
+    if (bubbleTimer) clearTimeout(bubbleTimer)
+    bubbleTimer = setTimeout(() => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || !sel.rangeCount) {
+        showBubble.value = false
+        return
+      }
+      const range = sel.getRangeAt(0)
+      if (!ed.view.dom.contains(range.commonAncestorContainer)) {
+        showBubble.value = false
+        return
+      }
+      const rect = range.getBoundingClientRect()
+      // 用 fixed 定位，clamp 到 viewport 内
+      const menuWidth = 200
+      const menuHeight = 40
+      let top = rect.top - menuHeight - 8
+      let left = rect.left + rect.width / 2 - menuWidth / 2
+      // 防止溢出上方
+      if (top < 4) top = rect.bottom + 8
+      // 防止溢出左右
+      left = Math.max(8, Math.min(left, window.innerWidth - menuWidth - 8))
+      bubbleStyle.value = {
+        position: 'fixed',
+        top: `${top}px`,
+        left: `${left}px`,
+        zIndex: '9999',
+      }
+      showBubble.value = true
+    }, 200)
+  }
+  document.addEventListener('selectionchange', onSelectionChange)
 })
 
 watch(() => props.canEdit, v => { if (editor.value) editor.value.setEditable(v) })
@@ -426,7 +436,8 @@ defineExpose({ getContent })
 .color-swatch.remove { background: #fff; border: 1px solid #dcdfe6; color: #999; font-size: 12px; display: flex; align-items: center; justify-content: center; }
 
 /* 主体 */
-.md-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.md-body { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
+.md-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 .md-editor-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
 .md-editor-content { flex: 1; display: flex; flex-direction: column; }
 .md-editor-content :deep(.ProseMirror) { flex: 1; outline: none; padding: 24px 32px; font-size: 15px; line-height: 1.8; color: #24292f; }
