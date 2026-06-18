@@ -208,6 +208,7 @@ services:
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor:/var/log/onlyoffice
       - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -253,6 +254,7 @@ services:
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor2:/var/log/onlyoffice
       - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -298,6 +300,7 @@ services:
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor3:/var/log/onlyoffice
       - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
