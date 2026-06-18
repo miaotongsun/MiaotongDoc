@@ -1375,4 +1375,600 @@ AI 功能通过 `AiProxyService` 代理转发，支持：
 
 ---
 
+## 二十五、Claude Code 开发指南
+
+> 本章节专门为 Claude Code 等 AI Agent 提供开发注意事项和最佳实践。
+
+### 25.1 项目启动检查清单
+
+**本地开发环境启动顺序**:
+```bash
+# 1. 启动基础设施（Docker）
+cd MiaotongDoc-Docker
+docker compose up -d postgres redis elasticsearch rabbitmq minio
+
+# 2. 启动后端
+cd miaotongdoc-server
+mvn spring-boot:run
+
+# 3. 启动前端
+cd miaotongdoc-web
+npm run dev
+
+# 4. 访问 http://localhost:3000
+```
+
+**默认账号**:
+- 管理员: 工号 `10000001`，密码 `123456`
+- 数据库: 用户 `miaotong`，密码见 `.env`
+
+### 25.2 代码修改注意事项
+
+#### 后端修改
+
+**数据库迁移**:
+```bash
+# 新增表或字段，必须创建迁移脚本
+# 文件命名: V{next_version}__description.sql
+# 示例: V22__add_ai_config_table.sql
+
+# 位置: miaotongdoc-server/src/main/resources/db/migration/
+```
+
+**Entity 修改规则**:
+- 修改 Entity 后，Flyway 迁移脚本必须同步
+- 不要依赖 `ddl-auto: update`，生产环境使用 Flyway
+- 字段类型变更需要数据迁移脚本
+
+**Service 层注意事项**:
+- 事务管理: 使用 `@Transactional` 注解
+- 异常处理: 抛出 `BusinessException` 或 `NotFoundException`
+- 日志记录: 使用 `@Slf4j` 注解，关键操作必须记录日志
+
+**Controller 层注意事项**:
+- 参数校验: 使用 `@Valid` 注解
+- 权限检查: 使用 `@PreAuthorize` 或手动检查
+- 返回值: 统一使用 `ResponseEntity` 包装
+
+#### 前端修改
+
+**API 调用**:
+```typescript
+// 统一使用 api/index.ts 中的 axios 实例
+import api from '@/api'
+
+// 错误处理
+try {
+  const res = await api.get('/documents/1')
+  // 处理成功
+} catch (error) {
+  // 401 会自动跳转登录页
+  // 其他错误需要手动处理
+}
+```
+
+**组件修改规则**:
+- 使用 Composition API (`<script setup>`)
+- 样式使用 `<style scoped>`
+- 响应式数据使用 `ref` 或 `reactive`
+- 组件复用使用 props + emit
+
+**状态管理**:
+```typescript
+// 使用 Pinia Store
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+// 访问状态
+console.log(userStore.userId)
+// 调用 action
+await userStore.login(employeeId, password)
+```
+
+### 25.3 关键业务逻辑
+
+#### 文档状态机
+
+```
+draft (草稿)
+  ↓ 发起签署
+signing (签署中)
+  ↓ 所有人签署完成
+signed (已签署，锁定)
+  ↓ 取消签署
+draft (草稿)
+```
+
+**注意**:
+- `signed` 状态的文档不可编辑
+- 签署超期自动标记为 `expired`
+- 合同审批期间文档也会锁定
+
+#### 合同审批状态机
+
+```
+draft (草稿)
+  ↓ 提交审批
+pending_approval (审批中)
+  ↓ 全部通过
+approved (已批准)
+  ↓ 任一拒绝
+rejected (已拒绝)
+  ↓ 撤回审批
+draft (草稿)
+```
+
+**注意**:
+- 审批是顺序流程，按 `step_order` 依次推进
+- 任一节点拒绝，整个流程终止
+- 审批期间文档锁定
+
+#### 权限检查优先级
+
+```
+1. 管理员 (admin role) → 绕过所有检查
+2. 文档所有者 (owner) → 全部权限
+3. 文档共享权限 (DocumentShare)
+   - admin: 管理权限
+   - edit: 编辑权限
+   - comment: 评论权限
+   - view: 只读权限
+4. 未共享 → 无权限
+```
+
+### 25.4 常用开发命令
+
+#### 后端命令
+
+```bash
+# 编译项目
+mvn clean compile
+
+# 运行测试
+mvn test
+
+# 打包（跳过测试）
+mvn clean package -DskipTests
+
+# 运行应用
+mvn spring-boot:run
+
+# 运行并指定 profile
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+```
+
+#### 前端命令
+
+```bash
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+
+# 构建生产版本
+npm run build
+
+# 类型检查
+npm run type-check
+
+# 代码检查
+npm run lint
+```
+
+#### Docker 命令
+
+```bash
+# 启动所有服务
+docker compose up -d
+
+# 停止所有服务
+docker compose down
+
+# 查看日志
+docker compose logs -f [service_name]
+
+# 重建镜像
+docker compose build --no-cache [service_name]
+
+# 进入容器
+docker exec -it miaotongdoc-server /bin/bash
+
+# 查看容器状态
+docker ps -a
+```
+
+### 25.5 调试技巧
+
+#### 后端调试
+
+**查看 SQL 日志**:
+```yaml
+# application.yml
+spring:
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+```
+
+**查看请求日志**:
+```yaml
+logging:
+  level:
+    com.miaotong.doc: DEBUG
+    org.springframework.web: DEBUG
+```
+
+#### 前端调试
+
+**Vue DevTools**:
+- 安装 Vue DevTools 浏览器扩展
+- 查看组件树和状态
+- 检查 Pinia Store 数据
+
+**网络请求调试**:
+- 打开浏览器开发者工具
+- Network 面板查看 API 请求
+- 检查请求头和响应
+
+**WebSocket 调试**:
+- Network → WS 面板
+- 查看消息收发
+- 检查连接状态
+
+### 25.6 数据库操作
+
+#### 常用 SQL
+
+```sql
+-- 查看所有表
+\dt
+
+-- 查看表结构
+\d mt_document
+
+-- 查看用户
+SELECT id, employee_id, username, real_name, role FROM sys_user;
+
+-- 查看文档
+SELECT id, title, doc_key, doc_type, status, owner_id FROM mt_document;
+
+-- 查看签署任务
+SELECT id, document_id, status, created_at FROM mt_signing_task;
+
+-- 查看合同
+SELECT id, contract_number, status, created_at FROM mt_contract;
+```
+
+#### 数据修复
+
+```sql
+-- 重置管理员密码（BCrypt 加密的 123456）
+UPDATE sys_user SET password = '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iKTVKIUi' 
+WHERE employee_id = '10000001';
+
+-- 解锁文档
+UPDATE mt_document SET status = 'draft', signing_locked = false WHERE id = ?;
+
+-- 重置合同状态
+UPDATE mt_contract SET status = 'draft' WHERE id = ?;
+```
+
+### 25.7 性能敏感点
+
+#### 数据库查询
+
+**避免 N+1 查询**:
+```java
+// ❌ 错误：会产生 N+1 查询
+@OneToMany(mappedBy = "document")
+private List<DocumentShare> shares;
+
+// ✅ 正确：使用 JOIN FETCH
+@Query("SELECT d FROM Document d LEFT JOIN FETCH d.shares WHERE d.id = :id")
+Optional<Document> findByIdWithShares(@Param("id") Long id);
+```
+
+**分页查询**:
+```java
+// 使用 Spring Data 分页
+Page<Document> findAll(Pageable pageable);
+
+// 前端传递参数
+GET /api/documents/list?page=0&size=20&sort=updatedAt,desc
+```
+
+#### 文件处理
+
+**大文件上传**:
+- 使用流式处理，避免内存溢出
+- 配置合理的超时时间
+- 前端显示进度条
+
+**文件下载**:
+- 使用 `StreamingResponseBody`
+- 设置正确的 Content-Type
+- 支持断点续传（Range 请求）
+
+### 25.8 安全注意事项
+
+#### 敏感信息处理
+
+**禁止硬编码**:
+```java
+// ❌ 错误
+String secret = "my-secret-key";
+
+// ✅ 正确：从配置读取
+@Value("${app.jwt-secret}")
+private String jwtSecret;
+```
+
+**日志脱敏**:
+```java
+// ❌ 错误：记录敏感信息
+log.info("User password: {}", password);
+
+// ✅ 正确：脱敏处理
+log.info("User login attempt: {}", employeeId);
+```
+
+#### SQL 注入防护
+
+```java
+// ❌ 错误：字符串拼接
+String sql = "SELECT * FROM mt_document WHERE title = '" + title + "'";
+
+// ✅ 正确：使用参数化查询
+@Query("SELECT d FROM Document d WHERE d.title = :title")
+List<Document> findByTitle(@Param("String title");
+```
+
+#### XSS 防护
+
+```typescript
+// 前端：使用 sanitize.ts 工具
+import { sanitizeHtml } from '@/utils/sanitize'
+
+// 渲染用户输入的内容
+const safeHtml = sanitizeHtml(userInput)
+```
+
+### 25.9 常见错误处理
+
+#### 后端异常
+
+```java
+// 业务异常
+throw new BusinessException("文档不存在");
+
+// 未找到异常
+throw new NotFoundException("Document", documentId);
+
+// 权限异常
+throw new AccessDeniedException("无权访问此文档");
+```
+
+#### 前端错误处理
+
+```typescript
+// API 错误处理
+try {
+  const res = await api.post('/documents', data)
+} catch (error) {
+  if (error.response?.status === 400) {
+    ElMessage.error('参数错误')
+  } else if (error.response?.status === 403) {
+    ElMessage.error('无权限')
+  } else if (error.response?.status === 500) {
+    ElMessage.error('服务器错误')
+  }
+}
+```
+
+### 25.10 测试策略
+
+#### 单元测试
+
+```java
+// Service 测试
+@SpringBootTest
+class DocumentServiceTest {
+    @Autowired
+    private DocumentService documentService;
+    
+    @Test
+    void testCreateDocument() {
+        // 测试创建文档
+    }
+}
+```
+
+#### 集成测试
+
+```java
+// Controller 测试
+@SpringBootTest
+@AutoConfigureMockMvc
+class DocumentControllerTest {
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Test
+    void testGetDocument() throws Exception {
+        mockMvc.perform(get("/api/documents/1"))
+               .andExpect(status().isOk());
+    }
+}
+```
+
+#### 前端测试
+
+```typescript
+// 组件测试
+import { mount } from '@vue/test-utils'
+import DocCard from '@/components/DocCard.vue'
+
+describe('DocCard', () => {
+  it('renders correctly', () => {
+    const wrapper = mount(DocCard, {
+      props: { document: mockDoc }
+    })
+    expect(wrapper.text()).toContain(mockDoc.title)
+  })
+})
+```
+
+### 25.11 部署检查清单
+
+**部署前检查**:
+- [ ] 修改所有默认密码（.env 文件）
+- [ ] 配置正确的域名（CORS_ORIGINS）
+- [ ] 配置 HTTPS（Nginx 证书）
+- [ ] 配置备份策略
+- [ ] 配置监控告警
+- [ ] 检查磁盘空间
+- [ ] 检查内存配置
+
+**部署后验证**:
+- [ ] 访问前端页面
+- [ ] 测试登录功能
+- [ ] 测试文档上传
+- [ ] 测试文档编辑
+- [ ] 测试签署流程
+- [ ] 检查日志输出
+- [ ] 检查监控指标
+
+### 25.12 故障排查流程
+
+**问题定位步骤**:
+1. 查看浏览器控制台错误
+2. 查看后端日志（`docker logs miaotongdoc-server`）
+3. 检查网络请求（Network 面板）
+4. 检查数据库状态
+5. 检查 Redis 缓存
+6. 检查 Elasticsearch 索引
+
+**常见问题快速定位**:
+- 401 错误 → JWT Token 过期或无效
+- 403 错误 → 权限不足
+- 404 错误 → 资源不存在
+- 500 错误 → 服务器内部错误（查看日志）
+
+### 25.13 代码审查要点
+
+**后端审查**:
+- [ ] 是否有 SQL 注入风险
+- [ ] 是否有事务管理
+- [ ] 是否有异常处理
+- [ ] 是否有日志记录
+- [ ] 是否有权限检查
+- [ ] 是否有性能问题
+
+**前端审查**:
+- [ ] 是否有 XSS 风险
+- [ ] 是否有内存泄漏
+- [ ] 是否有错误处理
+- [ ] 是否有加载状态
+- [ ] 是否有响应式设计
+- [ ] 是否有无障碍支持
+
+---
+
+## 二十六、项目约定与规范
+
+### 命名约定
+
+**数据库**:
+- 表名: `sys_`（系统表）、`mt_`（业务表）
+- 字段: `snake_case`
+- 主键: `id`（BIGSERIAL）
+- 外键: `{table}_id`
+- 时间: `created_at`、`updated_at`
+
+**Java**:
+- 类名: `PascalCase`
+- 方法名: `camelCase`
+- 常量: `UPPER_SNAKE_CASE`
+- 包名: `com.miaotong.doc.{module}`
+
+**TypeScript**:
+- 组件: `PascalCase`
+- 文件: `camelCase`
+- 变量: `camelCase`
+- 常量: `UPPER_SNAKE_CASE`
+
+### 注释规范
+
+**Java 注释**:
+```java
+/**
+ * 文档服务类
+ * 处理文档的创建、编辑、删除等操作
+ */
+@Service
+@Slf4j
+public class DocumentService {
+    
+    /**
+     * 创建文档
+     * 
+     * @param title 文档标题
+     * @param type 文档类型
+     * @param owner 创建人
+     * @return 创建的文档
+     */
+    public Document createDocument(String title, String type, User owner) {
+        // 实现逻辑
+    }
+}
+```
+
+**TypeScript 注释**:
+```typescript
+/**
+ * 获取文档列表
+ * @param params 查询参数
+ * @returns 文档列表
+ */
+const fetchDocuments = async (params: DocumentQueryParams) => {
+  // 实现逻辑
+}
+```
+
+### Git 工作流
+
+**分支策略**:
+- `main`: 生产分支
+- `develop`: 开发分支
+- `feature/*`: 功能分支
+- `fix/*`: 修复分支
+- `release/*`: 发布分支
+
+**提交规范**:
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**类型**:
+- `feat`: 新功能
+- `fix`: 修复
+- `docs`: 文档
+- `style`: 格式
+- `refactor`: 重构
+- `test`: 测试
+- `chore`: 构建/工具
+
+---
+
 *本文档由 Claude Code 自动生成，旨在帮助开发者和 AI Agent 快速了解项目结构和功能。*

@@ -268,28 +268,53 @@
             <el-card>
               <template #header>
                 <div class="card-header">
-                  <span>AI 模型配置</span>
-                  <el-button type="primary" size="small" @click="saveAiConfig">保存配置</el-button>
+                  <span>AI 大模型配置</span>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <el-tag v-if="aiTestStatus === 'ok'" type="success" size="small">连接正常</el-tag>
+                    <el-tag v-else-if="aiTestStatus === 'fail'" type="danger" size="small">连接失败</el-tag>
+                    <el-button size="small" @click="testAiConnection" :loading="aiTesting">
+                      测试连接
+                    </el-button>
+                    <el-button type="primary" size="small" @click="saveAiConfig" :loading="aiSaving">
+                      保存配置
+                    </el-button>
+                  </div>
                 </div>
               </template>
               <el-form :model="aiConfig" label-width="120px" class="ai-form">
                 <el-form-item label="模型服务地址">
-                  <el-input v-model="aiConfig.llmUrl" placeholder="http://192.24.129.1:31000" />
-                  <div class="form-tip">LLM API 的基础地址（不含 /v1）</div>
+                  <el-input v-model="aiConfig.llmUrl" placeholder="http://192.168.1.100:8080/v1" />
+                  <div class="form-tip">OpenAI 兼容的 API 地址，必须以 <b>/v1</b> 结尾</div>
                 </el-form-item>
                 <el-form-item label="API 密钥">
                   <el-input v-model="aiConfig.llmKey" type="password" show-password placeholder="sk-..." />
-                  <div class="form-tip">LLM API 的访问密钥</div>
+                  <div class="form-tip">如无需密钥可留空</div>
                 </el-form-item>
                 <el-form-item label="默认模型">
-                  <el-select v-model="aiConfig.defaultModel" style="width: 100%">
+                  <el-select v-model="aiConfig.defaultModel" style="width: 100%" placeholder="保存后自动获取模型列表">
                     <el-option v-for="m in aiModels" :key="m" :label="m" :value="m" />
                   </el-select>
+                  <div class="form-tip">保存配置后自动从服务端获取可用模型列表</div>
                 </el-form-item>
                 <el-form-item label="超时时间(秒)">
                   <el-input-number v-model="aiConfig.timeout" :min="30" :max="600" />
                 </el-form-item>
               </el-form>
+            </el-card>
+
+            <el-card style="margin-top:16px">
+              <template #header>
+                <span>已接入的 AI 功能</span>
+              </template>
+              <div class="ai-features-grid">
+                <div class="ai-feature-item" v-for="f in aiFeatures" :key="f.name">
+                  <el-icon :size="20" :color="f.color"><component :is="f.icon" /></el-icon>
+                  <div class="ai-feature-info">
+                    <div class="ai-feature-name">{{ f.name }}</div>
+                    <div class="ai-feature-desc">{{ f.desc }}</div>
+                  </div>
+                </div>
+              </div>
             </el-card>
           </div>
         </el-tab-pane>
@@ -536,6 +561,20 @@ const aiConfig = ref({
   timeout: 300
 })
 const aiModels = ref<string[]>([])
+const aiTestStatus = ref<'idle' | 'ok' | 'fail'>('idle')
+const aiTesting = ref(false)
+const aiSaving = ref(false)
+
+const aiFeatures = [
+  { name: '拼写与语法检查', desc: '检查文档中的拼写和语法错误', icon: 'Document', color: '#409eff' },
+  { name: 'AI 聊天', desc: '对话式 AI 助手', icon: 'ChatDotRound', color: '#67c23a' },
+  { name: '文本摘要', desc: '生成选中文本的摘要', icon: 'Document', color: '#e6a23c' },
+  { name: '翻译', desc: '支持 9 种语言互译', icon: 'Promotion', color: '#9b59b6' },
+  { name: '文本分析', desc: '改写、加长、缩短、解释、关键词提取', icon: 'DataAnalysis', color: '#1abc9c' },
+  { name: 'AI 生成图片', desc: '根据文字描述生成图片', icon: 'Picture', color: '#e91e63' },
+  { name: 'OCR 文字识别', desc: '从图片中提取文字', icon: 'Document', color: '#f56c6c' },
+  { name: '文档问答', desc: '基于文档内容回答问题（后端）', icon: 'ChatDotRound', color: '#2b579a' },
+]
 
 // 文档模板
 const templates = ref<DocumentTemplate[]>([])
@@ -783,6 +822,7 @@ async function loadAiConfig() {
 }
 
 async function saveAiConfig() {
+  aiSaving.value = true
   try {
     await api.put('/ai/settings', {
       targetUrl: aiConfig.value.llmUrl,
@@ -790,9 +830,32 @@ async function saveAiConfig() {
       timeout: aiConfig.value.timeout
     })
     ElMessage.success('AI 配置已保存')
-    loadAiConfig()
+    aiTestStatus.value = 'idle'
+    await loadAiConfig()
   } catch {
     ElMessage.error('保存失败')
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+async function testAiConnection() {
+  aiTesting.value = true
+  aiTestStatus.value = 'idle'
+  try {
+    const config = await api.get<any, any>('/ai/config')
+    if (config.models && config.models.length > 0) {
+      aiTestStatus.value = 'ok'
+      ElMessage.success(`连接成功，发现 ${config.models.length} 个模型`)
+    } else {
+      aiTestStatus.value = 'fail'
+      ElMessage.warning('连接成功但未发现可用模型')
+    }
+  } catch {
+    aiTestStatus.value = 'fail'
+    ElMessage.error('连接失败，请检查地址和密钥')
+  } finally {
+    aiTesting.value = false
   }
 }
 
@@ -1320,11 +1383,43 @@ function formatTime(str: string) {
 }
 
 .ai-config {
-  max-width: 600px;
+  max-width: 700px;
 }
 
 .ai-form {
   margin-top: 16px;
+}
+
+.ai-features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.ai-feature-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.ai-feature-item:hover {
+  border-color: var(--el-color-primary-light-5);
+}
+
+.ai-feature-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.ai-feature-desc {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
 }
 
 /* 模板管理新样式 */
