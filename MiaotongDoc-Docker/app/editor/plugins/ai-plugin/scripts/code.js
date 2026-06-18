@@ -162,8 +162,6 @@ window.addSupportAgentMode = function(editorVersion) {
 
 async function initAssistants() {
 	let _this = window.Asc.plugin;
-	if (!_this.sendEvent)
-		return;
 
 	spellchecker = new SpellChecker(textAnnotatorPopup);
 	grammar = new GrammarChecker(textAnnotatorPopup);
@@ -713,50 +711,15 @@ window.setInit = function() {
 };
 
 window.Asc.plugin.init = async function() {
-	// Check server settings (aiPluginSettings or aiSettings)
-	var serverSettingsRaw = window.Asc.plugin.info.aiPluginSettings || window.Asc.plugin.info.aiSettings;
-	if (serverSettingsRaw) {
+	// Check server settings
+	if (window.Asc.plugin.info.aiPluginSettings) {
 		try {
-			AI.serverSettings = typeof serverSettingsRaw === 'string' ? JSON.parse(serverSettingsRaw) : serverSettingsRaw;
+			AI.serverSettings = JSON.parse(window.Asc.plugin.info.aiPluginSettings);
 			AI.serverSettings = migrateServerSettings(AI.serverSettings);
 		} catch (e) {
 			AI.serverSettings = null;
 		}
 		delete window.Asc.plugin.info.aiPluginSettings;
-		delete window.Asc.plugin.info.aiSettings;
-	}
-
-	// Fallback: if no serverSettings from Document Server, fetch from backend
-	if (!AI.serverSettings) {
-		// 先设置最小配置（仅 proxy），然后从后端获取完整配置
-		AI.serverSettings = {
-			proxy: "/api/ai/proxy",
-			version: 4,
-			timeout: "5m",
-			actions: {},
-			providers: {},
-			models: []
-		};
-
-		// 从后端获取完整 AI 配置
-		try {
-			var configUrl = window.location.origin + "/api/ai/config";
-			var resp = await fetch(configUrl);
-			if (resp.ok) {
-				var config = await resp.json();
-				if (config.providers) {
-					AI.serverSettings.providers = config.providers;
-				}
-				if (config.models) {
-					AI.serverSettings.models = config.models;
-				}
-				if (config.actions) {
-					AI.serverSettings.actions = config.actions;
-				}
-			}
-		} catch (e) {
-			// 获取配置失败，使用空配置
-		}
 	}
 
 	await initWithTranslate(1 << 1);
@@ -942,36 +905,54 @@ function onTranslateSettingsModal() {
 
 async function onCheckGrammarSpelling(isCurrent)
 {
-	let paraIds = [];
-	
+	let paraData = [];
+
 	if (isCurrent)
 	{
-		paraIds = await Asc.Editor.callCommand(function(){
+		paraData = await Asc.Editor.callCommand(function(){
 			let result = [];
 			let range = Api.GetDocument().GetRangeBySelect();
 			if (!range)
 				return [];
-			
+
 			let paragraphs = range.GetAllParagraphs();
-			paragraphs.forEach(p => result.push(p.GetInternalId()));
+			paragraphs.forEach(p => result.push({id: p.GetInternalId(), text: p.GetText()}));
 			return result;
 		});
 	}
 	else
 	{
-		paraIds = await Asc.Editor.callCommand(function(){
+		paraData = await Asc.Editor.callCommand(function(){
 			let result = [];
 			let paragraphs = Api.GetDocument().GetAllParagraphs();
-			paragraphs.forEach(p => result.push(p.GetInternalId()));
+			paragraphs.forEach(p => result.push({id: p.GetInternalId(), text: p.GetText()}));
 			return result;
 		});
 	}
-	
-	if (spellchecker)
+
+	if (!paraData || paraData.length === 0)
+		return;
+
+	let paraIds = paraData.map(p => p.id);
+
+	// 主动填充 waitParagraphs（如果 onParagraphText 未触发）
+	if (spellchecker) {
+		paraData.forEach(p => {
+			if (!spellchecker.waitParagraphs[p.id]) {
+				spellchecker.waitParagraphs[p.id] = { recalcId: 0, text: p.text };
+			}
+		});
 		spellchecker.checkParagraphs(paraIds);
-	
-	if (grammar)
+	}
+
+	if (grammar) {
+		paraData.forEach(p => {
+			if (!grammar.waitParagraphs[p.id]) {
+				grammar.waitParagraphs[p.id] = { recalcId: 0, text: p.text };
+			}
+		});
 		grammar.checkParagraphs(paraIds);
+	}
 }
 
 /**
@@ -1262,77 +1243,9 @@ function onOpenAiModelsModal() {
 		aiModelsListWindow.attachEvent("onInit", function() {
 			updateModels();
 		});
-		aiModelsListWindow.attachEvent("onRefreshModels", function() {
-			// 主窗口处理刷新请求（iframe 无法访问 AI.serverSettings）
-			if (!AI.serverSettings || !AI.serverSettings.providers) {
-				aiModelsListWindow.command("onRefreshResult", { success: false, message: "未配置模型服务" });
-				return;
-			}
-
-			var providerName = Object.keys(AI.serverSettings.providers)[0];
-			var provider = AI.serverSettings.providers[providerName];
-			var modelsUrl = provider.url;
-			if (!modelsUrl.endsWith('/')) modelsUrl += '/';
-			modelsUrl += 'models';
-
-			var headers = { 'Content-Type': 'application/json' };
-			if (provider.key) {
-				headers['Authorization'] = 'Bearer ' + provider.key;
-			}
-
-			// 通过代理请求
-			var proxyUrl = AI.serverSettings.proxy;
-			if (proxyUrl && !proxyUrl.startsWith('http')) {
-				proxyUrl = window.location.origin + (proxyUrl.startsWith('/') ? '' : '/') + proxyUrl;
-			}
-
-			var fetchUrl = proxyUrl || modelsUrl;
-			var fetchOptions = { method: 'GET', headers: {} };
-
-			if (proxyUrl) {
-				fetchOptions.method = 'POST';
-				fetchOptions.headers = { 'Content-Type': 'application/json' };
-				fetchOptions.body = JSON.stringify({
-					target: modelsUrl,
-					method: 'GET',
-					headers: headers,
-					data: ''
-				});
-			}
-
-			fetch(fetchUrl, fetchOptions)
-				.then(function(response) {
-					if (!response.ok) throw new Error('HTTP ' + response.status);
-					return response.json();
-				})
-				.then(function(data) {
-					var models = data.data || data;
-					if (!Array.isArray(models)) throw new Error('Invalid response format');
-
-					// 过滤掉 embedding 和 reranker
-					var chatModels = models.filter(function(m) {
-						return !/embed|rerank/i.test(m.id);
-					});
-
-					// 更新 serverSettings
-					AI.serverSettings.providers[providerName].models = chatModels.map(function(m) {
-						return { id: m.id, name: m.id, endpoints: [1], options: {} };
-					});
-					AI.serverSettings.models = chatModels.map(function(m) {
-						return { id: m.id, name: m.id, provider: providerName, capabilities: 511 };
-					});
-
-					// 重新加载并更新 UI
-					AI.Storage.load().then(function() {
-						updateModels();
-						updateActions();
-					});
-
-					aiModelsListWindow.command("onRefreshResult", { success: true, message: "发现 " + chatModels.length + " 个模型" });
-				})
-				.catch(function(err) {
-					aiModelsListWindow.command("onRefreshResult", { success: false, message: err.message || "刷新失败" });
-				});
+		aiModelsListWindow.attachEvent("onOpenEditModal", onOpenEditModal);
+		aiModelsListWindow.attachEvent("onDeleteAiModel", function(data) {
+			AI.Storage.removeModel(data.id);
 		});
 	}
 	aiModelsListWindow.show(variation);

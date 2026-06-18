@@ -8,7 +8,13 @@ CONFIG_FILE="/etc/onlyoffice/documentserver/local.json"
 fetch_models() {
     local llm_url="$1"
     local llm_key="$2"
-    local models_url="${llm_url}/v1/models"
+    # 如果 URL 已经以 /v1 结尾，直接拼接 /models；否则拼接 /v1/models
+    local models_url
+    if [[ "$llm_url" == */v1 ]]; then
+        models_url="${llm_url}/models"
+    else
+        models_url="${llm_url}/v1/models"
+    fi
 
     local auth_header=""
     if [ -n "$llm_key" ]; then
