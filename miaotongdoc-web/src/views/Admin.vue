@@ -264,58 +264,81 @@
 
         <!-- AI 配置 -->
         <el-tab-pane label="AI 配置" name="ai-config">
-          <div class="ai-config">
-            <el-card>
-              <template #header>
-                <div class="card-header">
-                  <span>AI 大模型配置</span>
-                  <div style="display:flex;gap:8px;align-items:center">
-                    <el-tag v-if="aiTestStatus === 'ok'" type="success" size="small">连接正常</el-tag>
-                    <el-tag v-else-if="aiTestStatus === 'fail'" type="danger" size="small">连接失败</el-tag>
-                    <el-button size="small" @click="testAiConnection" :loading="aiTesting">
-                      测试连接
-                    </el-button>
-                    <el-button type="primary" size="small" @click="saveAiConfig" :loading="aiSaving">
-                      保存配置
-                    </el-button>
+          <div class="ai-config-layout">
+            <!-- 左栏：配置 + 模型 -->
+            <div class="ai-config-left">
+              <el-card>
+                <template #header>
+                  <div class="card-header">
+                    <span>大模型配置</span>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <el-tag v-if="aiTestStatus === 'ok'" type="success" size="small">连接正常</el-tag>
+                      <el-tag v-else-if="aiTestStatus === 'fail'" type="danger" size="small">连接失败</el-tag>
+                      <el-button size="small" @click="testAiConnection" :loading="aiTesting">
+                        测试连接
+                      </el-button>
+                      <el-button type="primary" size="small" @click="saveAiConfig" :loading="aiSaving">
+                        保存配置
+                      </el-button>
+                    </div>
                   </div>
-                </div>
-              </template>
-              <el-form :model="aiConfig" label-width="120px" class="ai-form">
-                <el-form-item label="模型服务地址">
-                  <el-input v-model="aiConfig.llmUrl" placeholder="http://192.168.1.100:8080/v1" />
-                  <div class="form-tip">OpenAI 兼容的 API 地址，必须以 <b>/v1</b> 结尾</div>
-                </el-form-item>
-                <el-form-item label="API 密钥">
-                  <el-input v-model="aiConfig.llmKey" type="password" show-password placeholder="sk-..." />
-                  <div class="form-tip">如无需密钥可留空</div>
-                </el-form-item>
-                <el-form-item label="默认模型">
-                  <el-select v-model="aiConfig.defaultModel" style="width: 100%" placeholder="保存后自动获取模型列表">
-                    <el-option v-for="m in aiModels" :key="m" :label="m" :value="m" />
-                  </el-select>
-                  <div class="form-tip">保存配置后自动从服务端获取可用模型列表</div>
-                </el-form-item>
-                <el-form-item label="超时时间(秒)">
-                  <el-input-number v-model="aiConfig.timeout" :min="30" :max="600" />
-                </el-form-item>
-              </el-form>
-            </el-card>
+                </template>
+                <el-form :model="aiConfig" label-width="100px" class="ai-form">
+                  <el-form-item label="服务地址">
+                    <el-input v-model="aiConfig.llmUrl" placeholder="http://192.168.1.100:8080/v1" />
+                    <div class="form-tip">OpenAI 兼容地址，以 <b>/v1</b> 结尾</div>
+                  </el-form-item>
+                  <el-form-item label="API 密钥">
+                    <el-input v-model="aiConfig.llmKey" type="password" show-password placeholder="sk-..." />
+                  </el-form-item>
+                  <el-form-item label="默认模型">
+                    <el-select v-model="aiConfig.defaultModel" style="width: 100%" placeholder="测试连接后自动加载">
+                      <el-option v-for="m in aiModels" :key="m" :label="m" :value="m" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="超时(秒)">
+                    <el-input-number v-model="aiConfig.timeout" :min="30" :max="600" />
+                  </el-form-item>
+                </el-form>
+              </el-card>
 
-            <el-card style="margin-top:16px">
-              <template #header>
-                <span>已接入的 AI 功能</span>
-              </template>
-              <div class="ai-features-grid">
-                <div class="ai-feature-item" v-for="f in aiFeatures" :key="f.name">
-                  <el-icon :size="20" :color="f.color"><component :is="f.icon" /></el-icon>
-                  <div class="ai-feature-info">
-                    <div class="ai-feature-name">{{ f.name }}</div>
-                    <div class="ai-feature-desc">{{ f.desc }}</div>
+              <el-card style="margin-top:16px">
+                <template #header>
+                  <div class="card-header">
+                    <span>可用模型</span>
+                    <el-tag size="small">{{ aiModels.length }} 个</el-tag>
+                  </div>
+                </template>
+                <div v-if="aiModels.length > 0" class="ai-models-list">
+                  <div v-for="m in aiModels" :key="m" class="ai-model-item"
+                    :class="{ active: aiConfig.defaultModel === m }"
+                    @click="aiConfig.defaultModel = m">
+                    <el-icon><Cpu /></el-icon>
+                    <span>{{ m }}</span>
+                    <el-tag v-if="aiConfig.defaultModel === m" size="small" type="success">默认</el-tag>
                   </div>
                 </div>
-              </div>
-            </el-card>
+                <el-empty v-else description="暂无可用模型，请先测试连接" :image-size="60" />
+              </el-card>
+            </div>
+
+            <!-- 右栏：AI 功能 -->
+            <div class="ai-config-right">
+              <el-card>
+                <template #header>
+                  <span>已接入的 AI 功能</span>
+                </template>
+                <div class="ai-features-list">
+                  <div class="ai-feature-item" v-for="f in aiFeatures" :key="f.name">
+                    <el-icon :size="20" :color="f.color"><component :is="f.icon" /></el-icon>
+                    <div class="ai-feature-info">
+                      <div class="ai-feature-name">{{ f.name }}</div>
+                      <div class="ai-feature-desc">{{ f.desc }}</div>
+                    </div>
+                  </div>
+                </div>
+              </el-card>
+            </div>
           </div>
         </el-tab-pane>
 
@@ -503,7 +526,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Close, Document, Grid, Picture, Rank } from '@element-plus/icons-vue'
+import { Search, Close, Document, Grid, Picture, Rank, Cpu } from '@element-plus/icons-vue'
 import api from '@/api/index'
 import { userApi, type UserItem } from '@/api/user'
 import { departmentApi, type Department } from '@/api/department'
@@ -1382,27 +1405,69 @@ function formatTime(str: string) {
   justify-content: space-between;
 }
 
-.ai-config {
-  max-width: 700px;
+.ai-config-layout {
+  display: flex;
+  gap: 20px;
+}
+
+.ai-config-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-config-right {
+  width: 320px;
+  flex-shrink: 0;
 }
 
 .ai-form {
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
-.ai-features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+.ai-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-model-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #606266;
+  transition: all 0.2s;
+}
+
+.ai-model-item:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+
+.ai-model-item.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-weight: 500;
+}
+
+.ai-features-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .ai-feature-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #ebeef5;
-  border-radius: 8px;
+  border-radius: 6px;
   transition: border-color 0.2s;
 }
 
@@ -1411,7 +1476,7 @@ function formatTime(str: string) {
 }
 
 .ai-feature-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: #303133;
 }
