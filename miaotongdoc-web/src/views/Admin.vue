@@ -835,10 +835,12 @@ async function loadAiConfig() {
     aiConfig.value.llmUrl = settings.targetUrl || ''
     aiConfig.value.llmKey = settings.apiKey || ''
     aiConfig.value.timeout = settings.timeout || 300
+    aiConfig.value.defaultModel = settings.defaultModel || ''
     // 同时加载模型列表
     const config = await api.get<any, any>('/ai/config')
     aiModels.value = (config.models || []).map((m: any) => m.id)
-    if (config.actions?.Chat?.model) {
+    // 如果配置中没有默认模型，用 config 推荐的
+    if (!aiConfig.value.defaultModel && config.actions?.Chat?.model) {
       aiConfig.value.defaultModel = config.actions.Chat.model
     }
   } catch {}
@@ -850,6 +852,7 @@ async function saveAiConfig() {
     await api.put('/ai/settings', {
       targetUrl: aiConfig.value.llmUrl,
       apiKey: aiConfig.value.llmKey,
+      defaultModel: aiConfig.value.defaultModel,
       timeout: aiConfig.value.timeout
     })
     ElMessage.success('AI 配置已保存')

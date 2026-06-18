@@ -35,6 +35,7 @@ public class AiProxyService {
     // 运行时可变的配置（优先级高于环境变量）
     private String targetUrl;
     private String apiKey;
+    private String defaultModel;
 
     private RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -63,6 +64,7 @@ public class AiProxyService {
                 Map<String, Object> cfg = objectMapper.readValue(json, new TypeReference<>() {});
                 this.targetUrl = (String) cfg.getOrDefault("targetUrl", envTargetUrl);
                 this.apiKey = (String) cfg.getOrDefault("apiKey", envApiKey);
+                this.defaultModel = (String) cfg.getOrDefault("defaultModel", "");
                 if (cfg.containsKey("timeout")) {
                     this.timeout = ((Number) cfg.get("timeout")).intValue();
                 }
@@ -88,6 +90,7 @@ public class AiProxyService {
             // 更新运行时配置
             this.targetUrl = (String) config.getOrDefault("targetUrl", "");
             this.apiKey = (String) config.getOrDefault("apiKey", "");
+            this.defaultModel = (String) config.getOrDefault("defaultModel", "");
             if (config.containsKey("timeout")) {
                 this.timeout = ((Number) config.get("timeout")).intValue();
             }
@@ -110,6 +113,7 @@ public class AiProxyService {
         Map<String, Object> cfg = new java.util.LinkedHashMap<>();
         cfg.put("targetUrl", targetUrl != null ? targetUrl : "");
         cfg.put("apiKey", apiKey != null ? apiKey : "");
+        cfg.put("defaultModel", defaultModel != null ? defaultModel : "");
         cfg.put("timeout", timeout);
         return cfg;
     }
@@ -173,12 +177,14 @@ public class AiProxyService {
         }
         config.put("models", globalModels);
 
-        // 默认 Actions
-        String defaultModel = models.isEmpty() ? "" : (String) models.get(0).get("id");
+        // 默认 Actions - 优先使用配置中保存的默认模型
+        String effectiveModel = (this.defaultModel != null && !this.defaultModel.isEmpty())
+                ? this.defaultModel
+                : (models.isEmpty() ? "" : (String) models.get(0).get("id"));
         Map<String, Object> actions = new java.util.LinkedHashMap<>();
         for (String action : java.util.List.of("Chat", "Summarization", "Translation", "TextAnalyze",
                 "ImageGeneration", "OCR", "Vision")) {
-            actions.put(action, Map.of("model", defaultModel));
+            actions.put(action, Map.of("model", effectiveModel));
         }
         config.put("actions", actions);
 
