@@ -114,6 +114,7 @@ services:
     volumes:
       - ./app/server/miaotongdoc.jar:/app/app.jar
       - ./data/documents:/data/documents
+      - ./data/config:/data/config
       - ./data/logs/server:/app/logs
       - ./config/logback-spring.xml:/app/config/logback-spring.xml:ro
     command: java -jar /app/app.jar --logging.config=/app/config/logback-spring.xml
@@ -206,6 +207,7 @@ services:
       - ./data/editor:/var/www/onlyoffice/Data
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -250,6 +252,7 @@ services:
       - ./data/editor:/var/www/onlyoffice/Data
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor2:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,6 +297,7 @@ services:
       - ./data/editor:/var/www/onlyoffice/Data
       - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
       - ./data/logs/editor3:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
     depends_on:
       postgres:
         condition: service_healthy

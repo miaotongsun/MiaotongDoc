@@ -769,21 +769,28 @@ async function saveWatermarkConfig() {
 // AI 配置
 async function loadAiConfig() {
   try {
-    const res = await fetch('/api/ai/config')
-    const config = await res.json()
-    // 从 config 中提取配置
-    const provider = config.providers?.OpenAI || {}
-    aiConfig.value.llmUrl = provider.url?.replace('/v1', '') || ''
-    aiConfig.value.llmKey = provider.key || ''
-    aiConfig.value.defaultModel = config.actions?.Chat?.model || ''
+    const settings = await api.get<any, any>('/ai/settings')
+    aiConfig.value.llmUrl = settings.targetUrl || ''
+    aiConfig.value.llmKey = settings.apiKey || ''
+    aiConfig.value.timeout = settings.timeout || 300
+    // 同时加载模型列表
+    const config = await api.get<any, any>('/ai/config')
     aiModels.value = (config.models || []).map((m: any) => m.id)
+    if (config.actions?.Chat?.model) {
+      aiConfig.value.defaultModel = config.actions.Chat.model
+    }
   } catch {}
 }
 
 async function saveAiConfig() {
   try {
-    // 保存到环境变量（需要重启服务）
-    ElMessage.success('AI 配置已保存（重启后生效）')
+    await api.put('/ai/settings', {
+      targetUrl: aiConfig.value.llmUrl,
+      apiKey: aiConfig.value.llmKey,
+      timeout: aiConfig.value.timeout
+    })
+    ElMessage.success('AI 配置已保存')
+    loadAiConfig()
   } catch {
     ElMessage.error('保存失败')
   }

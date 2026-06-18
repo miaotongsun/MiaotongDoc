@@ -1,5 +1,7 @@
 package com.miaotong.doc.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +15,8 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 @Slf4j
@@ -20,22 +24,94 @@ import java.util.Map;
 public class AiProxyService {
 
     @Value("${ai-proxy.target-url:}")
-    private String targetUrl;
+    private String envTargetUrl;
 
     @Value("${ai-proxy.api-key:}")
-    private String apiKey;
+    private String envApiKey;
 
     @Value("${ai-proxy.timeout:300}")
     private int timeout;
 
+    // 运行时可变的配置（优先级高于环境变量）
+    private String targetUrl;
+    private String apiKey;
+
     private RestTemplate restTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // 配置文件路径（独立于文档目录）
+    private static final String CONFIG_PATH = "/data/config/ai-config.json";
 
     @PostConstruct
     public void init() {
+        // 优先从配置文件加载，否则用环境变量
+        loadConfigFromFile();
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(timeout * 1000);
         factory.setReadTimeout(timeout * 1000);
         this.restTemplate = new RestTemplate(factory);
+    }
+
+    /**
+     * 从配置文件加载 AI 设置
+     */
+    private void loadConfigFromFile() {
+        try {
+            Path path = Path.of(CONFIG_PATH);
+            if (Files.exists(path)) {
+                String json = Files.readString(path);
+                Map<String, Object> cfg = objectMapper.readValue(json, new TypeReference<>() {});
+                this.targetUrl = (String) cfg.getOrDefault("targetUrl", envTargetUrl);
+                this.apiKey = (String) cfg.getOrDefault("apiKey", envApiKey);
+                if (cfg.containsKey("timeout")) {
+                    this.timeout = ((Number) cfg.get("timeout")).intValue();
+                }
+                log.info("AI 配置已从文件加载: {}", CONFIG_PATH);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("读取 AI 配置文件失败: {}", e.getMessage());
+        }
+        // 回退到环境变量
+        this.targetUrl = envTargetUrl;
+        this.apiKey = envApiKey;
+    }
+
+    /**
+     * 保存 AI 配置到文件
+     */
+    public void saveConfig(Map<String, Object> config) {
+        try {
+            Path path = Path.of(CONFIG_PATH);
+            Files.createDirectories(path.getParent());
+            Files.writeString(path, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(config));
+            // 更新运行时配置
+            this.targetUrl = (String) config.getOrDefault("targetUrl", "");
+            this.apiKey = (String) config.getOrDefault("apiKey", "");
+            if (config.containsKey("timeout")) {
+                this.timeout = ((Number) config.get("timeout")).intValue();
+            }
+            // 重建 RestTemplate（超时可能变了）
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(timeout * 1000);
+            factory.setReadTimeout(timeout * 1000);
+            this.restTemplate = new RestTemplate(factory);
+            log.info("AI 配置已保存: {}", CONFIG_PATH);
+        } catch (Exception e) {
+            log.error("保存 AI 配置失败: {}", e.getMessage());
+            throw new RuntimeException("保存配置失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取当前 AI 配置（用于前端展示）
+     */
+    public Map<String, Object> getCurrentConfig() {
+        Map<String, Object> cfg = new java.util.LinkedHashMap<>();
+        cfg.put("targetUrl", targetUrl != null ? targetUrl : "");
+        cfg.put("apiKey", apiKey != null ? apiKey : "");
+        cfg.put("timeout", timeout);
+        return cfg;
     }
 
     /**
@@ -48,7 +124,7 @@ public class AiProxyService {
         // Provider 配置（不暴露 API 密钥给前端）
         Map<String, Object> provider = new java.util.LinkedHashMap<>();
         provider.put("name", "OpenAI");
-        provider.put("url", targetUrl != null ? targetUrl + "/v1" : "");
+        provider.put("url", targetUrl != null ? targetUrl : "");
         provider.put("key", "***");  // 不返回真实密钥
 
         // 获取模型列表
@@ -116,7 +192,14 @@ public class AiProxyService {
         if (targetUrl == null || targetUrl.isEmpty()) {
             return Map.of("data", java.util.List.of());
         }
-        String modelsUrl = targetUrl.endsWith("/") ? targetUrl + "v1/models" : targetUrl + "/v1/models";
+        String modelsUrl;
+        if (targetUrl.endsWith("/v1")) {
+            modelsUrl = targetUrl + "/models";
+        } else if (targetUrl.endsWith("/")) {
+            modelsUrl = targetUrl + "v1/models";
+        } else {
+            modelsUrl = targetUrl + "/v1/models";
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -165,9 +248,17 @@ public class AiProxyService {
         String base = targetUrl.endsWith("/") ? targetUrl.substring(0, targetUrl.length() - 1) : targetUrl;
         try {
             URL targetURL = new URL(target);
-            return base + targetURL.getPath();
+            String targetPath = targetURL.getPath();
+            // 如果 base 已经以 /v1 结尾，而 targetPath 也以 /v1 开头，去掉 targetPath 的 /v1 前缀避免重复
+            if (base.endsWith("/v1") && targetPath.startsWith("/v1")) {
+                targetPath = targetPath.substring(3); // 去掉 "/v1"
+            }
+            return base + targetPath;
         } catch (Exception e) {
             String path = target.startsWith("/") ? target : "/" + target;
+            if (base.endsWith("/v1") && path.startsWith("/v1")) {
+                path = path.substring(3);
+            }
             return base + path;
         }
     }

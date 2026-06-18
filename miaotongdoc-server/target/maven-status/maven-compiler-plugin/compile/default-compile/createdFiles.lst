@@ -39,6 +39,7 @@ com\miaotong\doc\entity\Folder.class
 com\miaotong\doc\dto\ErrorResponse.class
 com\miaotong\doc\constants\NotificationType.class
 com\miaotong\doc\entity\Department.class
+com\miaotong\doc\service\AiProxyService$1.class
 com\miaotong\doc\util\JwtUtil.class
 com\miaotong\doc\dto\MentionDTO.class
 com\miaotong\doc\controller\DepartmentController.class

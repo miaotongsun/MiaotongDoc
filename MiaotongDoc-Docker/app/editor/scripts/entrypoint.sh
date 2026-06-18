@@ -39,11 +39,17 @@ do_inject() {
     local provider_models="$5"
     local global_models="$6"
 
+    # provider URL 需要 /v1 后缀（AI 插件拼接 /chat/completions）
+    local provider_url="${llm_url}"
+    if [[ "$provider_url" != */v1 ]]; then
+        provider_url="${provider_url}/v1"
+    fi
+
     # 构建 aiPluginSettings JSON 字符串（给 AI 插件读取）
     # proxy 使用后端代理地址，浏览器通过 /api/ai/proxy 转发到 LLM
     local ai_plugin_settings
     ai_plugin_settings=$(jq -n \
-        --arg llm_url "$llm_url" \
+        --arg llm_url "$provider_url" \
         --arg llm_key "$llm_key" \
         --arg default_model "$default_model" \
         --argjson provider_models "$provider_models" \
@@ -69,7 +75,7 @@ do_inject() {
             models: $global_models
         }' | jq -c '.')
 
-    jq --arg llm_url "$llm_url" \
+    jq --arg llm_url "$provider_url" \
        --arg llm_key "$llm_key" \
        --arg default_model "$default_model" \
        --argjson provider_models "$provider_models" \
@@ -93,7 +99,7 @@ do_inject() {
             providers: {
                 OpenAI: {
                     name: "OpenAI",
-                    url: $llm_url,
+                    url: $provider_url,
                     key: $llm_key,
                     models: $provider_models
                 }
@@ -116,9 +122,23 @@ inject_ai_settings() {
         return 1
     fi
 
-    # 从环境变量读取 LLM 配置
-    local LLM_URL="${LLM_API_URL:-http://192.24.129.1:31000}"
-    local LLM_KEY="${LLM_API_KEY:-}"
+    # 从配置文件或环境变量读取 LLM 配置
+    local LLM_URL=""
+    local LLM_KEY=""
+    local AI_CONFIG_FILE="/data/config/ai-config.json"
+
+    if [ -f "$AI_CONFIG_FILE" ]; then
+        LLM_URL=$(python3 -c "import json; print(json.load(open('$AI_CONFIG_FILE')).get('targetUrl',''))" 2>/dev/null)
+        LLM_KEY=$(python3 -c "import json; print(json.load(open('$AI_CONFIG_FILE')).get('apiKey',''))" 2>/dev/null)
+        echo "[MiaotongDoc] AI config loaded from $AI_CONFIG_FILE"
+    fi
+
+    if [ -z "$LLM_URL" ]; then
+        LLM_URL="${LLM_API_URL:-http://192.24.129.1:31000}"
+    fi
+    if [ -z "$LLM_KEY" ]; then
+        LLM_KEY="${LLM_API_KEY:-}"
+    fi
 
     # 查询可用模型
     local available_models

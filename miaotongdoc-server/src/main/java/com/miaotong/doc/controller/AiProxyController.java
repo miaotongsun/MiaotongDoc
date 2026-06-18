@@ -32,4 +32,21 @@ public class AiProxyController {
     public Object getConfig() {
         return aiProxyService.getConfig();
     }
+
+    /**
+     * 获取当前 AI 配置（管理后台用）
+     */
+    @GetMapping("/settings")
+    public Map<String, Object> getSettings() {
+        return aiProxyService.getCurrentConfig();
+    }
+
+    /**
+     * 保存 AI 配置（管理后台用）
+     */
+    @PutMapping("/settings")
+    public ResponseEntity<Map<String, String>> saveSettings(@RequestBody Map<String, Object> body) {
+        aiProxyService.saveConfig(body);
+        return ResponseEntity.ok(Map.of("message", "AI 配置已保存"));
+    }
 }
