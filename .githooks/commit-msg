@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Git commit-msg hook: enforce Conventional Commits.
+# Symlinked to .git/hooks/commit-msg by `git config core.hooksPath .githooks`.
+
+set -euo pipefail
+
+MSG_FILE="${1:-}"
+[ -z "$MSG_FILE" ] && exit 0
+[ -f "$MSG_FILE" ] || exit 0
+
+FIRST_LINE="$(head -1 "$MSG_FILE")"
+[ -z "$FIRST_LINE" ] && exit 0
+
+case "$FIRST_LINE" in
+  "Merge "*) exit 0 ;;
+  "Revert "*) exit 0 ;;
+  init|"初始化"*|"initial commit") exit 0 ;;
+  WIP) exit 0 ;;
+esac
+
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_.-]+\))?!?: .{1,}'
+if echo "$FIRST_LINE" | grep -qE "$PATTERN"; then
+  exit 0
+fi
+
+if grep -qE '^BREAKING[ -]CHANGE:' "$MSG_FILE"; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+❌ commit message 不符合 Conventional Commits 规范
+
+   当前:  $FIRST_LINE
+
+   格式:  <type>(<scope>)?: <description>
+   示例:  feat(frontend): AI配置页左右分栏
+         fix(backend): 默认模型保存后被重置
+         docs: 更新部署文档
+         refactor(editor): 拖拽改用绝对定位
+
+   允许的 type: feat fix docs style refactor perf test build ci chore revert
+   scope 可选，但建议加上以便自动分类
+
+   例外（不检查）: Merge / Revert / init / WIP / 含 BREAKING CHANGE 的提交
+
+EOF
+exit 1

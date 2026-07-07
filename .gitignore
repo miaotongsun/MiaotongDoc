@@ -17,3 +17,6 @@ MiaotongDoc-Docker/data/
 .idea/
 *.iml
 .vscode/
+
+# Claude 开发日志（自动生成）
+dev-log/
