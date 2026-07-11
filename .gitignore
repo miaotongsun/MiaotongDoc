@@ -20,3 +20,26 @@ MiaotongDoc-Docker/data/
 
 # Claude 开发日志（自动生成）
 dev-log/
+
+# 构建产物
+target/
+*.jar
+*.class
+miaotongdoc-web/dist/
+miaotongdoc-web/node_modules/
+
+# OnlyOffice 编辑器插件第三方资源（构建脚本引入）
+MiaotongDoc-Editor/plugins/*/vendor/
+MiaotongDoc-Editor/plugins/*/translations/
+MiaotongDoc-Editor/plugins/*/deploy/
+
+# 开发过程产生的文件备份
+*.bak
+*.pre-issues*
+*.bak-*
+
+# 会话导出/日志（不进仓库）
+conv_*.txt
+session_*.log
+</content>
+</invoke>
