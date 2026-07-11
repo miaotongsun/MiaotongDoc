@@ -4,7 +4,12 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -70,6 +75,19 @@ public class Document {
 
     @Column(name = "folder_id")
     private Long folderId;
+
+    // PDF 识别后的 Markdown 内容（按页分组）
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "pdf_markdown", columnDefinition = "jsonb")
+    private Map<String, String> pdfMarkdown = new HashMap<>();
+
+    // PDF 是否已完成识别
+    @Column(name = "pdf_recognized")
+    private Boolean pdfRecognized = false;
+
+    // 识别完成时间
+    @Column(name = "pdf_recognized_at")
+    private LocalDateTime pdfRecognizedAt;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

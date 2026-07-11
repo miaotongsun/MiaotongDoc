@@ -1,7 +1,7 @@
 <template>
   <div class="admin-page">
     <div class="admin-body">
-      <el-tabs v-model="activeTab" class="admin-tabs">
+      <el-tabs v-model="activeTab" class="admin-tabs" @tab-change="handleTabChange">
 
         <!-- 用户管理 -->
         <el-tab-pane label="用户管理" name="users">
@@ -846,6 +846,13 @@ async function loadAiConfig() {
   } catch {}
 }
 
+// 切换 tab 时自动重新加载（AI 配置实时刷新）
+async function handleTabChange(tabName: string) {
+  if (tabName === 'ai-config') {
+    await loadAiConfig()
+  }
+}
+
 async function saveAiConfig() {
   aiSaving.value = true
   try {
@@ -871,6 +878,7 @@ async function testAiConnection() {
   try {
     const config = await api.get<any, any>('/ai/config')
     if (config.models && config.models.length > 0) {
+      aiModels.value = config.models.map((m: any) => m.id)
       aiTestStatus.value = 'ok'
       ElMessage.success(`连接成功，发现 ${config.models.length} 个模型`)
     } else {

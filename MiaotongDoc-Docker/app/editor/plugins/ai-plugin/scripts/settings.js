@@ -17,16 +17,16 @@
  *
  * The  interactive user interfaces in modified source and object code versions
  * of the Program must display Appropriate Legal Notices, as required under
- * Section 5 of the GNU AGPL version 3.
+ * Section 5(a) of the GNU AGPL version 3.
  *
  * Pursuant to Section 7(b) of the License you must retain the original Product
  * logo when distributing the program. Pursuant to Section 7(e) we decline to
  * grant you any rights under trademark law for use of our trademarks.
  *
- * All the Product's GUI elements, including illustrations and icon sets, as
- * well as technical writing content are licensed under the terms of the
+ * All the Product's GUI elements, including illustrations and icon sets,
+ * as well as technical writing content are licensed under the terms of the
  * Creative Commons Attribution-ShareAlike 4.0 International. See the License
- * terms at http://creativecommons.org/licenses/by-sa/4.0/legalcode
+ * terms at http://creativecommons.org/by-sa/4.0/legalcode
  *
  */
 
@@ -80,10 +80,22 @@ var heightUpdateConditions = {
 
 window.Asc.plugin.init = function() {
 	window.Asc.plugin.sendToPlugin("onInit");
+
+	// select2:select 事件委托（updatedComboBoxes 会重建 select2 丢失事件，这里用委托保证）
+	$('#actions-list').on('select2:select', '.ai-model-select', function (e) {
+		window.Asc.plugin.sendToPlugin("onChangeAction", {
+			id: e.params.data.actionId,
+			model: e.params.data.id
+		});
+	});
+
 	window.Asc.plugin.attachEvent("onUpdateActions", function(list) {
 		actionsList = list;
 		renderActionsList();
 		heightUpdateConditions.updateActionsReady();
+		if (aiModelsList.length > 0) {
+			updatedComboBoxes();
+		}
 	});
 	window.Asc.plugin.attachEvent("onUpdateModels", function(list) {
 		aiModelsList = list;
@@ -109,6 +121,7 @@ window.Asc.plugin.onTranslate = function () {
 
 window.addEventListener("resize", onResize);
 onResize();
+
 
 function onThemeChanged(theme) {
 	window.Asc.plugin.onThemeChangedBase(theme);
@@ -171,9 +184,9 @@ function renderActionsList() {
 		actionsListEl.appendChild(createdEl);
 		var selectEl = $(createdEl).find('.ai-model-select');
 		selectEl.on('select2:select', function (e) {
-			window.Asc.plugin.sendToPlugin("onChangeAction", { 
+			window.Asc.plugin.sendToPlugin("onChangeAction", {
 				id: e.params.data.actionId,
-				model: e.params.data.id 
+				model: e.params.data.id
 			});
 
 			for (let i = 0; i < actionsList.length; i++) {
@@ -229,7 +242,6 @@ function updateWindowHeight() {
 
 function toggleScrollbarPadding() {
 	var actionsListEl = document.getElementById('actions-list');
-	// Check if there is a scroll bar
 	if (actionsListEl.scrollHeight > actionsListEl.clientHeight) {
 		actionsListEl.classList.add('with-scrollbar');
 	} else {
@@ -279,15 +291,27 @@ function updatedComboBoxes() {
 			dropdownAutoWidth: true,
 			width : 140
 		});
-		// TODO: If the active model is no longer in the list, set null and trigger an event to change the model.
 		selectEl.val(action.model);
 		selectEl.trigger('change');
 
+		// 重新绑定 select2:select 事件（updatedComboBoxes 每次调用都会重建 select2）
+		selectEl.on('select2:select', function (e) {
+			window.Asc.plugin.sendToPlugin("onChangeAction", {
+				id: e.params.data.actionId,
+				model: e.params.data.id
+			});
+			for (let i = 0; i < actionsList.length; i++) {
+				if (actionsList[i].id == e.params.data.actionId) {
+					actionsList[i].model = e.params.data.id;
+					break;
+				}
+			}
+		});
 
 		selectEl.on('select2:selecting', function (e) {
 			var selectedOption = e.params.args.data;
 
-			if(selectedOption.handler) {
+			if (selectedOption.handler) {
 				e.preventDefault();
 				selectedOption.handler();
 				selectEl.select2('close');

@@ -31,8 +31,11 @@ public final class NotificationType {
     /** 文档评论 */
     public static final String COMMENT = "COMMENT";
 
-    /** @提及 */
+    /** @提及（评论中） */
     public static final String MENTION = "MENTION";
+
+    /** @提及（文档正文中） */
+    public static final String DOC_MENTION = "DOC_MENTION";
 
     /** 文档新版本 */
     public static final String VERSION = "VERSION";

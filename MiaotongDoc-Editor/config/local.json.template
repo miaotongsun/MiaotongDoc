@@ -57,15 +57,7 @@
                 "type": "rabbitmq"
             },
             "plugins": {
-                "aiPluginSettings": "{\"proxy\":\"/api/ai/proxy\",\"version\":4}"
-            },
-            "aiSettings": {
-                "proxy": "/api/ai/proxy",
-                "actions": {},
-                "models": [],
-                "providers": {},
-                "version": 3,
-                "timeout": "5m"
+                "autostart": ["asc.{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}"]
             }
         }
     },

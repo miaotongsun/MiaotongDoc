@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { pdfApi } from './pdf'
 
 const api = axios.create({
   baseURL: '/api',
@@ -41,3 +42,4 @@ api.interceptors.response.use(
 )
 
 export default api
+export { pdfApi }

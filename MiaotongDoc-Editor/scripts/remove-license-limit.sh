@@ -270,21 +270,7 @@ echo "[✓] 许可证文件创建完成"
 echo ""
 echo "[第九步] 修改前端显示..."
 
-if [ -d "$EDITOR_WEBAPPS" ]; then
-    find "$EDITOR_WEBAPPS" -name "*.js" -type f -exec sed -i \
-        -e 's/license_connections/license_connections/g' \
-        -e 's/license_users_limit/license_users_limit/g' \
-        -e 's/license.*expired/license_active/g' \
-        -e 's/license.*limit/license_unlimited/g' \
-        {} \; 2>/dev/null
-
-    find "$EDITOR_WEBAPPS" -name "*.js" -type f -exec sed -i \
-        -e 's/upgrade.*enterprise/upgrade_available/g' \
-        -e 's/connection.*limit.*reached/connections_available/g' \
-        {} \; 2>/dev/null
-
-    echo "[✓] 前端显示修改完成"
-fi
+echo "[✓] 前端显示修改完成（跳过，避免破坏编辑器布局）"
 
 # ========== 完成 ==========
 echo ""

@@ -56,12 +56,12 @@
       <!-- Markdown 编辑器 -->
       <MarkdownEditor v-else-if="isMarkdown && markdownLoaded"
         :doc-id="docId" :doc-key="doc?.docKey || ''"
-        :initial-content="markdownContent" :can-edit="canEdit"
+        :doc-title="docTitle" :initial-content="markdownContent" :can-edit="canEdit"
         :user-name="currentUserName" :user-id="currentUserId"
         @ready="onReady" @state-change="onStateChange" @content-change="onMarkdownContentChange" />
 
       <!-- PDF 编辑器 -->
-      <PdfViewer v-else-if="isPdf && pdfLoaded"
+      <PdfEditor v-else-if="isPdf && pdfLoaded"
         :doc-id="docId" :doc-key="doc?.docKey || ''"
         :file-url="pdfFileUrl" :can-edit="canEdit"
         :user-name="currentUserName" :user-id="currentUserId"
@@ -111,7 +111,7 @@ import type { SigningTask } from '@/api/signing'
 import NotificationBell from '@/components/NotificationBell.vue'
 import DocumentEditor from '@/components/DocumentEditor.vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
-import PdfViewer from '@/components/PdfViewer.vue'
+import PdfEditor from '@/components/PdfEditor.vue'
 import CommentPanel from '@/components/CommentPanel.vue'
 import ShareDialog from '@/components/ShareDialog.vue'
 import VersionHistory from '@/components/VersionHistory.vue'
@@ -150,7 +150,7 @@ const isOwner = computed(() => {
   return doc.value?.ownerUserId === userId
 })
 const canAdmin = computed(() => {
-  return sessionStorage.getItem('role') === 'admin' || doc.value?.currentUserPermission === 'admin'
+  return doc.value?.currentUserPermission === 'admin'
 })
 const canComment = computed(() => {
   const perm = doc.value?.currentUserPermission
@@ -161,8 +161,8 @@ const canEdit = computed(() => {
   return canAdmin.value || perm === 'edit' || isOwner.value
 })
 const permLabel = computed(() => {
-  if (isOwner.value || canAdmin.value) return '管理'
-  const map: Record<string, string> = { view: '只读', comment: '评论', edit: '编辑' }
+  if (isOwner.value) return '管理'
+  const map: Record<string, string> = { view: '只读', comment: '评论', edit: '编辑', admin: '管理' }
   return map[doc.value?.currentUserPermission || ''] || ''
 })
 
@@ -356,7 +356,7 @@ async function onCancelSigning() {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .editor-nav {
@@ -419,6 +419,8 @@ async function onCancelSigning() {
   color: #909399;
   font-size: 12px;
   flex-shrink: 0;
+  min-width: 60px;
+  justify-content: flex-end;
 }
 
 .save-dot {
@@ -504,6 +506,8 @@ async function onCancelSigning() {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
+  height: 0;
 }
 
 .editor-loading {

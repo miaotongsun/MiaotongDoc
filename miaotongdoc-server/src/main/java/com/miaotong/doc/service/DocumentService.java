@@ -14,6 +14,7 @@ import com.miaotong.doc.repository.DocumentVersionRepository;
 import com.miaotong.doc.repository.UserRepository;
 import com.miaotong.doc.service.storage.StorageService;
 import com.miaotong.doc.util.DocGenerator;
+import com.miaotong.doc.util.JsonUtil;
 import com.miaotong.doc.util.FileHashUtil;
 import com.miaotong.doc.util.FileValidator;
 import lombok.RequiredArgsConstructor;
@@ -614,5 +615,90 @@ public class DocumentService {
     private String buildObjectKey(String docKey, int version, String fileType) {
         String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"));
         return "documents/" + datePath + "/" + docKey + "/v" + version + "." + fileType;
+    }
+
+    // ==================== PDF 文字编辑 ====================
+
+    /**
+     * 保存 PDF 文字编辑
+     * 使用 JSONB 列存储编辑操作
+     */
+    @Transactional
+    public String saveTextEdits(Long docId, List<Map<String, Object>> edits) {
+        Document doc = getDocument(docId);
+
+        // 将编辑列表转为 JSON 字符串存储
+        String editsJson = JsonUtil.toJson(edits);
+
+        // 使用 SQL 直接更新（假设已有 text_edits 列）
+        // 如果列不存在，需要创建：ALTER TABLE mt_document ADD COLUMN text_edits JSONB DEFAULT '[]'
+        jdbcTemplate.update(
+            "UPDATE mt_document SET text_edits = ?, updated_at = ? WHERE id = ?",
+            editsJson,
+            LocalDateTime.now(),
+            docId
+        );
+
+        log.info("保存 PDF 文字编辑: docId={}, editsCount={}", docId, edits.size());
+        return editsJson;
+    }
+
+    /**
+     * 获取 PDF 文字编辑
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getTextEdits(Long docId) {
+        Document doc = getDocument(docId);
+
+        // 从数据库读取 text_edits JSONB 列
+        String editsJson = jdbcTemplate.queryForObject(
+            "SELECT text_edits FROM mt_document WHERE id = ?",
+            new Object[]{docId},
+            String.class
+        );
+
+        if (editsJson == null || editsJson.isBlank() || editsJson.equals("[]")) {
+            return List.of();
+        }
+
+        try {
+            return JsonUtil.parseJsonList(editsJson);
+        } catch (Exception e) {
+            log.warn("解析 PDF 文字编辑失败: docId={}, error={}", docId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ==================== PDF Markdown 内容管理 ====================
+
+    /**
+     * 保存 PDF 识别后的 Markdown 内容（按页分组）
+     */
+    @Transactional
+    public void savePdfMarkdown(Long docId, Map<String, String> markdown) {
+        Document doc = getDocument(docId);
+        doc.setPdfMarkdown(markdown);
+        documentRepository.save(doc);
+        log.info("保存 PDF Markdown 内容: docId={}, pages={}", docId, markdown.size());
+    }
+
+    /**
+     * 标记 PDF 已完成识别
+     */
+    @Transactional
+    public void markPdfRecognized(Long docId) {
+        Document doc = getDocument(docId);
+        doc.setPdfRecognized(true);
+        doc.setPdfRecognizedAt(LocalDateTime.now());
+        documentRepository.save(doc);
+        log.info("PDF 识别完成: docId={}", docId);
+    }
+
+    /**
+     * 获取 PDF Markdown 内容
+     */
+    public Map<String, String> getPdfMarkdown(Long docId) {
+        Document doc = getDocument(docId);
+        return doc.getPdfMarkdown() != null ? doc.getPdfMarkdown() : Map.of();
     }
 }

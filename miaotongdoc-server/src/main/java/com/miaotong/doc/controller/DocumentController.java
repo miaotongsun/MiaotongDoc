@@ -9,6 +9,9 @@ import com.miaotong.doc.service.ShareService;
 import com.miaotong.doc.service.PdfExportService;
 import com.miaotong.doc.service.SigningService;
 import com.miaotong.doc.service.ContentIndexService;
+import com.miaotong.doc.service.NotificationService;
+import com.miaotong.doc.service.storage.StorageService;
+import com.miaotong.doc.constants.NotificationType;
 import com.miaotong.doc.util.JwtUtil;
 import com.miaotong.doc.util.EditorJwtUtil;
 import com.miaotong.doc.repository.UserRepository;
@@ -41,6 +44,8 @@ public class DocumentController {
     private final PdfExportService pdfExportService;
     private final SigningService signingService;
     private final ContentIndexService contentIndexService;
+    private final NotificationService notificationService;
+    private final StorageService storageService;
     private final EditorJwtUtil editorJwtUtil;
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
@@ -59,10 +64,8 @@ public class DocumentController {
     );
 
     private void requirePermission(Long documentId, Long userId, String minLevel, String systemRole) {
-        // 系统管理员绕过所有权限检查
-        if ("admin".equals(systemRole)) return;
-
-        String perm = shareService.getUserPermission(documentId, userId);
+        // 管理员在没有显式授权时默认拥有 view 权限
+        String perm = shareService.getUserPermission(documentId, userId, systemRole);
         if (perm == null) {
             throw new BusinessException("无权访问此文档");
         }
@@ -89,6 +92,46 @@ public class DocumentController {
         Long userId = (Long) httpRequest.getAttribute("userId");
         Document doc = documentService.uploadDocument(file, userId);
         return ResponseEntity.ok(toDTO(doc));
+    }
+
+    /**
+     * 上传图片（用于编辑器内图片插入）
+     * 图片存在文档同目录下的 images/ 子目录
+     */
+    @PostMapping("/{id}/upload-image")
+    public ResponseEntity<Map<String, String>> uploadImage(
+            @PathVariable Long id,
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest httpRequest) {
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        Document doc = documentService.getDocument(id);
+
+        // 验证文件类型
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new BusinessException("只支持上传图片文件");
+        }
+
+        // 生成存储路径：与文档同目录 + images/ 子目录
+        String ext = switch (contentType) {
+            case "image/png" -> ".png";
+            case "image/jpeg" -> ".jpg";
+            case "image/gif" -> ".gif";
+            case "image/webp" -> ".webp";
+            default -> ".png";
+        };
+        // 从文档路径提取目录部分，如 documents/2026/06/{docKey}
+        String docDir = doc.getFilePath().substring(0, doc.getFilePath().lastIndexOf("/"));
+        String objectKey = docDir + "/images/" + java.util.UUID.randomUUID() + ext;
+
+        try {
+            storageService.store(objectKey, file.getBytes());
+        } catch (Exception e) {
+            throw new BusinessException("图片上传失败: " + e.getMessage());
+        }
+
+        String url = "/api/documents/file/" + objectKey;
+        return ResponseEntity.ok(Map.of("url", url));
     }
 
     // 手动触发全文索引
@@ -128,7 +171,7 @@ public class DocumentController {
         Sort pageSort = parseSort(sort);
         PageRequest pageRequest = PageRequest.of(page, size, pageSort);
         Page<Document> documents = documentService.listDocuments(type, keyword, owner, userId, departmentId, folderId, role, pageRequest);
-        return ResponseEntity.ok(documents.map(doc -> toDTO(doc, userId)));
+        return ResponseEntity.ok(documents.map(doc -> toDTO(doc, userId, role)));
     }
 
     @PostMapping("/{id}/move")
@@ -163,7 +206,7 @@ public class DocumentController {
         String role = (String) httpRequest.getAttribute("role");
         requirePermission(id, userId, "view", role);
         Document doc = documentService.getDocument(id);
-        return ResponseEntity.ok(toDTO(doc, userId));
+        return ResponseEntity.ok(toDTO(doc, userId, role));
     }
 
     @PutMapping("/{id}/rename")
@@ -175,7 +218,7 @@ public class DocumentController {
         String role = (String) httpRequest.getAttribute("role");
         requirePermission(id, userId, "edit", role);
         Document doc = documentService.renameDocument(id, request.get("title"), userId);
-        return ResponseEntity.ok(toDTO(doc, userId));
+        return ResponseEntity.ok(toDTO(doc, userId, role));
     }
 
     @DeleteMapping("/{id}")
@@ -320,7 +363,7 @@ public class DocumentController {
         String role = (String) httpRequest.getAttribute("role");
         requirePermission(id, userId, "view", role);
         Document doc = documentService.toggleStar(id, userId);
-        return ResponseEntity.ok(toDTO(doc, userId));
+        return ResponseEntity.ok(toDTO(doc, userId, role));
     }
 
     @GetMapping("/{id}/config")
@@ -328,8 +371,9 @@ public class DocumentController {
             @PathVariable Long id,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
         Document doc = documentService.getDocument(id);
-        String permission = shareService.getUserPermission(id, userId);
+        String permission = shareService.getUserPermission(id, userId, role);
 
         boolean canEdit = "edit".equals(permission) || "admin".equals(permission);
         boolean reviewMode = false;
@@ -342,8 +386,7 @@ public class DocumentController {
         // 签署中：文档发起人可编辑，签署人进入修订模式，其他人只读
         if ("signing".equals(doc.getStatus()) && !Boolean.TRUE.equals(doc.getSigningLocked())) {
             boolean isOwner = doc.getOwnerUserId().equals(userId);
-            boolean isAdmin = "admin".equals(httpRequest.getAttribute("role"));
-            if (isOwner || isAdmin) {
+            if (isOwner) {
                 canEdit = true;
             } else {
                 // 检查是否是签署人
@@ -452,6 +495,35 @@ public class DocumentController {
         return new ResponseEntity<>(content, headers, HttpStatus.OK);
     }
 
+    /**
+     * 通用文件访问（仅限图片）
+     */
+    @GetMapping("/file/**")
+    public ResponseEntity<byte[]> getFileByPath(HttpServletRequest httpRequest) {
+        String uri = httpRequest.getRequestURI();
+        String objectKey = uri.replaceFirst("^/api/documents/file/", "");
+
+        // 安全限制：只允许访问 images/ 目录下的文件
+        if (!objectKey.startsWith("images/") && !objectKey.contains("/images/")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            byte[] content = storageService.load(objectKey);
+            HttpHeaders headers = new HttpHeaders();
+            // 根据扩展名设置 Content-Type
+            if (objectKey.endsWith(".png")) headers.setContentType(MediaType.IMAGE_PNG);
+            else if (objectKey.endsWith(".jpg") || objectKey.endsWith(".jpeg")) headers.setContentType(MediaType.IMAGE_JPEG);
+            else if (objectKey.endsWith(".gif")) headers.setContentType(MediaType.IMAGE_GIF);
+            else if (objectKey.endsWith(".webp")) headers.setContentType(MediaType.parseMediaType("image/webp"));
+            else headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setCacheControl("public, max-age=31536000");
+            return new ResponseEntity<>(content, headers, HttpStatus.OK);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/{id}/export/pdf")
     public ResponseEntity<byte[]> exportPdf(@PathVariable Long id, HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
@@ -483,11 +555,40 @@ public class DocumentController {
         return new ResponseEntity<>(pdfContent, headers, HttpStatus.OK);
     }
 
+    /**
+     * @提及用户：发送通知 + 授权文档查看权限
+     */
+    @PostMapping("/{id}/mention")
+    public ResponseEntity<Map<String, Object>> mentionUser(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        Long fromUserId = (Long) httpRequest.getAttribute("userId");
+        Long mentionedUserId = Long.valueOf(body.get("userId").toString());
+        String mentionedName = (String) body.getOrDefault("userName", "用户");
+
+        Document doc = documentService.getDocument(id);
+
+        // 如果被提及用户没有文档权限，授予查看权限
+        shareService.grantViewIfAbsent(id, mentionedUserId, fromUserId);
+
+        // 发送提及通知
+        notificationService.notify(fromUserId, mentionedUserId, id,
+                NotificationType.DOC_MENTION,
+                "在文档中@了您");
+
+        return ResponseEntity.ok(Map.of("message", "通知已发送"));
+    }
+
     private DocumentDTO toDTO(Document doc) {
-        return toDTO(doc, null);
+        return toDTO(doc, null, null);
     }
 
     private DocumentDTO toDTO(Document doc, Long userId) {
+        return toDTO(doc, userId, null);
+    }
+
+    private DocumentDTO toDTO(Document doc, Long userId, String systemRole) {
         DocumentDTO dto = new DocumentDTO();
         dto.setId(doc.getId());
         dto.setDocKey(doc.getDocKey());
@@ -524,7 +625,7 @@ public class DocumentController {
 
         if (userId != null) {
             try {
-                dto.setCurrentUserPermission(shareService.getUserPermission(doc.getId(), userId));
+                dto.setCurrentUserPermission(shareService.getUserPermission(doc.getId(), userId, systemRole));
             } catch (Exception e) {
                 dto.setCurrentUserPermission(null);
             }

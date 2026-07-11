@@ -3,6 +3,7 @@ package com.miaotong.doc.controller;
 import com.miaotong.doc.entity.Document;
 import com.miaotong.doc.exception.BusinessException;
 import com.miaotong.doc.service.DocumentService;
+import com.miaotong.doc.service.ShareService;
 import com.miaotong.doc.service.storage.StorageService;
 import com.miaotong.doc.util.FileHashUtil;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,11 @@ public class MarkdownController {
 
     private final DocumentService documentService;
     private final StorageService storageService;
+    private final ShareService shareService;
+
+    private static final Map<String, Integer> PERM_LEVEL = Map.of(
+            "view", 1, "comment", 2, "edit", 3, "admin", 4
+    );
 
     /**
      * 获取 Markdown 文档内容
@@ -30,10 +36,17 @@ public class MarkdownController {
             @PathVariable Long id,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
         Document doc = documentService.getDocument(id);
 
         if (!"markdown".equals(doc.getDocType())) {
             throw new BusinessException("该文档不是 Markdown 类型");
+        }
+
+        // 检查 view 权限
+        String perm = shareService.getUserPermission(id, userId, role);
+        if (perm == null) {
+            throw new BusinessException("无权访问此文档");
         }
 
         try {
@@ -55,10 +68,22 @@ public class MarkdownController {
             @RequestBody Map<String, String> body,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
+        String role = (String) httpRequest.getAttribute("role");
         Document doc = documentService.getDocument(id);
 
         if (!"markdown".equals(doc.getDocType())) {
             throw new BusinessException("该文档不是 Markdown 类型");
+        }
+
+        // 检查 edit 权限（管理员未授权时只有 view 权限，不允许编辑）
+        String perm = shareService.getUserPermission(id, userId, role);
+        if (perm == null) {
+            throw new BusinessException("无权访问此文档");
+        }
+        int userLevel = PERM_LEVEL.getOrDefault(perm, 0);
+        int required = PERM_LEVEL.getOrDefault("edit", 0);
+        if (userLevel < required) {
+            throw new BusinessException("权限不足，需要编辑权限");
         }
 
         String content = body.get("content");

@@ -138,7 +138,14 @@ public class ShareService {
                 NotificationType.REVOKE, "已撤回您的文档共享权限");
     }
 
-    public String getUserPermission(Long documentId, Long userId) {
+    /**
+     * 获取用户对文档的权限
+     * @param documentId 文档ID
+     * @param userId 用户ID
+     * @param systemRole 系统角色（可选，用于管理员默认权限）
+     * @return 权限级别：admin > edit > comment > view，无权限返回 null
+     */
+    public String getUserPermission(Long documentId, Long userId, String... systemRole) {
         Document doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new NotFoundException("文档不存在"));
 
@@ -153,7 +160,38 @@ public class ShareService {
             return share.getPermission();
         }
 
+        // 管理员无显式授权时，默认只读
+        if (systemRole.length > 0 && "admin".equals(systemRole[0])) {
+            return "view";
+        }
+
         return null;
+    }
+
+    /**
+     * 获取用户对文档的权限（兼容旧调用）
+     */
+    public String getUserPermission(Long documentId, Long userId) {
+        return getUserPermission(documentId, userId, (String[]) null);
+    }
+
+    /**
+     * @提及专用：如果用户没有文档权限，授予查看权限
+     * @return true 如果新授予权限，false 如果已有权限
+     */
+    public boolean grantViewIfAbsent(Long documentId, Long userId, Long grantedBy) {
+        if (shareRepository.existsByDocumentIdAndUserId(documentId, userId)) {
+            return false;
+        }
+        DocumentShare share = new DocumentShare();
+        share.setDocumentId(documentId);
+        share.setUserId(userId);
+        share.setSharedBy(grantedBy);
+        share.setPermission("view");
+        shareRepository.save(share);
+        auditService.log(grantedBy, "SHARE", "DOCUMENT", documentId, null);
+        activityService.log(grantedBy, documentId, "SHARE", userId);
+        return true;
     }
 
     private String permLabel(String permission) {

@@ -722,6 +722,33 @@ window.Asc.plugin.init = async function() {
 		delete window.Asc.plugin.info.aiPluginSettings;
 	}
 
+	// MiaotongDoc: 注册 LLM 配置更新回调（fetchLatestLlmConfig 拉取成功后调用）
+	// 当主 frame fetchLatestLlmConfig() 拉取成功后，自动推送最新模型到 settings 子窗口
+	window._onLlmConfigUpdated = function(data) {
+		try {
+			if (data && Array.isArray(data.models) && data.models.length > 0 && AI.serverSettings) {
+				AI.serverSettings.models = data.models;
+			}
+			if (data && data.providers && data.providers.OpenAI && AI.Providers) {
+				AI.Providers.OpenAI = Object.assign(AI.Providers.OpenAI || {}, data.providers.OpenAI);
+			}
+			// 推送最新模型到 settings 子窗口（如已打开）
+			updateModels();
+		} catch (e) {
+			console.warn("[MiaotongDoc] _onLlmConfigUpdated error:", e);
+		}
+	};
+
+	// MiaotongDoc: plugin 初始化时主动拉取管理后台最新模型（用 await 等结果，保证 settings 窗口打开时模型是最新的）
+	// 此举解决了"管理后台更新模型后 AI 插件下拉列表不更新"的问题
+	try {
+		if (typeof fetchLatestLlmConfig === "function") {
+			await fetchLatestLlmConfig();
+		}
+	} catch (e) {
+		console.warn("[MiaotongDoc] init fetchLatestLlmConfig error:", e);
+	}
+
 	await initWithTranslate(1 << 1);
 	clearChatState();
 
@@ -838,6 +865,7 @@ function updateModels() {
 	if (aiModelsListWindow)
 		aiModelsListWindow.command('onUpdateModels', models);
 }
+
 function updateActions() {
 	if (settingsWindow)
 		settingsWindow.command('onUpdateActions', AI.ActionsGetSorted());
@@ -881,6 +909,9 @@ function onOpenSettingsModal() {
 				settingsWindow = null;
 			}
 		});
+	} else {
+		// MiaotongDoc: 窗口已存在时，重新推送最新模型（下拉列表更新用）
+		updateModels();
 	}
 	settingsWindow.show(variation);
 }
@@ -1249,6 +1280,71 @@ function onOpenAiModelsModal() {
 		});
 	}
 	aiModelsListWindow.show(variation);
+}
+
+/**
+ * 从后端 API 实时刷新模型列表
+ * 从 /api/ai/refresh-models 获取最新配置（无需重启编辑器）
+ */
+async function refreshModelsFromBackend() {
+	try {
+		let response = await fetch("/api/ai/refresh-models", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" }
+		});
+
+		if (!response.ok) {
+			throw new Error("HTTP " + response.status);
+		}
+
+		let data = await response.json();
+
+		if (!data.success) {
+			aiModelsListWindow && aiModelsListWindow.command("onRefreshResult", {
+				success: false,
+				message: data.message || "刷新失败"
+			});
+			return;
+		}
+
+		// 更新 provider 配置（替换 OpenAI provider 的 models）
+		if (data.providers && data.providers.OpenAI) {
+			// 更新全局 serverSettings 中的 providers
+			if (AI.serverSettings) {
+				AI.serverSettings.providers = data.providers;
+				AI.serverSettings.models = data.models.map(function(m) {
+					return {
+						id: m.id,
+						name: m.name,
+						provider: "OpenAI",
+						capabilities: 511
+					};
+				});
+			}
+
+			// 重新初始化 Provider
+			AI.Providers["OpenAI"] = {
+				name: "OpenAI",
+				url: data.providers.OpenAI.url,
+				key: data.providers.OpenAI.key,
+				models: data.providers.OpenAI.models || []
+			};
+
+			// 重新触发模型列表更新
+			updateModels();
+		}
+
+		aiModelsListWindow && aiModelsListWindow.command("onRefreshResult", {
+			success: true,
+			message: data.message || ("已刷新 " + (data.models ? data.models.length : 0) + " 个模型")
+		});
+	} catch (e) {
+		console.error("Refresh models error:", e);
+		aiModelsListWindow && aiModelsListWindow.command("onRefreshResult", {
+			success: false,
+			message: "刷新失败: " + e.message
+		});
+	}
 }
 
 async function detectFunctionCallingSupport(model) {

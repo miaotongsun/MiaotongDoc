@@ -338,16 +338,98 @@ function fetchExternal(url, options, isStreaming) {
 		return provider.isUseProxy() || AI.serverSettings;
 	};
 
-	AI._getEndpointUrl = function(_provider, endpoint, model, options) {
+	// 缓存最新的 LLM 配置（解决 ai-config.json 修改后编辑器不重启的问题）
+// 设计思路：AI 插件加载时主动拉一次最新的 URL，缓存 30 分钟
+// 为什么不轮询：改 LLM 配置是低频操作；改后用户重新打开文档即可生效
+// 如需实时生效，建议改用 WebSocket 推送
+let _latestLlmConfig = null;
+let _latestLlmConfigTime = 0;
+const CONFIG_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
+
+async function fetchLatestLlmConfig() {
+	if (_latestLlmConfig && (Date.now() - _latestLlmConfigTime) < CONFIG_CACHE_TTL) {
+		return _latestLlmConfig;
+	}
+	try {
+		const response = await fetch("/api/ai/config");
+		if (!response.ok) return null;
+		const data = await response.json();
+		if (data && data.providers && data.providers.OpenAI) {
+			_latestLlmConfig = data;
+			_latestLlmConfigTime = Date.now();
+
+			const remoteProvider = data.providers.OpenAI;
+			const remoteModels = Array.isArray(data.models) ? data.models : [];
+
+			// 1) 更新 URL
+			if (AI.Providers && AI.Providers.OpenAI) {
+				if (remoteProvider.url) AI.Providers.OpenAI.url = remoteProvider.url;
+				if (Array.isArray(remoteProvider.models)) {
+					AI.Providers.OpenAI.models = remoteProvider.models;
+				}
+			}
+
+			// 2) 更新 serverSettings（settings.js / code.js 读取的依据）
+			if (AI.serverSettings) {
+				if (AI.serverSettings.providers) {
+					AI.serverSettings.providers.OpenAI = remoteProvider;
+				}
+				if (remoteModels.length > 0) {
+					AI.serverSettings.models = remoteModels;
+				}
+			}
+
+			// 3) 同步 AI.Models（settings.js 显示用 + chat.js 模型选择用）
+			//    AI.Models 格式: {id, name, provider, capabilities}
+			//    后端 data.models 已是这个格式，可直接替换
+			if (remoteModels.length > 0 && Array.isArray(AI.Models)) {
+				const existingIds = new Set();
+				for (let i = 0, len = AI.Models.length; i < len; i++) {
+					if (AI.Models[i] && AI.Models[i].id) existingIds.add(AI.Models[i].id);
+				}
+				for (let i = 0, len = remoteModels.length; i < len; i++) {
+					const m = remoteModels[i];
+					if (!m || !m.id) continue;
+					if (!existingIds.has(m.id)) {
+						AI.Models.push(m);
+					}
+				}
+			}
+
+			// 4) 触发 settings.js 窗口刷新（如已打开）
+			if (typeof window !== "undefined" && typeof window._onLlmConfigUpdated === "function") {
+				try { window._onLlmConfigUpdated(data); } catch (e) { console.warn("[MiaotongDoc] _onLlmConfigUpdated callback error:", e); }
+			}
+
+			return data;
+		}
+	} catch (e) {
+		console.warn("[MiaotongDoc] fetchLatestLlmConfig failed:", e);
+	}
+	return null;
+}
+
+// AI 插件加载时主动拉一次（解决 ai-config.json 修改后下拉列表不更新的问题）
+fetchLatestLlmConfig();
+
+AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 		let provider = _provider.createInstance ? _provider : AI.Storage.getProvider(_provider.name);
 		if (!provider) provider = new AI.Provider(_provider.name, _provider.url, _provider.key);
 
 		if (_provider.key)
 			provider.key = _provider.key;
 
-		let url = provider.url;
-		if (!_provider.createInstance && _provider.url !== undefined)
+		// 关键修复：使用缓存的最新 URL（fetchLatestLlmConfig 会持续更新）
+		let url = "";
+		if (_latestLlmConfig && _latestLlmConfig.providers && _latestLlmConfig.providers.OpenAI && _latestLlmConfig.providers.OpenAI.url) {
+			url = _latestLlmConfig.providers.OpenAI.url;
+		} else if (_provider.url) {
 			url = _provider.url;
+		} else if (AI.serverSettings && AI.serverSettings.providers && AI.serverSettings.providers.OpenAI && AI.serverSettings.providers.OpenAI.url) {
+			url = AI.serverSettings.providers.OpenAI.url;
+		} else {
+			url = provider.url;
+		}
 
 		if (url.endsWith("/"))
 			url = url.substring(0, url.length - 1);
@@ -433,7 +515,7 @@ function fetchExternal(url, options, isStreaming) {
 
 	AI.Request = function(model) {
 		this.modelUI = model;
-		this.model = null;
+		this.model = model;
 		this.errorHandler = null;
 
 		if (model.id.startsWith(AI.externalModelPrefix)) {
@@ -450,12 +532,14 @@ function fetchExternal(url, options, isStreaming) {
 				}
 			}
 
-			if (provider) {
+			if (provider && provider.models) {
+				// 优先使用 provider.models 中的完整定义（已有 url/key/endpoints 等）
 				for (let i = 0, len = provider.models.length; i < len; i++) {
 					if (model.id === provider.models[i].id ||
 						model.id === provider.models[i].name)
 					{
 						this.model = provider.models[i];
+						break;
 					}
 				}
 			}
@@ -465,9 +549,37 @@ function fetchExternal(url, options, isStreaming) {
 	AI.Request.create = function(action, disableSettings) {
 		let model = AI.Storage.getModelById(AI.Actions[action].model);
 		if (!model) {
-			if (!disableSettings)
+			// model 不在 AI.Models 中或 AI.Actions[action].model 是空字符串
+			// 1) 用 AI.Actions[action].model 构造临时 model
+			// 2) 如果 AI.Actions[action].model 是空,用 AI.Models 的第一个
+			const storedModel = AI.Actions[action].model;
+			let modelId = storedModel;
+			if (!modelId && AI.Models && AI.Models.length > 0) {
+				modelId = AI.Models[0].id;
+			}
+			if (modelId) {
+				model = {
+					id: modelId,
+					name: modelId,
+					provider: "OpenAI",
+					capabilities: 511,
+					models: [],
+					endpoints: [1],
+					options: {}
+				};
+				if (!AI.Models) AI.Models = [];
+				if (!AI.Models.some(function(m){return m.id === modelId;})) {
+					AI.Models.push(model);
+				}
+				// 持久化到 AI.Actions，避免下次还走这个分支
+				AI.Actions[action].model = modelId;
+				if (AI.ActionsSave) AI.ActionsSave();
+			} else if (!disableSettings) {
 				onOpenSettingsModal();
-			return null;
+				return null;
+			} else {
+				return null;
+			}
 		}
 		return new AI.Request(model);
 	};
@@ -524,15 +636,15 @@ function fetchExternal(url, options, isStreaming) {
 			provider = AI.Storage.getProvider(this.modelUI.provider);
 
 		if (!provider) {
-			throw { 
-				error : 1, 
-				message : "Please select the correct model for action." 
+			throw {
+				error : 1,
+				message : "Please select the correct model for action."
 			};
 			return;
 		}
 
 		let isUseCompletionsInsteadChat = false;
-		if (this.model) {
+		if (this.model && this.model.endpoints) {
 			let isFoundChatCompletions = false;
 			let isFoundCompletions = false;
 			for (let i = 0, len = this.model.endpoints.length; i < len; i++) {

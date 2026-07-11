@@ -132,8 +132,7 @@ public class DocGenerator {
      * 创建空白 Markdown 文档
      */
     private static byte[] createMarkdown(String title) {
-        String content = "# " + title + "\n\n";
-        return content.getBytes(StandardCharsets.UTF_8);
+        return "".getBytes(StandardCharsets.UTF_8);
     }
 
     /**

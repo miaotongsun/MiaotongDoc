@@ -45,19 +45,32 @@ let aiModelsList = new ListView(document.getElementById('ai-models-list'), {
 });
 var scrollbarList = new PerfectScrollbar("#ai-models-list", {});
 
-// 刷新按钮 - 发事件给主窗口处理
+
+// 刷新按钮 - 从后端 API 实时获取最新模型
 var refreshBtnEl = document.getElementById('refresh-btn');
-refreshBtnEl.addEventListener('click', function() {
+refreshBtnEl.addEventListener('click', async function() {
 	refreshBtnEl.disabled = true;
 	refreshBtnEl.title = '刷新中...';
-	window.Asc.plugin.sendToPlugin("onRefreshModels");
-});
+	try {
+		var response = await fetch("/api/ai/refresh-models", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" }
+		});
+		var data = await response.json();
+		refreshBtnEl.disabled = false;
+		refreshBtnEl.title = '刷新可用模型';
 
-// 接收刷新结果
-window.Asc.plugin.attachEvent("onRefreshResult", function(data) {
-	refreshBtnEl.disabled = false;
-	refreshBtnEl.title = '刷新可用模型';
-	showRefreshResult(data.success, data.message);
+		if (data.success && data.models) {
+			showRefreshResult(true, data.message || "刷新成功");
+			aiModelsList.set(data.models);
+		} else {
+			showRefreshResult(false, data.message || "刷新失败");
+		}
+	} catch (e) {
+		refreshBtnEl.disabled = false;
+		refreshBtnEl.title = '刷新可用模型';
+		showRefreshResult(false, "刷新失败: " + e.message);
+	}
 });
 
 function showRefreshResult(success, message) {

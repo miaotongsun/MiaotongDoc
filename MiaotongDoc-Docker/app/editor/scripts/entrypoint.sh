@@ -4,11 +4,36 @@
 
 CONFIG_FILE="/etc/onlyoffice/documentserver/local.json"
 
-# 查询 LLM API 可用模型，返回 jq 可用的 JSON 数组
+# 从 ai-config.json 读取模型配置（前端配置，/data/config 是只读挂载）
 fetch_models() {
-    local llm_url="$1"
-    local llm_key="$2"
-    # 如果 URL 已经以 /v1 结尾，直接拼接 /models；否则拼接 /v1/models
+    local ai_config_file="/data/config/ai-config.json"
+
+    if [ ! -f "$ai_config_file" ]; then
+        echo "[MiaotongDoc] WARNING: $ai_config_file not found" >&2
+        echo '[]'
+        return 1
+    fi
+
+    local llm_url
+    local llm_key
+
+    llm_url=$(python3 -c "import json; print(json.load(open('$ai_config_file')).get('targetUrl',''))" 2>/dev/null)
+    llm_key=$(python3 -c "import json; print(json.load(open('$ai_config_file')).get('apiKey',''))" 2>/dev/null)
+
+    if [ -z "$llm_url" ]; then
+        echo "[MiaotongDoc] WARNING: LLM URL not configured" >&2
+        echo '[]'
+        return 1
+    fi
+
+    # 清理 llm_url（去除尾部多余斜杠，但保留 /v1）
+    llm_url=$(echo "$llm_url" | sed 's|/*$||')
+    # 如果有重复的 /v1//v1，去重为 /v1
+    llm_url=$(echo "$llm_url" | sed 's|(/v1)+|/v1|g')
+
+    echo "[MiaotongDoc] Fetching models from $llm_url" >&2
+
+    # 容错处理：如果 URL 已带 /v1，不再添加；否则添加
     local models_url
     if [[ "$llm_url" == */v1 ]]; then
         models_url="${llm_url}/models"
@@ -21,13 +46,11 @@ fetch_models() {
         auth_header="Authorization: Bearer ${llm_key}"
     fi
 
-    echo "[MiaotongDoc] Querying LLM models: $models_url" >&2
-
     local response
     response=$(curl -sf --max-time 10 -H "$auth_header" "$models_url" 2>/dev/null)
 
     if [ $? -ne 0 ] || [ -z "$response" ]; then
-        echo "[MiaotongDoc] WARNING: Failed to query LLM models" >&2
+        echo "[MiaotongDoc] WARNING: Failed to fetch models from LLM API" >&2
         echo '[]'
         return 1
     fi
@@ -75,10 +98,52 @@ do_inject() {
                     name: "OpenAI",
                     url: $llm_url,
                     key: $llm_key,
-                    models: $provider_models
+                    models: ($provider_models + [
+                        {"id":"gpt-4o","name":"gpt-4o","endpoints":[1],"options":{}},
+                        {"id":"gpt-4o-mini","name":"gpt-4o-mini","endpoints":[1],"options":{}},
+                        {"id":"gpt-3.5-turbo","name":"gpt-3.5-turbo","endpoints":[1],"options":{}},
+                        {"id":"o1","name":"o1","endpoints":[1],"options":{}},
+                        {"id":"o1-mini","name":"o1-mini","endpoints":[1],"options":{}},
+                        {"id":"deepseek-r1","name":"deepseek-r1","endpoints":[1],"options":{}},
+                        {"id":"deepseek-v3","name":"deepseek-v3","endpoints":[1],"options":{}},
+                        {"id":"deepseek-v4-flash","name":"deepseek-v4-flash","endpoints":[1],"options":{}},
+                        {"id":"qwen2.5-72b","name":"qwen2.5-72b","endpoints":[1],"options":{}},
+                        {"id":"qwen3-coder","name":"qwen3-coder","endpoints":[1],"options":{}},
+                        {"id":"Qwen36-35B-A3B","name":"Qwen36-35B-A3B","endpoints":[1],"options":{}},
+                        {"id":"claude-3-5-sonnet","name":"claude-3-5-sonnet","endpoints":[1],"options":{}},
+                        {"id":"MiniMax-M3","name":"MiniMax-M3","endpoints":[1],"options":{}},
+                        {"id":"MiniMax-M2.7","name":"MiniMax-M2.7","endpoints":[1],"options":{}},
+                        {"id":"MiniMax-M2.5","name":"MiniMax-M2.5","endpoints":[1],"options":{}},
+                        {"id":"MiniMax-M2.7-highspeed","name":"MiniMax-M2.7-highspeed","endpoints":[1],"options":{}},
+                        {"id":"MiniMax-M2.5-highspeed","name":"MiniMax-M2.5-highspeed","endpoints":[1],"options":{}},
+                        {"id":"sensenova-6.7-flash-lite","name":"sensenova-6.7-flash-lite","endpoints":[1],"options":{}},
+                        {"id":"glm-5.2","name":"glm-5.2","endpoints":[1],"options":{}},
+                        {"id":"sensenova-u1-fast","name":"sensenova-u1-fast","endpoints":[1],"options":{}}
+                    ])
                 }
             },
-            models: $global_models
+            models: ($global_models + [
+                {id: "gpt-4o", name: "gpt-4o", provider: "OpenAI", capabilities: 511},
+                {id: "gpt-4o-mini", name: "gpt-4o-mini", provider: "OpenAI", capabilities: 511},
+                {id: "gpt-3.5-turbo", name: "gpt-3.5-turbo", provider: "OpenAI", capabilities: 511},
+                {id: "o1", name: "o1", provider: "OpenAI", capabilities: 511},
+                {id: "o1-mini", name: "o1-mini", provider: "OpenAI", capabilities: 511},
+                {id: "deepseek-r1", name: "deepseek-r1", provider: "OpenAI", capabilities: 511},
+                {id: "deepseek-v3", name: "deepseek-v3", provider: "OpenAI", capabilities: 511},
+                {id: "deepseek-v4-flash", name: "deepseek-v4-flash", provider: "OpenAI", capabilities: 511},
+                {id: "qwen2.5-72b", name: "qwen2.5-72b", provider: "OpenAI", capabilities: 511},
+                {id: "qwen3-coder", name: "qwen3-coder", provider: "OpenAI", capabilities: 511},
+                {id: "Qwen36-35B-A3B", name: "Qwen36-35B-A3B", provider: "OpenAI", capabilities: 511},
+                {id: "claude-3-5-sonnet", name: "claude-3-5-sonnet", provider: "OpenAI", capabilities: 511},
+                {id: "MiniMax-M3", name: "MiniMax-M3", provider: "OpenAI", capabilities: 511},
+                {id: "MiniMax-M2.7", name: "MiniMax-M2.7", provider: "OpenAI", capabilities: 511},
+                {id: "MiniMax-M2.5", name: "MiniMax-M2.5", provider: "OpenAI", capabilities: 511},
+                {id: "MiniMax-M2.7-highspeed", name: "MiniMax-M2.7-highspeed", provider: "OpenAI", capabilities: 511},
+                {id: "MiniMax-M2.5-highspeed", name: "MiniMax-M2.5-highspeed", provider: "OpenAI", capabilities: 511},
+                {id: "sensenova-6.7-flash-lite", name: "sensenova-6.7-flash-lite", provider: "OpenAI", capabilities: 511},
+                {id: "glm-5.2", name: "glm-5.2", provider: "OpenAI", capabilities: 511},
+                {id: "sensenova-u1-fast", name: "sensenova-u1-fast", provider: "OpenAI", capabilities: 511}
+            ])
         }' | jq -c '.')
 
     jq --arg llm_url "$provider_url" \
@@ -86,7 +151,7 @@ do_inject() {
        --arg default_model "$default_model" \
        --argjson provider_models "$provider_models" \
        --argjson global_models "$global_models" \
-       --arg ai_plugin_settings "$ai_plugin_settings" \
+       --argjson ai_plugin_settings "$ai_plugin_settings" \
         '.services.CoAuthoring.server.appName = "MiaotongDoc/1.0" |
          .services.CoAuthoring.plugins = {
             autostart: ["asc.{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}"],
@@ -105,7 +170,7 @@ do_inject() {
             providers: {
                 OpenAI: {
                     name: "OpenAI",
-                    url: $provider_url,
+                    url: $llm_url,
                     key: $llm_key,
                     models: $provider_models
                 }
@@ -128,27 +193,28 @@ inject_ai_settings() {
         return 1
     fi
 
-    # 从配置文件或环境变量读取 LLM 配置
-    local LLM_URL=""
-    local LLM_KEY=""
-    local AI_CONFIG_FILE="/data/config/ai-config.json"
+    # 从 /data/config/ai-config.json 读取 LLM 配置（前端配置）
+    local llm_url=""
+    local llm_key=""
+    local ai_config_file="/data/config/ai-config.json"
 
-    if [ -f "$AI_CONFIG_FILE" ]; then
-        LLM_URL=$(python3 -c "import json; print(json.load(open('$AI_CONFIG_FILE')).get('targetUrl',''))" 2>/dev/null)
-        LLM_KEY=$(python3 -c "import json; print(json.load(open('$AI_CONFIG_FILE')).get('apiKey',''))" 2>/dev/null)
-        echo "[MiaotongDoc] AI config loaded from $AI_CONFIG_FILE"
+    if [ -f "$ai_config_file" ]; then
+        llm_url=$(python3 -c "import json; print(json.load(open('$ai_config_file')).get('targetUrl',''))" 2>/dev/null)
+        llm_key=$(python3 -c "import json; print(json.load(open('$ai_config_file')).get('apiKey',''))" 2>/dev/null)
+        echo "[MiaotongDoc] AI config loaded from $ai_config_file"
     fi
 
-    if [ -z "$LLM_URL" ]; then
-        LLM_URL="${LLM_API_URL:-http://192.24.129.1:31000}"
-    fi
-    if [ -z "$LLM_KEY" ]; then
-        LLM_KEY="${LLM_API_KEY:-}"
+    if [ -z "$llm_url" ]; then
+        echo "[MiaotongDoc] WARNING: LLM URL not configured"
+        return 0
     fi
 
-    # 查询可用模型
+    # 容错处理：清理 URL（去除尾部斜杠，去重 /v1）
+    llm_url=$(echo "$llm_url" | sed 's|/*$||' | sed 's|(/v1)+|/v1|g')
+
+    # 从 LLM API 获取可用模型列表
     local available_models
-    available_models=$(fetch_models "$LLM_URL" "$LLM_KEY")
+    available_models=$(fetch_models)
     local model_count
     model_count=$(echo "$available_models" | jq 'length')
 
@@ -162,7 +228,7 @@ inject_ai_settings() {
     local provider_models
     provider_models=$(echo "$available_models" | jq '[.[] | {id: .id, name: .id, endpoints: [1], options: {}}]')
     local global_models
-    global_models=$(echo "$available_models" | jq '[.[] | {id: .id, name: .id, provider: "OpenAI", capabilities: 1}]')
+    global_models=$(echo "$available_models" | jq '[.[] | {id: .id, name: .id, provider: "OpenAI", capabilities: 511}]')
 
     echo "[MiaotongDoc] Found $model_count models, default=$default_model"
 
@@ -173,7 +239,7 @@ inject_ai_settings() {
     local max_attempts=6
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-        do_inject "$LLM_URL" "$LLM_KEY" "$available_models" "$default_model" "$provider_models" "$global_models"
+        do_inject "$llm_url" "$llm_key" "$available_models" "$default_model" "$provider_models" "$global_models"
         echo "[MiaotongDoc] Config injected (attempt $((attempt+1)))"
 
         sleep 3

@@ -90,6 +90,11 @@ RUN sed -i 's/proxy_read_timeout[[:space:]]*300s/proxy_read_timeout 900s/g' ${ED
 # 添加访问日志以便调试 socket.io 请求
 RUN echo 'access_log /var/log/onlyoffice/documentserver/nginx.access.log;' >> /etc/nginx/includes/http-common.conf
 
+# 添加 AI Proxy 反向代理 - 将 ai-proxy 请求转发到后端 Spring Boot
+COPY config/nginx/ds-aiproxy.conf /etc/nginx/includes/ds-aiproxy.conf
+RUN sed -i '/^}/i\    include /etc/nginx/includes/ds-aiproxy.conf;' /etc/onlyoffice/documentserver/nginx/ds.conf || \
+    echo 'include /etc/nginx/includes/ds-aiproxy.conf;' >> /etc/onlyoffice/documentserver/nginx/ds.conf
+
 # 替换 Service Worker 为自注销版本（防止 SW 拦截 socket.io 请求导致文档加载失败）
 COPY service-worker-override.js ${EDITOR_HOME}/documentserver/sdkjs/common/serviceworker/document_editor_service_worker.js
 

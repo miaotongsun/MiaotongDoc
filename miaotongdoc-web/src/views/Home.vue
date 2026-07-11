@@ -50,9 +50,14 @@
         </li>
         <li class="nav-divider"></li>
         <!-- 文件夹 -->
-        <li class="nav-section-header" @click="switchTab('folders')">
-          <span class="nav-section-title" :class="{ active: activeTab === 'folders' }">文件夹</span>
-          <div class="nav-section-actions" @click.stop>
+        <li class="nav-section-header">
+          <div class="nav-section-left" @click="toggleFolderSection">
+            <el-icon class="folder-section-arrow" :class="{ collapsed: folderSectionCollapsed }">
+              <ArrowDown />
+            </el-icon>
+            <span class="nav-section-title" :class="{ active: activeTab === 'folders' }">文件夹</span>
+          </div>
+          <div class="nav-section-actions" v-show="!folderSectionCollapsed">
             <el-button text size="small" @click.stop="collapseAllFolders" title="全部折叠">
               <svg viewBox="0 0 1024 1024" width="14" height="14" style="vertical-align: middle">
                 <path fill="currentColor" d="M128 256h768a42.667 42.667 0 0 0 0-85.333H128a42.667 42.667 0 1 0 0 85.333zm768 426.667H128a42.667 42.667 0 0 0 0 85.333h768a42.667 42.667 0 0 0 0-85.333zm-256-213.334H128a42.667 42.667 0 0 0 0 85.334h512a42.667 42.667 0 0 0 0-85.334z"/>
@@ -63,7 +68,7 @@
             </el-button>
           </div>
         </li>
-        <div class="folder-tree" style="position:relative">
+        <div class="folder-tree" style="position:relative" v-show="!folderSectionCollapsed">
           <div v-for="(folder, idx) in flatFolders" :key="folder.id" class="folder-item"
             :class="{ active: activeFolderId === folder.id, 'folder-child': folder.depth > 0, 'dragging': sidebarDragIdx === idx, 'drag-over': dragOverFolderId === folder.id }"
             :style="{ paddingLeft: (12 + folder.depth * 16) + 'px', marginTop: sidebarInsertIdx === idx ? '36px' : '0', opacity: sidebarDragIdx === idx ? 0.3 : 1 }"
@@ -550,7 +555,7 @@ import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
-import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick } from '@element-plus/icons-vue'
+import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { departmentApi, type Department } from '@/api/department'
 import { folderApi, type Folder as FolderType } from '@/api/folder'
@@ -618,6 +623,15 @@ const folders = ref<FolderType[]>([])
 const activeFolderId = ref<number | null>(null)
 const dragOverFolderId = ref<number | null>(null)
 const expandedFolders = ref<Set<number>>(new Set())
+const folderSectionCollapsed = ref(true)
+
+function toggleFolderSection() {
+  folderSectionCollapsed.value = !folderSectionCollapsed.value
+  // 展开时自动切换到文件夹页面
+  if (!folderSectionCollapsed.value && activeTab.value !== 'folders') {
+    switchTab('folders')
+  }
+}
 
 function toggleFolder(id: number) {
   const newSet = new Set(expandedFolders.value)
@@ -2282,11 +2296,18 @@ async function handleTableCommand(cmd: string, row: any) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 20px 4px;
+  padding: 8px 12px 4px;
   font-size: 12px;
   font-weight: 600;
   color: #909399;
   text-transform: uppercase;
+}
+
+.nav-section-left {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex: 1;
 }
 
 .nav-section-title {
@@ -2312,6 +2333,16 @@ async function handleTableCommand(cmd: string, row: any) {
 
 .nav-section-actions .el-button:hover {
   color: var(--el-color-primary);
+}
+
+.folder-section-arrow {
+  font-size: 12px;
+  margin-right: 4px;
+  transition: transform 0.2s;
+  cursor: pointer;
+}
+.folder-section-arrow.collapsed {
+  transform: rotate(-90deg);
 }
 
 .folder-tree {

@@ -1,8 +1,20 @@
 server:
   port: 9004
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+      enabled: true
   tomcat:
     max-http-form-post-size: 200MB
     connection-timeout: 300000
+    # 关键：Tomcat NIO connector 输出缓冲配置
+    # 默认 socket.appWriteBufSize = 8192，会让 SSE event 累积到 8KB 才真正写出
+    # Spring Boot 2.x 不直接暴露该属性，需要通过编程方式设置
+    # 参见 AiService.java 中的 SocketBufferConfigurator
+    processor-cache: 200
+    threads:
+      max: 400
 
 spring:
   application:
@@ -56,6 +68,17 @@ spring:
     multipart:
       max-file-size: 200MB
       max-request-size: 200MB
+
+  # Spring AI 配置
+  ai:
+    openai:
+      api-key: ${LLM_API_KEY:sk-placeholder}
+      base-url: ${LLM_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${LLM_DEFAULT_MODEL:Qwen36-35B-A3B}
+          temperature: 0.7
+          max-tokens: 2000
 
   # OAuth2 Client (SSO) - 仅在 SSO 启用时配置
   # security:
@@ -123,10 +146,16 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+      probes:
+        enabled: true
   health:
     redis:
-      enabled: true
+      enabled: false
     db:
+      enabled: false
+    liveness:
+      enabled: true
+    readiness:
       enabled: true
 
 # ===== AI 代理配置 =====
@@ -135,8 +164,24 @@ ai-proxy:
   api-key: ${LLM_API_KEY:}
   timeout: ${LLM_TIMEOUT:300}
 
+# ===== Spring AI 配置（合并到 spring: 节点） =====
+# 注意：spring.ai.openai 配置在 spring: 节点内
+
+# ===== Docling 文档解析配置 =====
+docling:
+  server-url: ${DOCLING_SERVER_URL:http://docling:5001}
+  enabled: ${DOCLING_ENABLED:false}
+  timeout: ${DOCLING_TIMEOUT:300}
+  ocr-languages: ${DOCLING_OCR_LANGUAGES:chi_sim+eng}
+
+# ===== OCR 配置 =====
+ocr:
+  server-url: ${OCR_SERVER_URL:http://ocr:5002}
+  enabled: ${OCR_ENABLED:false}
+
 # ===== 日志 =====
 logging:
   level:
-    com.miaotong.doc: INFO
+    com.miaotong.doc: DEBUG
+    com.miaotong.doc.service.ai: DEBUG
     org.springframework.security: WARN

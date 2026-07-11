@@ -29,5 +29,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(notificationHandler, "/ws/notifications")
                 .addInterceptors(jwtInterceptor)
                 .setAllowedOrigins("*");
+
+        // AI 聊天已改为 SSE（POST /api/ai/chat/stream），不再使用 WebSocket
     }
 }

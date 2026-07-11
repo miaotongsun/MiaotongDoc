@@ -498,7 +498,14 @@
 		updateTextareaSize();
 
 		// Initialize voice button visibility
-		updateVoiceButtonVisibility();
+		// MIAOTONGDOC-DISABLED: 强制隐藏语音输入按钮（避免调用被禁用的 updateVoiceButtonVisibility）
+		// updateVoiceButtonVisibility();
+
+		// MIAOTONGDOC-DISABLED: 强制隐藏语音输入按钮
+		try {
+			const voiceBtn = document.getElementById('input_voice_button');
+			if (voiceBtn) voiceBtn.style.display = 'none';
+		} catch (e) {}
 
 		window.Asc.plugin.sendToPlugin("onWindowReady", {});
 
@@ -506,10 +513,10 @@
 			onSubmit();
 		});
 
-		// Voice input button handler
-		document.getElementById('input_voice_button').addEventListener('click', function() {
-			onVoiceInput();
-		});
+		// MIAOTONGDOC-DISABLED: Voice input button handler (temporarily disabled)
+		// document.getElementById('input_voice_button').addEventListener('click', function() {
+		// 	onVoiceInput();
+		// });
 
 		// Stop button handler
 		document.getElementById('input_stop_button').addEventListener('click', function() {
@@ -612,6 +619,8 @@
 		}
 	};
 
+	// MIAOTONGDOC-DISABLED: 语音输入功能（暂时禁用，方便后期恢复）
+	/*
 	function onVoiceInput() {
 		if (isAgentRunning)
 			return;
@@ -636,6 +645,7 @@
 			}
 		}
 	};
+	*/
 
 	function onStopAgent() {
 		isAgentStopped = true;
@@ -646,6 +656,8 @@
 	let voiceInputSupported = false;
 	let recognition = null;
 
+	// MIAOTONGDOC-DISABLED: 语音输入按钮可见性控制（暂时禁用）
+	/*
 	function updateVoiceButtonVisibility() {
 		if (voiceInputSupported) {
 			document.getElementById('input_voice_button').classList.remove('hidden');
@@ -653,7 +665,10 @@
 			document.getElementById('input_voice_button').classList.add('hidden');
 		}
 	};
+	*/
 
+	// MIAOTONGDOC-DISABLED: 语音识别初始化（暂时禁用）
+	/*
 	function initVoiceRecognition() {
 		recognition = window.initVoiceRecognitionEngine();
 
@@ -693,6 +708,7 @@
 			voiceBtn.title = 'Voice input\nSay "comma", "period", etc. for punctuation';
 		};
 	};
+	*/
 
 	function updateControlButtonsState() {
 		const submitButton = document.getElementById('input_message_submit');
@@ -702,11 +718,13 @@
 		if (isAgentRunning) {
 			submitButton.classList.add('hidden');
 			stopButton.classList.remove('hidden');
-			if (voiceButton) voiceButton.classList.add('hidden');
+			// MIAOTONGDOC-DISABLED: 语音按钮 (暂时禁用)
+			// if (voiceButton) voiceButton.classList.add('hidden');
 		} else {
 			submitButton.classList.remove('hidden');
 			stopButton.classList.add('hidden');
-			updateVoiceButtonVisibility();
+			// MIAOTONGDOC-DISABLED: 调用被禁用的语音按钮可见性函数
+			// updateVoiceButtonVisibility();
 		}
 	};
 
@@ -1079,6 +1097,8 @@
 		}
 	});
 
+	// MIAOTONGDOC-DISABLED: 语音输入支持事件（暂时禁用）
+	/*
 	window.Asc.plugin.attachEvent("onVoiceInputSupport", function(isSupported) {
 		voiceInputSupported = isSupported;
 		updateVoiceButtonVisibility();
@@ -1091,6 +1111,7 @@
 			}
 		}
 	});
+	*/
 
 	window.Asc.plugin.attachEvent("onThemeChanged", onThemeChanged);
 

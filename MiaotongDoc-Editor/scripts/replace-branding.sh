@@ -28,16 +28,12 @@ find ${EDITOR_HOME} -name "*.html" -type f -exec sed -i \
     {} \; 2>/dev/null || true
 
 # 替换 JavaScript 中的品牌文本
-find ${EDITOR_WEBAPPS} -name "*.js" -type f -exec sed -i \
-    -e "s/OnlyOffice Document Editor/MiaotongDoc Editor/g" \
-    -e "s/ONLYOFFICE/MiaotongDoc/g" \
-    -e "s/OnlyOffice/MiaotongDoc/g" \
-    {} \; 2>/dev/null || true
+# 已禁用: replace-onlyoffice.sh 已负责 JS 品牌替换，此处重复执行会破坏压缩的 JS 文件
+echo "[跳过] JS 品牌替换（由 replace-onlyoffice.sh 处理）"
 
-# 替换 CSS 中的品牌引用
-find ${EDITOR_WEBAPPS} -name "*.css" -type f -exec sed -i \
-    -e 's/onlyoffice/miaotongdoc/g' \
-    {} \; 2>/dev/null || true
+# 替换 CSS 中的品牌引用（仅替换 URL 和文本，不替换类名）
+# 注意：不能全局替换 onlyoffice，因为 CSS 类名中可能包含这个词
+echo "[跳过] CSS 品牌替换（避免破坏编辑器布局）"
 
 # 替换标题
 find ${EDITOR_HOME} -name "*.html" -type f -exec sed -i \

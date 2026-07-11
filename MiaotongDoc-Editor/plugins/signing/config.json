@@ -1,6 +1,3 @@
-# MiaotongDoc 签署插件
-# 在文档编辑器中嵌入签署按钮
-
 {
     "name": "miaotongdoc-signing",
     "guid": "asc.miaotongdoc.signing",

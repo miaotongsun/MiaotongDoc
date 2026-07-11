@@ -783,3 +783,21 @@ body.theme-type-dark .ps__rail-y.ps--clicking .ps__thumb-y {
 	background-color: #888;
 	border-color: #888;
 }
+
+/* MiaotongDoc: 隐藏 AI 插件聊天界面的语音输入按钮 */
+#input_voice_button {
+    display: none !important;
+}
+
+/* MiaotongDoc: 隐藏 AI 插件聊天界面的语音输入按钮 - 加强版 */
+#input_voice_button,
+div[id="input_voice_button"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
