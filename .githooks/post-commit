@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# post-commit hook: append the just-completed commit's diff to dev-log/YYYY-MM-DD.md
+#
+# Invoked by git AFTER a successful commit. Reads HEAD (the new commit),
+# captures its diff + stats, writes a single entry to today's dev-log.
+#
+# Skipped for:
+#   - merge commits (no useful per-file diff)
+#   - commits with zero file changes (empty / format-only commits)
+#
+# Bypass:
+#   git commit --no-verify    # skips this AND commit-msg
+#   SKIP_POST_COMMIT_LOG=1 git commit ...
+#
+# Symlinked via: git config core.hooksPath .githooks
+
+set -uo pipefail
+
+[ "${SKIP_POST_COMMIT_LOG:-0}" = "1" ] && exit 0
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# .githooks/ is one level deep; project root is one level up.
+# (.claude/hooks/ is two levels deep and uses ../.., but here ../. is correct)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOG_DIR="$PROJECT_ROOT/dev-log"
+mkdir -p "$LOG_DIR" || { echo "post-commit: cannot create $LOG_DIR" >&2; exit 1; }
+
+# --- Detect commit type ---
+COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
+[ -z "$COMMIT_SHA" ] && exit 0
+SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo "$COMMIT_SHA")"
+
+PARENTS="$(git rev-list --parents -n 1 HEAD 2>/dev/null || echo "")"
+PARENT_COUNT="$(echo "$PARENTS" | wc -w | tr -d ' ')"
+# Parent count includes HEAD itself, so subtract 1
+PARENT_COUNT=$((PARENT_COUNT - 1))
+
+# Skip merge commits (typically 2+ parents) and octopus merges (3+ parents)
+if [ "$PARENT_COUNT" -gt 1 ]; then
+  exit 0
+fi
+
+# Get full commit message (subject + body)
+SUBJECT="$(git log -1 --pretty=%s HEAD 2>/dev/null || echo "")"
+BODY="$(git log -1 --pretty=%b HEAD 2>/dev/null || true)"
+
+# Get shortstat: e.g. " 2 files changed, 12 insertions(+), 3 deletions(-)"
+SHORTSTAT="$(git show --shortstat --format= HEAD 2>/dev/null | tail -1)"
+[ -z "$SHORTSTAT" ] && exit 0
+
+# If no files changed (empty commit like --allow-empty), skip
+if echo "$SHORTSTAT" | grep -qE "0 files changed"; then
+  exit 0
+fi
+
+# Get list of changed files
+FILE_LIST="$(git show --stat --format= HEAD 2>/dev/null \
+  | sed -n '/^$/,$p' \
+  | sed '1d;$d' \
+  | grep -E '^\s|^\|' \
+  | head -30)"
+if [ "$(echo "$FILE_LIST" | wc -l | tr -d ' ')" -gt 30 ]; then
+  FILE_LIST="${FILE_LIST}
+... (more files truncated; full list in \`git show --stat ${SHORT_SHA}\`)"
+fi
+
+# Get the diff itself, truncated
+DIFF="$(git show --no-color --format= HEAD 2>/dev/null \
+  | awk '/^diff --git/{flag=1} flag')"
+if [ "${#DIFF}" -gt 2500 ]; then
+  DIFF="${DIFF:0:2500}
+... (truncated; full diff in \`git show ${SHORT_SHA}\`) ..."
+fi
+
+TS="$(date '+%H:%M:%S')"
+DATE="$(date '+%Y-%m-%d')"
+LOG_FILE="$LOG_DIR/$DATE.md"
+
+# Create file with header if first entry today
+if [ ! -f "$LOG_FILE" ]; then
+  {
+    echo "# $DATE 开发日志"
+    echo
+    echo "> 自动记录 · 由 .githooks/post-commit 生成"
+    echo
+  } > "$LOG_FILE"
+fi
+
+# Build entry
+{
+  echo "## $TS · commit \`${SHORT_SHA}\` · ${SUBJECT}"
+  echo
+  echo "_${SHORTSTAT}_"
+  if [ -n "$BODY" ]; then
+    echo
+    echo "**Commit message:**"
+    echo
+    echo "$BODY" | sed 's/^/  /'
+  fi
+  if [ -n "$FILE_LIST" ]; then
+    echo
+    echo "**Changed files:**"
+    echo
+    echo '```'
+    echo "$FILE_LIST"
+    echo '```'
+  fi
+  if [ -n "$DIFF" ]; then
+    echo
+    echo '````diff'
+    echo "$DIFF"
+    echo '````'
+  fi
+  echo
+} >> "$LOG_FILE"
+
+exit 0

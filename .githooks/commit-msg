@@ -1,33 +1,42 @@
 #!/usr/bin/env bash
-# Git commit-msg hook: enforce Conventional Commits.
-# Symlinked to .git/hooks/commit-msg by `git config core.hooksPath .githooks`.
+# Git commit-msg hook: enforce Conventional Commits quality.
+#
+# Layered checks:
+#   1. Format:      <type>(<scope>)?: <subject>
+#   2. Length:      subject 4-100 chars (after stripping type/scope)
+#   3. Specificity: forbid vague "4项" / "修复bug" / multi-item "fix: A+B"
+#
+# Bypass options (when you REALLY need to commit something non-conforming):
+#   git commit --no-verify                  # skip this hook entirely
+#   MIAOTONG_STRICT=0 git commit ...        # skip quality checks (1+2 still enforced)
+#
+# Symlinked via: git config core.hooksPath .githooks
 
-set -euo pipefail
+set -uo pipefail
 
 MSG_FILE="${1:-}"
 [ -z "$MSG_FILE" ] && exit 0
 [ -f "$MSG_FILE" ] || exit 0
 
-FIRST_LINE="$(head -1 "$MSG_FILE")"
+FIRST_LINE="$(head -1 "$MSG_FILE" | tr -d '\r')"
 [ -z "$FIRST_LINE" ] && exit 0
 
+# --- Whitelist: these never get checked ---
 case "$FIRST_LINE" in
   "Merge "*) exit 0 ;;
   "Revert "*) exit 0 ;;
   init|"初始化"*|"initial commit") exit 0 ;;
-  WIP) exit 0 ;;
+  WIP|wip) exit 0 ;;
 esac
 
+# --- Layer 1: format check ---
 PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_.-]+\))?!?: .{1,}'
-if echo "$FIRST_LINE" | grep -qE "$PATTERN"; then
-  exit 0
-fi
-
-if grep -qE '^BREAKING[ -]CHANGE:' "$MSG_FILE"; then
-  exit 0
-fi
-
-cat >&2 <<EOF
+if ! echo "$FIRST_LINE" | grep -qE "$PATTERN"; then
+  # Allow if commit has a BREAKING CHANGE footer
+  if grep -qE '^BREAKING[ -]CHANGE:' "$MSG_FILE"; then
+    exit 0
+  fi
+  cat >&2 <<EOF
 ❌ commit message 不符合 Conventional Commits 规范
 
    当前:  $FIRST_LINE
@@ -42,6 +51,109 @@ cat >&2 <<EOF
    scope 可选，但建议加上以便自动分类
 
    例外（不检查）: Merge / Revert / init / WIP / 含 BREAKING CHANGE 的提交
+   跳过检查:      git commit --no-verify
 
 EOF
-exit 1
+  exit 1
+fi
+
+# --- Layer 2: subject length (4-100 chars after stripping type/scope) ---
+SUBJECT="$(echo "$FIRST_LINE" | sed -E 's/^[a-z]+(\([^)]+\))?!?: //')"
+SUBJ_LEN="${#SUBJECT}"
+if [ "$SUBJ_LEN" -lt 4 ] || [ "$SUBJ_LEN" -gt 100 ]; then
+  cat >&2 <<EOF
+❌ commit subject 长度不合理 ($SUBJ_LEN 字符，需要 4-100)
+
+   当前:  $FIRST_LINE
+   subject:  "$SUBJECT"
+
+EOF
+  exit 1
+fi
+
+# --- Quality checks (skip if MIAOTONG_STRICT=0) ---
+if [ "${MIAOTONG_STRICT:-1}" = "0" ]; then
+  exit 0
+fi
+
+# Q1: forbid connectors that suggest multiple unrelated changes
+# Allow "/" when it's a path-style like "feat(api): /users 接口" — only flag
+# when "/" appears mid-sentence next to other words on both sides.
+# Allow "+" only when clearly a compound noun (rare in subjects).
+# Conservative: only block clear multi-item patterns.
+if echo "$SUBJECT" | grep -qE "、|，|;|；| and | 与 | 以及 " ; then
+  cat >&2 <<EOF
+❌ commit 描述看起来包含多项改动
+
+   当前:  $FIRST_LINE
+
+   一个 commit = 一件事。请拆成多个 commit:
+   - 如果是不同文件的不同问题，分别 git add 后分别 commit
+   - 例: 把 "fix: 拖拽、click" 拆成:
+         git add src/drag.ts && git commit -m "fix: 拖拽X"
+         git add src/click.ts && git commit -m "fix: click Y"
+
+   跳过质量检查:  MIAOTONG_STRICT=0 git commit ...
+
+EOF
+  exit 1
+fi
+
+# Q2: forbid vague quantifiers like "4项" "6项" "多项"
+if echo "$SUBJECT" | grep -qE "[0-9]+项|[0-9]+个|多项|若干|各种|几个"; then
+  cat >&2 <<EOF
+❌ commit 描述太模糊 ("X 项" / "X 个")
+
+   当前:  $FIRST_LINE
+
+   请具体说明改了什么:
+   ❌ fix: UI优化4项
+   ✅ fix(frontend): 文件夹图标颜色随主题切换
+   ✅ fix(frontend): 拖拽时禁止文本选中
+   ✅ fix(frontend): 折叠按钮加大到 16px
+   ✅ fix(frontend): 拖拽手柄支持键盘操作
+
+   跳过质量检查:  MIAOTONG_STRICT=0 git commit ...
+
+EOF
+  exit 1
+fi
+
+# Q3: forbid completely generic fix descriptions
+# Subject should be at least 6 chars after "fix: " to avoid empty descriptions
+if [ "$SUBJ_LEN" -lt 6 ]; then
+  cat >&2 <<EOF
+❌ fix 描述太短（subject 仅 $SUBJ_LEN 字符）
+
+   当前:  $FIRST_LINE
+
+   请描述具体的问题和解决方法:
+   ❌ fix: 修复bug
+   ❌ fix: ok
+   ❌ fix: 修
+   ✅ fix(backend): 默认模型保存后被重置
+   ✅ fix(frontend): 拖拽后误触发 click
+
+   跳过质量检查:  MIAOTONG_STRICT=0 git commit ...
+
+EOF
+  exit 1
+fi
+
+# Common empty-description patterns in Chinese / English
+if echo "$SUBJECT" | grep -qiE "^(修复|修|fix|bug|fix bug|fix bug|bug fix|修复bug|修复问题)$"; then
+  cat >&2 <<EOF
+❌ fix 必须描述具体问题
+
+   ❌ fix: 修复bug
+   ❌ fix: 修复问题
+   ✅ fix(backend): 默认模型保存后被重置
+   ✅ fix(frontend): 拖拽后误触发 click
+
+   跳过质量检查:  MIAOTONG_STRICT=0 git commit ...
+
+EOF
+  exit 1
+fi
+
+exit 0
