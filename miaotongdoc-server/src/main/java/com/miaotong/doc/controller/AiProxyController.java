@@ -19,14 +19,16 @@ public class AiProxyController {
         return aiProxyService.proxy(body);
     }
 
-    @GetMapping("/models")
-    public Object getModels() {
-        return aiProxyService.getModels();
+    /**
+     * 刷新模型列表 - AI 插件刷新按钮调用
+     */
+    @PostMapping("/refresh-models")
+    public Object refreshModels() {
+        return aiProxyService.refreshModels();
     }
 
     /**
-     * 返回完整 AI 配置（供插件初始化使用）
-     * 包含 proxy、provider URL/key、可用模型列表
+     * 返回完整 AI 配置（供插件初始化使用，包含 proxy、providers、models）
      */
     @GetMapping("/config")
     public Object getConfig() {
@@ -34,7 +36,7 @@ public class AiProxyController {
     }
 
     /**
-     * 获取当前 AI 配置（管理后台用）
+     * 获取当前 AI 配置（管理后台展示用）
      */
     @GetMapping("/settings")
     public Map<String, Object> getSettings() {
@@ -42,7 +44,7 @@ public class AiProxyController {
     }
 
     /**
-     * 保存 AI 配置（管理后台用）
+     * 保存 AI 配置到文件（管理后台调用）
      */
     @PutMapping("/settings")
     public ResponseEntity<Map<String, String>> saveSettings(@RequestBody Map<String, Object> body) {

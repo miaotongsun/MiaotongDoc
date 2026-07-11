@@ -4,6 +4,9 @@ import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    sourcemap: true,
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
@@ -21,6 +24,10 @@ export default defineConfig({
         ws: true
       },
       '/ws/notifications': {
+        target: 'ws://localhost:9004',
+        ws: true
+      },
+      '/ws/ai': {
         target: 'ws://localhost:9004',
         ws: true
       },

@@ -88,7 +88,9 @@ function renderNotificationContent(notification: NotificationItem): string {
     case 'MENTION':
       return notification.content
         ? `${userSpan} 在评论 ${docSpan} 时@您: <span class="notify-quote">"${escapeHtml(notification.content.length > 30 ? notification.content.slice(0, 30) + '...' : notification.content)}"</span>`
-        : `${userSpan} 在 ${docSpan} 中提到了您`
+        : `${userSpan} 在评论 ${docSpan} 时提到了您`
+    case 'DOC_MENTION':
+      return `${userSpan} 在 ${docSpan} 中@了您`
     case 'VERSION':
       return `${userSpan} 为 ${docSpan} <span class="notify-action">保存了新版本</span>`
     default:
