@@ -1,0 +1,6 @@
+{
+  "targetUrl" : "https://api.minimaxi.com/v1",
+  "apiKey" : "sk-cp-FndnVJYXWTjsZKtx2d4u5YX2QxgoH3KT9KlevHDjKaWyr3nUuuGAqrnIuM2mPxGY8YdcISojmRKgzF5cteGpcM-LbxoT2fVrybTzjfiIA9EEUHwBxAow-R0",
+  "defaultModel" : "MiniMax-M3",
+  "timeout" : 600
+}
