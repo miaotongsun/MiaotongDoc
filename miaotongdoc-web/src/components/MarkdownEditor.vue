@@ -29,55 +29,108 @@
         <el-tooltip content="行内代码 Ctrl+E" :show-after="400"><button class="tb" :class="{on:editor.isActive('code')}" @click="toggleInlineCode"><code class="tb-code-icon">&lt;/&gt;</code></button></el-tooltip>
         <el-tooltip content="下标" :show-after="400"><button class="tb" :class="{on:editor.isActive('subscript')}" @click="editor.chain().focus().toggleSubscript().run()"><span style="font-size:11px">X₂</span></button></el-tooltip>
         <el-tooltip content="上标" :show-after="400"><button class="tb" :class="{on:editor.isActive('superscript')}" @click="editor.chain().focus().toggleSuperscript().run()"><span style="font-size:11px">X²</span></button></el-tooltip>
-        <!-- ===== 7/14 关键：字体/高亮颜色面板 — el-popover 不再嵌套 el-tooltip ===== -->
-        <!-- 7/19 关键：拆成两个独立按钮：字体颜色 A + 高亮条 hl-bar。各自持久化颜色并染色按钮。 -->
-        <el-popover trigger="click" :width="240" placement="bottom" popper-class="db-color-popover">
-          <template #reference>
-            <button class="tb db-color-btn db-color-text-btn" :class="{ on: currentTextColor !== '#1f2937' }" :title="`字体颜色（当前记忆色：${currentTextColor}）`">
-              <span class="db-color-icon-wrap">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg" :style="{ color: currentTextColor === '#1f2937' ? undefined : currentTextColor }">
-                  <path d="m16.439 15 3.14 7.391a1 1 0 1 0 1.842-.782L13.38 2.692c-.518-1.218-2.244-1.218-2.761 0L2.58 21.609a1 1 0 1 0 1.84.782L7.563 15h8.877Zm-.85-2H8.412L12 4.557 15.59 13Z" fill="currentColor"></path>
-                </svg>
-              </span>
-            </button>
-          </template>
-          <div class="db-color-panel">
-            <div class="db-color-section">
-              <div class="db-color-section-hdr">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:middle"><path d="m16.439 15 3.14 7.391a1 1 0 1 0 1.842-.782L13.38 2.692c-.518-1.218-2.244-1.218-2.761 0L2.58 21.609a1 1 0 1 0 1.84.782L7.563 15h8.877Zm-.85-2H8.412L12 4.557 15.59 13Z" fill="currentColor"></path></svg>
-                <span>字体颜色</span>
+        <!-- 颜色按钮（合一）：单击 = 应用最近字体色 + 最近高亮色；右侧 ▾ = 打开色板 -->
+        <!-- 按钮图标：A 字（用最近字体色着色）+ 下方色条（用最近高亮色填色） -->
+        <!-- hover 行为：鼠标进入 .db-color-split 自动弹出，离开后 250ms 缓冲收回 -->
+        <div
+          class="db-color-split"
+          ref="colorSplitRef"
+          @mouseenter="onColorAreaEnter"
+          @mouseleave="onColorAreaLeave">
+          <el-popover
+            trigger="manual"
+            v-model:visible="colorPanelOpen"
+            :width="280"
+            placement="bottom"
+            popper-class="db-color-popover"
+            :show-arrow="false"
+            @after-enter="capturePopoverEl">
+            <template #reference>
+              <button
+                class="tb db-color-btn db-color-main"
+                :class="{ on: hasRecentText || hasRecentHl }"
+                :title="`颜色（点击应用到选区 · 字体 ${effectiveTextColor} · 高亮 ${effectiveHlColor}）`"
+                @mousedown.prevent
+                @click.stop="applyRecentToSelection">
+                <span class="db-color-icon-wrap">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg" :style="{ color: hasRecentText ? effectiveTextColor : undefined }">
+                    <path d="m16.439 15 3.14 7.391a1 1 0 1 0 1.842-.782L13.38 2.692c-.518-1.218-2.244-1.218-2.761 0L2.58 21.609a1 1 0 1 0 1.84.782L7.563 15h8.877Zm-.85-2H8.412L12 4.557 15.59 13Z" fill="currentColor"></path>
+                  </svg>
+                  <span class="db-color-bar" :style="{ background: hasRecentHl ? effectiveHlColor : undefined }"></span>
+                </span>
+              </button>
+            </template>
+            <div ref="popoverPanelRef" class="db-color-panel" @mousedown.stop>
+              <div class="db-color-section">
+                <div class="db-color-section-hdr"><span>最近用过</span></div>
+                <div class="db-color-grid" v-if="recentColors.length">
+                  <button
+                    v-for="r in recentColors"
+                    :key="'rc-' + r.kind + '-' + r.color"
+                    class="db-color-swatch"
+                    :class="{ 'is-active': isRecentActive(r) }"
+                    :style="{ background: r.color }"
+                    :title="`${r.kind === 'text' ? '字体' : '高亮'} · ${r.color}`"
+                    @mousedown.prevent
+                    @click="applyAndRemember(r.kind, r.color)" />
+                </div>
+                <div v-else class="db-color-empty">尚无使用记录</div>
               </div>
-              <div class="db-color-grid">
-                <button v-for="c in textColors" :key="'tc-'+c.v" class="db-color-swatch" :class="{ 'is-active': currentTextColor === c.v }" :style="{background:c.v}" :title="c.l" @mousedown.prevent @click="setTextColor(c.v)" />
-                <button class="db-color-swatch db-color-clear" :class="{ 'is-active': currentTextColor === '#1f2937' }" @mousedown.prevent @click="unsetTextColor" title="清除">/</button>
+              <div class="db-color-divider" />
+              <div class="db-color-section">
+                <div class="db-color-section-hdr">
+                  <span>字体颜色</span>
+                  <label class="db-color-custom" :title="`自定义（当前 ${customTextColor}）`">
+                    <input type="color" :value="customTextColor" @input="onCustomColorInput('text', $event)" />
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                  </label>
+                </div>
+                <div class="db-color-grid">
+                  <button
+                    v-for="c in textColors"
+                    :key="'tc-' + c.v"
+                    class="db-color-swatch"
+                    :class="{ 'is-active': currentTextColor === c.v }"
+                    :style="{ background: c.v }"
+                    :title="c.l"
+                    @mousedown.prevent
+                    @click="applyAndRemember('text', c.v)" />
+                  <button class="db-color-swatch db-color-clear" :class="{ 'is-active': currentTextColor === FALLBACK_TEXT }" @mousedown.prevent @click="clearColor('text')" title="清除字体色">/</button>
+                </div>
+              </div>
+              <div class="db-color-divider" />
+              <div class="db-color-section">
+                <div class="db-color-section-hdr">
+                  <span>高亮颜色</span>
+                  <label class="db-color-custom" :title="`自定义（当前 ${customHlColor}）`">
+                    <input type="color" :value="customHlColor" @input="onCustomColorInput('highlight', $event)" />
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                  </label>
+                </div>
+                <div class="db-color-grid">
+                  <button
+                    v-for="c in hlColors"
+                    :key="'hl-' + c.v"
+                    class="db-color-swatch"
+                    :class="{ 'is-active': currentHighlightColor === c.v }"
+                    :style="{ background: c.v }"
+                    :title="c.l"
+                    @mousedown.prevent
+                    @click="applyAndRemember('highlight', c.v)" />
+                  <button class="db-color-swatch db-color-clear" :class="{ 'is-active': currentHighlightColor === FALLBACK_HL }" @mousedown.prevent @click="clearColor('highlight')" title="清除高亮">/</button>
+                </div>
               </div>
             </div>
-          </div>
-        </el-popover>
-        <el-popover trigger="click" :width="240" placement="bottom" popper-class="db-color-popover">
-          <template #reference>
-            <button class="tb db-color-btn db-color-hl-btn" :class="{ on: currentHighlightColor !== '#fef08a' }" :title="`高亮颜色（当前记忆色：${currentHighlightColor}）`">
-              <span class="db-color-icon-wrap">
-                <span class="db-color-bar" :style="{ background: currentHighlightColor }"></span>
-              </span>
-            </button>
-          </template>
-          <div class="db-color-panel">
-            <div class="db-color-section">
-              <div class="db-color-section-hdr">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-                  <path d="M6 14l-3 6 6-3 9-9-3-3-9 9zm9-9l3 3 2-2-3-3-2 2z" stroke="currentColor" stroke-width="0.6" fill="currentColor"/>
-                  <rect x="3" y="20" width="18" height="2" rx="1" fill="currentColor"/>
-                </svg>
-                <span>高亮颜色</span>
-              </div>
-              <div class="db-color-grid">
-                <button v-for="c in hlColors" :key="'hl-'+c.v" class="db-color-swatch" :class="{ 'is-active': currentHighlightColor === c.v }" :style="{background:c.v}" :title="c.l" @mousedown.prevent @click="setHighlightColor(c.v)" />
-                <button class="db-color-swatch db-color-clear" :class="{ 'is-active': currentHighlightColor === '#fef08a' }" @mousedown.prevent @click="clearHighlight" title="清除">/</button>
-              </div>
-            </div>
-          </div>
-        </el-popover>
+          </el-popover>
+          <button
+            class="tb db-color-btn db-color-arrow"
+            :class="{ on: colorPanelOpen }"
+            title="选择颜色"
+            @mousedown.prevent
+            @click.stop="onArrowClick">
+            <svg viewBox="0 0 24 24" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
         <span class="tb-sep" />
         <el-tooltip content="无序列表" :show-after="400"><button class="tb" :class="{on:editor.isActive('bulletList')}" @click="editor.chain().focus().toggleBulletList().run()"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="6" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="5" cy="18" r="1.5"/><path d="M10 6h11M10 12h11M10 18h11" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button></el-tooltip>
         <el-tooltip content="有序列表" :show-after="400"><button class="tb" :class="{on:editor.isActive('orderedList')}" @click="editor.chain().focus().toggleOrderedList().run()"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 6h2M3 12h2M3 18h2" stroke="currentColor" stroke-width="2" fill="none"/><path d="M9 6h12M9 12h12M9 18h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button></el-tooltip>
@@ -883,7 +936,43 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
-import CodeBlockBase from '@tiptap/extension-code-block'
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import { common, createLowlight } from 'lowlight'
+import { CODE_LANGS, searchLangs } from '@/utils/codeblock-lang'
+// 7/12 增强：lowlight 3.x 的 common 仅 ~37 种核心语言；按需增量注册其余小众语言
+// 注：highlight.js 11.x 不含 abap/apex/cobol/htmlbars/solidity/toml/vbnet，这些语言选入菜单会回退纯文本
+import ada from 'highlight.js/lib/languages/ada'
+import apache from 'highlight.js/lib/languages/apache'
+import x86asm from 'highlight.js/lib/languages/x86asm'
+import cmake from 'highlight.js/lib/languages/cmake'
+import coffeescript from 'highlight.js/lib/languages/coffeescript'
+import dLang from 'highlight.js/lib/languages/d'
+import delphi from 'highlight.js/lib/languages/delphi'
+import diffLang from 'highlight.js/lib/languages/diff'
+import django from 'highlight.js/lib/languages/django'
+import erlang from 'highlight.js/lib/languages/erlang'
+import fortran from 'highlight.js/lib/languages/fortran'
+import gherkin from 'highlight.js/lib/languages/gherkin'
+import graphql from 'highlight.js/lib/languages/graphql'
+import groovy from 'highlight.js/lib/languages/groovy'
+import http from 'highlight.js/lib/languages/http'
+import julia from 'highlight.js/lib/languages/julia'
+import lisp from 'highlight.js/lib/languages/lisp'
+import matlab from 'highlight.js/lib/languages/matlab'
+import nginx from 'highlight.js/lib/languages/nginx'
+import objectivec from 'highlight.js/lib/languages/objectivec'
+import glsl from 'highlight.js/lib/languages/glsl'
+import powershell from 'highlight.js/lib/languages/powershell'
+import prolog from 'highlight.js/lib/languages/prolog'
+import properties from 'highlight.js/lib/languages/properties'
+import protobuf from 'highlight.js/lib/languages/protobuf'
+import rLang from 'highlight.js/lib/languages/r'
+import sas from 'highlight.js/lib/languages/sas'
+import scheme from 'highlight.js/lib/languages/scheme'
+import thrift from 'highlight.js/lib/languages/thrift'
+import vbscript from 'highlight.js/lib/languages/vbscript'
+import vhdl from 'highlight.js/lib/languages/vhdl'
+import verilog from 'highlight.js/lib/languages/verilog'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Table } from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
@@ -900,12 +989,29 @@ import CharacterCount from '@tiptap/extension-character-count'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
 import Mention from '@tiptap/extension-mention'
-import { userApi } from '@/api/user'
 import { marked } from 'marked'
 import TurndownService from 'turndown'
 import { documentAiApi } from '@/api/documentAi'
 import { useAiChat, sanitizeAiMarkdown } from '@/composables/useAiChat'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import { userApi } from '@/api/user'
+
+// 7/12 关键：低光实例 + 注册小众语言（必须在所有 import 之后）
+const lowlight = createLowlight(common)
+lowlight.register('apache', apache)
+lowlight.register('x86asm', x86asm); lowlight.register('cmake', cmake)
+lowlight.register('coffeescript', coffeescript); lowlight.register('d', dLang)
+lowlight.register('delphi', delphi); lowlight.register('diff', diffLang); lowlight.register('django', django)
+lowlight.register('erlang', erlang); lowlight.register('fortran', fortran); lowlight.register('gherkin', gherkin)
+lowlight.register('graphql', graphql); lowlight.register('groovy', groovy)
+lowlight.register('http', http); lowlight.register('julia', julia); lowlight.register('lisp', lisp)
+lowlight.register('matlab', matlab); lowlight.register('nginx', nginx); lowlight.register('objectivec', objectivec)
+lowlight.register('glsl', glsl); lowlight.register('powershell', powershell); lowlight.register('prolog', prolog)
+lowlight.register('properties', properties); lowlight.register('protobuf', protobuf); lowlight.register('r', rLang)
+lowlight.register('sas', sas); lowlight.register('scheme', scheme)
+lowlight.register('thrift', thrift); lowlight.register('vbscript', vbscript)
+lowlight.register('vhdl', vhdl); lowlight.register('verilog', verilog)
+lowlight.register('ada', ada)
 
 /**
  * 7/10 关键：图片可调整大小扩展
@@ -949,7 +1055,7 @@ const ImageResizeExt = Image.extend({
  * - 内容区：等宽字体 + 行号（可选）+ 滚动
  * - 通过 NodeView 实现，运行时改 language 立即更新
  */
-const CodeBlockDouBao = CodeBlockBase.extend({
+const CodeBlockDouBao = CodeBlockLowlight.extend({
   addAttributes() {
     // 7/19 关键：保留 parent（默认有 language） + 自定义 wrap/theme/caption
     // 之前没声明自定义 attrs → safeUpdate({ wrap: true }) 静默失败，按钮"看起来没反应"
@@ -958,11 +1064,6 @@ const CodeBlockDouBao = CodeBlockBase.extend({
       wrap: {
         default: false,
         parseHTML: () => false,
-        renderHTML: () => ({}),
-      },
-      theme: {
-        default: 'dark',
-        parseHTML: (el: HTMLElement) => el.getAttribute('data-theme') || 'dark',
         renderHTML: () => ({}),
       },
       caption: {
@@ -1010,8 +1111,60 @@ const CodeBlockDouBao = CodeBlockBase.extend({
       const dom = document.createElement('div')
       dom.className = 'db-code-block'
       dom.setAttribute('data-wrap', node.attrs.wrap ? '1' : '0')
-      dom.setAttribute('data-theme', node.attrs.theme || 'dark')
       dom.setAttribute('data-type', 'code-block')
+      // 7/12 重构：去掉了主题切换 — 只保留浅色（VSCode Light+）。所有 token 颜色
+      // 直接 inline 写死在 db-code-block 上，避免 NodeView 内的 hljs-* 子节点取不到变量。
+      const TOKEN_VARS: Record<string, string> = {
+        '--hljs-comment':     '#008000',
+        '--hljs-keyword':     '#0000ff',
+        '--hljs-string':      '#a31515',
+        '--hljs-number':      '#098658',
+        '--hljs-function':    '#795e26',
+        '--hljs-title':       '#795e26',
+        '--hljs-name':        '#795e26',
+        '--hljs-variable':    '#001080',
+        '--hljs-template-variable': '#001080',
+        '--hljs-params':      '#001080',
+        '--hljs-type':        '#267f99',
+        '--hljs-class':       '#267f99',
+        '--hljs-built_in':    '#267f99',
+        '--hljs-tag':         '#800000',
+        '--hljs-attr':        '#ff0000',
+        '--hljs-attribute':   '#ff0000',
+        '--hljs-meta':        '#af00db',
+        '--hljs-meta-keyword':'#af00db',
+        '--hljs-meta-string': '#a31515',
+        '--hljs-literal':     '#0000ff',
+        '--hljs-symbol':      '#098658',
+        '--hljs-bullet':      '#098658',
+        '--hljs-regexp':      '#811f3f',
+        '--hljs-emphasis':    '#1f1f1f',
+        '--hljs-strong':      '#1f1f1f',
+        '--hljs-deletion':    '#a31515',
+        '--hljs-addition':    '#098658',
+        '--hljs-doctag':      '#608b4e',
+        '--hljs-section':     '#1f1f1f',
+        '--hljs-built_in-name':'#267f99',
+        '--hljs-link':        '#0000ff',
+        '--hljs-template-tag':'#0000ff',
+        '--hljs-bg':          '#ffffff',
+        '--hljs-fg':          '#1f1f1f',
+        '--hljs-header-bg':   '#f3f3f3',
+        '--hljs-border':      '#e5e7eb',
+        '--hljs-ui-fg':       '#616161',
+        '--hljs-ui-fg-hover': '#1f1f1f',
+        '--hljs-ui-fg-strong':'#1f1f1f',
+        '--hljs-ui-fg-faint': '#9ca3af',
+        '--hljs-ui-hover-bg': 'rgba(0, 0, 0, 0.08)',
+        '--hljs-ui-focus-bg': 'rgba(0, 0, 255, 0.10)',
+        '--hljs-ui-focus-ring':'rgba(0, 0, 255, 0.30)',
+      }
+      function applyStaticVars() {
+        for (const [k, v] of Object.entries(TOKEN_VARS)) {
+          dom.style.setProperty(k, v)
+        }
+      }
+      applyStaticVars()
       // ===== 头部（左 caption 区 + 右 tools 区） =====
       const header = document.createElement('div')
       header.className = 'db-cb-header'
@@ -1136,7 +1289,7 @@ const CodeBlockDouBao = CodeBlockBase.extend({
       )
       const renderLangBtn = () => {
         const v = node.attrs.language || ''
-        const found = CODE_LANG_LIST.find(l => l.value === v)
+        const found = (CODE_LANGS as typeof CODE_LANGS).find(l => l.value === v)
         const label = found ? found.label : (v || 'Plain Text')
         langBtn.innerHTML = `<span class="db-cb-lang-btn-text">${label}</span>${svgWrap(`<path fill-rule="evenodd" clip-rule="evenodd" d="M7 9.204l4.744-4.744a.292.292 0 01.412 0l.413.413a.292.292 0 010 .412l-5.156 5.156a.583.583 0 01-.825 0L1.432 5.285a.292.292 0 010-.412l.412-.413a.292.292 0 01.413 0L7 9.204z" fill="#8F959E"/>`)}`
       }
@@ -1144,50 +1297,89 @@ const CodeBlockDouBao = CodeBlockBase.extend({
       const langMenu = document.createElement('div')
       langMenu.className = 'db-cb-lang-menu'
       langMenu.style.display = 'none'
-      CODE_LANG_LIST.forEach(l => {
-        const item = document.createElement('div')
-        item.className = 'db-cb-lang-item'
-        item.textContent = l.label
-        item.style.pointerEvents = 'auto'
-        // mousedown 时 updateAttributes 触发 ProseMirror 重新渲染，click 在重渲染后丢失
-        item.addEventListener('mousedown', (e) => {
+      langMenu.style.position = 'fixed'
+      langMenu.style.zIndex = '9999'
+      // 7/12 增强：搜索框 + 滚动列表
+      const langSearch = document.createElement('input')
+      langSearch.className = 'db-cb-lang-search'
+      langSearch.type = 'text'
+      langSearch.placeholder = '搜索语言（中英文 / 别名 / .ext）'
+      langSearch.spellcheck = false
+      // 阻止 Tiptap 拦截
+      langSearch.addEventListener('mousedown', (e) => e.stopPropagation())
+      langSearch.addEventListener('keydown', (e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') {
           e.preventDefault()
-          e.stopPropagation()
-          safeUpdate({ language: l.value || null })
-          langMenu.style.display = 'none'
-          renderLangBtn()
-          langMenu.querySelectorAll('.db-cb-lang-item').forEach((el: any) => el.classList.remove('active'))
-          item.classList.add('active')
-        })
-        // 触屏兜底
-        item.addEventListener('click', (e) => {
+          const first = langListEl.querySelector('.db-cb-lang-item') as HTMLElement | null
+          first?.click()
+        } else if (e.key === 'Escape') {
           e.preventDefault()
-          e.stopPropagation()
-          safeUpdate({ language: l.value || null })
           langMenu.style.display = 'none'
-          renderLangBtn()
-          langMenu.querySelectorAll('.db-cb-lang-item').forEach((el: any) => el.classList.remove('active'))
-          item.classList.add('active')
-        })
-        langMenu.appendChild(item)
+        }
+      })
+      const langListEl = document.createElement('div')
+      langListEl.className = 'db-cb-lang-list'
+      langMenu.appendChild(langSearch)
+      langMenu.appendChild(langListEl)
+
+      const renderLangItems = (langs: typeof CODE_LANGS) => {
+        langListEl.innerHTML = ''
+        if (!langs.length) {
+          const empty = document.createElement('div')
+          empty.className = 'db-cb-lang-empty'
+          empty.textContent = '没有匹配的语言'
+          langListEl.appendChild(empty)
+          return
+        }
+        const curLang = node.attrs.language || 'plaintext'
+        for (const l of langs) {
+          const item = document.createElement('button')
+          item.type = 'button'
+          item.className = 'db-cb-lang-item' + (l.value === curLang ? ' active' : '')
+          item.textContent = l.label
+          item.style.pointerEvents = 'auto'
+          item.addEventListener('mousedown', (e) => {
+            e.preventDefault(); e.stopPropagation()
+            safeUpdate({ language: l.value === 'plaintext' ? null : l.value })
+            ;(langMenu as HTMLElement).style.display = 'none'
+            ;(renderLangBtn as any)()
+            // 7/12 增强：CodeBlockLowlight plugin 会在 node 变化时自动重渲染装饰，无需手动调用
+          })
+          item.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation()
+            safeUpdate({ language: l.value === 'plaintext' ? null : l.value })
+            ;(langMenu as HTMLElement).style.display = 'none'
+            ;(renderLangBtn as any)()
+            // CodeBlockLowlight plugin 自动重渲染
+          })
+          langListEl.appendChild(item)
+        }
+      }
+      renderLangItems(CODE_LANGS)
+
+      // 搜索：100ms 防抖
+      let langSearchTimer: any = null
+      langSearch.addEventListener('input', () => {
+        if (langSearchTimer) clearTimeout(langSearchTimer)
+        langSearchTimer = setTimeout(() => renderLangItems(searchLangs(langSearch.value)), 100)
+      })
+
+      // 打开菜单时聚焦搜索框
+      const origLangBtnOnClick = langBtn.onclick
+      langBtn.addEventListener('click', () => {
+        // 下一帧聚焦搜索框
+        setTimeout(() => {
+          if (langMenu.style.display !== 'none') {
+            langSearch.value = ''
+            renderLangItems(CODE_LANGS)
+            langSearch.focus()
+          }
+        }, 0)
       })
       langWrap.appendChild(langBtn)
       langWrap.appendChild(langMenu)
       toolsSection.appendChild(langWrap)
-
-      // ===== 主题切换 =====
-      const moonSvg = svgWrap(`<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor"/>`)
-      const sunSvg = svgWrap(`<circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></g>`)
-      const themeBtn = makeBtn('db-cb-theme-btn', moonSvg, () => {
-        const cur = node.attrs.theme || 'dark'
-        const newTheme = cur === 'dark' ? 'light' : 'dark'
-        safeUpdate({ theme: newTheme })
-        dom.setAttribute('data-theme', newTheme)
-        themeBtn.innerHTML = newTheme === 'dark' ? moonSvg : sunSvg
-        themeBtn.title = newTheme === 'dark' ? '深色主题（点击切浅色）' : '浅色主题（点击切深色）'
-      })
-      themeBtn.title = '深色主题（点击切浅色）'
-      toolsSection.appendChild(themeBtn)
 
       // ===== 自动换行 =====
       const wrapIconSvg = svgWrap(`<path d="M4.583 4.95c0-.202.164-.367.367-.367h.642c.202 0 .366.165.366.367v12.1a.367.367 0 01-.366.367H4.95a.367.367 0 01-.367-.367V4.95zM7.792 6.783c0-.202.164-.366.366-.366h2.056c2.46 0 4.453 1.847 4.453 4.125 0 2.03-1.583 3.717-3.667 4.06v1.444a.513.513 0 01-.829.405l-2.775-2.158a.513.513 0 010-.81l2.775-2.16a.513.513 0 01.829.406v1.497c1.311-.275 2.292-1.372 2.292-2.684 0-1.52-1.314-2.75-2.934-2.75h-2.2a.367.367 0 01-.366-.367v-.642zM16.408 4.583a.367.367 0 00-.366.367v12.1c0 .203.164.367.366.367h.642a.367.367 0 00.367-.367V4.95a.367.367 0 00-.367-.367h-.642z" fill="#646A73"/>`)
@@ -1238,6 +1430,88 @@ const CodeBlockDouBao = CodeBlockBase.extend({
         }
       )
       toolsSection.appendChild(copyBtn)
+
+      // 7/12 增强：AI 注释按钮 — 把当前代码块内容发给大模型，准确替换插入
+      const aiAnnotateIconSvg = svgWrap(`<path d="M12 2l2.4 5.6L20 9l-4.5 4 1.4 6L12 16l-4.9 3 1.4-6L4 9l5.6-1.4L12 2z" fill="#8b5cf6"/>`)
+      const aiAnnotateBtn = makeBtn(
+        'db-cb-ai-btn',
+        `<span class="db-cb-ai-icon">${aiAnnotateIconSvg}</span><span>AI注释</span>`,
+        async () => {
+          // 7/12 增强：用 node.textContent 拿纯代码（不包含装饰 span）
+          const code = node.textContent || ''
+          const lang = node.attrs.language || 'plaintext'
+          if (!code.trim()) { ElMessage.warning('代码块为空'); return }
+          aiAnnotateBtn.disabled = true
+          const restore = aiAnnotateBtn.innerHTML
+          aiAnnotateBtn.innerHTML = '<span style="font-size:11px;color:#8b5cf6">生成中...</span>'
+          try {
+            // 7/12 增强：关键 — 把代码块内容直接拼进 user message，避免依赖后端的 docContent 占位符逻辑
+            // 同步把代码作为 body.content 传给后端（双保险）
+            const langLabel = lang === 'plaintext' ? '代码' : `${lang} 代码`
+            const sysPrompt = `你是代码注释专家。为下面的${langLabel}添加精准的中文行内注释。
+
+严格要求：
+1. 输出只能是被注释过的代码原文
+2. 禁止任何思考、解释、说明、前言、后记
+3. 禁止 Markdown 代码块标记（\`\`\`）
+4. 禁止代码前后任何非代码字符（包括空行/分隔符/标题）
+5. 保持原代码缩进、空行、变量名完全不变
+6. 只在关键逻辑处加 // 注释（用对应语言注释符号）
+7. 注释简短（≤25 字/行）`
+            const userMsg = `下面是待加注释的${langLabel}：
+
+\`\`\`${lang === 'plaintext' ? '' : lang}
+${code}
+\`\`\`
+
+请直接返回带注释的代码（保持 \`\`\` 包裹）。`
+            // 7/12 增强：user message 内嵌代码 + body.content 同步发，最大限度确保大模型看到代码
+            await aiAnnotateChat.sendUserMessage(userMsg, sysPrompt, code)
+            // 从 messages 提取 assistant 最终文本（只取 text 类型 part，跳过 reasoning）
+            const msgs = aiAnnotateChat.messages.value
+            const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+            let annotated = ''
+            if (lastAssistant?.parts) {
+              annotated = lastAssistant.parts
+                .filter((p: any) => p.type === 'text')  // 跳过 reasoning
+                .map((p: any) => p.text || '')
+                .join('')
+            }
+            // 清洗常见 Markdown 包裹 + 提取首个代码块
+            annotated = cleanAiCodeOutput(annotated)
+            if (annotated.trim()) {
+              // 准确替换插入原代码块中：用 transaction 替换 textContent
+              try {
+                const pos = (typeof getPos === 'function') ? getPos() : null
+                if (pos !== null && editor) {
+                  const tr = editor.state.tr
+                  const curNode = editor.state.doc.nodeAt(pos)
+                  if (curNode && curNode.type.name === 'codeBlock') {
+                    const newNode = curNode.type.create(
+                      { ...curNode.attrs },
+                      editor.schema.text(annotated)
+                    )
+                    tr.replaceWith(pos, pos + curNode.nodeSize, newNode)
+                    editor.view.dispatch(tr)
+                    ElMessage.success('AI 注释已插入代码块')
+                  }
+                }
+              } catch (e: any) {
+                ElMessage.error('替换失败：' + (e?.message || '未知错误'))
+              }
+            } else {
+              ElMessage.warning('AI 未返回有效内容')
+            }
+          } catch (e: any) {
+            ElMessage.error('AI 生成失败：' + (e?.message || '未知错误'))
+          } finally {
+            aiAnnotateBtn.disabled = false
+            aiAnnotateBtn.innerHTML = restore
+          }
+        }
+      )
+      toolsSection.appendChild(aiAnnotateBtn)
+
       // 7/19 关键：header 内部两段式 — caption 在左占满，tools 在右
       header.appendChild(captionSection)
       header.appendChild(toolsSection)
@@ -1267,13 +1541,22 @@ const CodeBlockDouBao = CodeBlockBase.extend({
       document.addEventListener('mousedown', closeLangMenuIfOutside, true)
 
       // ===== 内容区 =====
-      const content = document.createElement('pre')
-      content.className = 'db-cb-pre'
-      content.style.pointerEvents = 'auto'
-      const codeEl = document.createElement('code')
-      if (node.attrs.language) codeEl.className = `language-${node.attrs.language}`
-      content.appendChild(codeEl)
-      dom.appendChild(content)
+// 7/12 增强：CodeBlockLowlight 内部 ProseMirror Plugin + DecorationSet 自动给 code 文本
+// 加 <span class="hljs-*"> 装饰。这里只维护 DOM 结构（contentDOM 留给 ProseMirror 管文本），
+// 严禁手动改 innerHTML / appendChild — 会破坏 ProseMirror content 状态。
+const content = document.createElement('pre')
+content.className = 'db-cb-pre'
+content.style.pointerEvents = 'auto'
+const codeEl = document.createElement('code')
+// 7/12 增强：className 上同时标 language-xxx 和 hljs，让低光 plugin 渲染 + CSS 选择器命中
+codeEl.className = node.attrs.language ? `language-${node.attrs.language} hljs` : 'hljs'
+content.appendChild(codeEl)
+dom.appendChild(content)
+
+// 切语言时同步 className（CodeBlockLowlight plugin 会自动重渲染装饰）
+function syncCodeElClass() {
+  codeEl.className = node.attrs.language ? `language-${node.attrs.language} hljs` : 'hljs'
+}
 
 
 
@@ -1312,13 +1595,9 @@ const CodeBlockDouBao = CodeBlockBase.extend({
           if (newNode.type.name !== 'codeBlock') return false
           const newLang = newNode.attrs.language || ''
           if (newLang !== (node.attrs.language || '')) {
-            codeEl.className = newLang ? `language-${newLang}` : ''
-            renderLangBtn()
-          }
-          if ((newNode.attrs.theme || 'dark') !== (node.attrs.theme || 'dark')) {
-            dom.setAttribute('data-theme', newNode.attrs.theme || 'dark')
-            themeBtn.innerHTML = (newNode.attrs.theme || 'dark') === 'dark' ? moonSvg : sunSvg
-            themeBtn.title = (newNode.attrs.theme || 'dark') === 'dark' ? '深色主题（点击切浅色）' : '浅色主题（点击切深色）'
+            syncCodeElClass()
+            // 7/12 增强：CodeBlockLowlight plugin 会监听 transaction 自动重渲染装饰
+            ;(renderLangBtn as any)()
           }
           if (!!newNode.attrs.wrap !== !!node.attrs.wrap) {
             dom.setAttribute('data-wrap', newNode.attrs.wrap ? '1' : '0')
@@ -1363,6 +1642,11 @@ turndownService.addRule('codeBlockCaption', {
     const text = node.querySelector('code')?.textContent || ''
     return `\n\n<!-- codeblock-caption:${caption} -->\n\`\`\`${lang}\n${text}\n\`\`\`\n\n`
   },
+})
+// 7/12 增强：lowlight 高亮的 <span class="hljs-*"> 仅是渲染层，导出 .md 时剥掉 span 只保留文本
+turndownService.addRule('hljsStrip', {
+  filter: (node) => node.nodeName === 'SPAN' && (node as HTMLElement).className?.includes?.('hljs-'),
+  replacement: (_content, node) => node.textContent || '',
 })
 
 const props = defineProps<{ docId: number; docKey: string; initialContent?: string; canEdit: boolean; userName: string; userId: number }>()
@@ -1522,6 +1806,9 @@ const slashAiLoading = computed(() => slashAi.status.value === 'submitted' || sl
 const aiGenerate = useAiChat({ docId: computed(() => props.docId), endpoint: 'generate-stream' })
 const aiGenerateLoading = computed(() => aiGenerate.status.value === 'submitted' || aiGenerate.status.value === 'streaming')
 
+// 7/12 增强：代码块 AI 注释独立实例（系统提示引导"加注释"，不解释）
+const aiAnnotateChat = useAiChat({ docId: computed(() => props.docId) })
+
 // 大纲导航
 const showOutline = ref(false)
 interface OutlineItem { level: number; text: string; pos: number }
@@ -1544,60 +1831,62 @@ const previewMarkdown = `# 一级标题 H1
 - 列表项 1
 - 列表项 2`
 
+// 统一颜色按钮：8 色预设 + 持久化记忆色 + 最近用过列表 + 自定义取色器
 const hlColors = [
   { v: '#fef08a', l: '黄' }, { v: '#bbf7d0', l: '绿' }, { v: '#bfdbfe', l: '蓝' },
   { v: '#fbcfe8', l: '粉' }, { v: '#fed7aa', l: '橙' }, { v: '#e9d5ff', l: '紫' },
   { v: '#fecaca', l: '红' }, { v: '#a5f3fc', l: '青' },
 ]
 
-// 7/5 关键：字体颜色（8 种 - 满足色板需求）
 const textColors = [
   { v: '#ef4444', l: '红' }, { v: '#f59e0b', l: '橙' }, { v: '#eab308', l: '黄' },
   { v: '#22c55e', l: '绿' }, { v: '#06b6d4', l: '青' }, { v: '#3b82f6', l: '蓝' },
   { v: '#8b5cf6', l: '紫' }, { v: '#1f2937', l: '黑' },
 ]
-// 7/24 关键：颜色持久化（localStorage）— 用户选过的颜色在会话间保留
+
+// 颜色持久化：记忆色 key 保留以兼容旧用户；新增"最近用过"数组
 const STORAGE_KEY_TEXT = 'miaotong-color-text'
 const STORAGE_KEY_HL = 'miaotong-color-highlight'
+const STORAGE_KEY_RECENT = 'miaotong-color-recent'
+const FALLBACK_TEXT = '#1f2937'
+const FALLBACK_HL = '#fef08a'
+const MAX_RECENT = 8
+
 function loadStoredColor(key: string, fallback: string): string {
   try {
     const v = localStorage.getItem(key)
     return v || fallback
   } catch { return fallback }
 }
-const currentTextColor = ref(loadStoredColor(STORAGE_KEY_TEXT, '#1f2937'))
-const currentHighlightColor = ref(loadStoredColor(STORAGE_KEY_HL, '#fef08a'))
+function loadRecent(): RecentItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_RECENT)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr.slice(0, MAX_RECENT) : []
+  } catch { return [] }
+}
+type RecentItem = { color: string; kind: 'text' | 'highlight'; ts: number }
+const currentTextColor = ref(loadStoredColor(STORAGE_KEY_TEXT, FALLBACK_TEXT))
+const currentHighlightColor = ref(loadStoredColor(STORAGE_KEY_HL, FALLBACK_HL))
+const customTextColor = ref(currentTextColor.value)
+const customHlColor = ref(currentHighlightColor.value)
+const recentColors = ref<RecentItem[]>(loadRecent())
+// 合一颜色按钮的 popover 开关；单击主按钮直接应用最近色，箭头按钮才开色板
+const colorPanelOpen = ref(false)
+// hover 行为：进入 .db-color-split 自动开，离开 250ms 缓冲后关
+const colorSplitRef = ref<HTMLElement | null>(null)
+const popoverPanelRef = ref<HTMLElement | null>(null)
+let colorLeaveTimer: ReturnType<typeof setTimeout> | null = null
 
-// 7/12 关键：代码块语言列表（豆包风格 NodeView 用）
-const CODE_LANG_LIST: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Plain Text' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'jsx', label: 'JSX' },
-  { value: 'tsx', label: 'TSX' },
-  { value: 'html', label: 'HTML' },
-  { value: 'css', label: 'CSS' },
-  { value: 'scss', label: 'SCSS' },
-  { value: 'vue', label: 'Vue' },
-  { value: 'json', label: 'JSON' },
-  { value: 'xml', label: 'XML' },
-  { value: 'yaml', label: 'YAML' },
-  { value: 'python', label: 'Python' },
-  { value: 'java', label: 'Java' },
-  { value: 'kotlin', label: 'Kotlin' },
-  { value: 'go', label: 'Go' },
-  { value: 'rust', label: 'Rust' },
-  { value: 'cpp', label: 'C++' },
-  { value: 'c', label: 'C' },
-  { value: 'csharp', label: 'C#' },
-  { value: 'php', label: 'PHP' },
-  { value: 'ruby', label: 'Ruby' },
-  { value: 'swift', label: 'Swift' },
-  { value: 'sql', label: 'SQL' },
-  { value: 'shell', label: 'Shell/Bash' },
-  { value: 'dockerfile', label: 'Dockerfile' },
-  { value: 'markdown', label: 'Markdown' },
-]
+// 最近用过的"有效颜色"：从 recentColors 里挑该 kind 最近一次用的；若没有，回退到默认色
+const lastTextRecent = computed<RecentItem | undefined>(() => recentColors.value.find(r => r.kind === 'text'))
+const lastHlRecent = computed<RecentItem | undefined>(() => recentColors.value.find(r => r.kind === 'highlight'))
+const hasRecentText = computed(() => !!lastTextRecent.value && lastTextRecent.value.color !== FALLBACK_TEXT)
+const hasRecentHl = computed(() => !!lastHlRecent.value && lastHlRecent.value.color !== FALLBACK_HL)
+const effectiveTextColor = computed(() => lastTextRecent.value?.color || currentTextColor.value)
+const effectiveHlColor = computed(() => lastHlRecent.value?.color || currentHighlightColor.value)
+
+// 7/12 关键：代码块语言列表已迁移至 @/utils/codeblock-lang.ts（70 项 + 搜索）
 
 const imageInputRef = ref<HTMLInputElement | null>(null)
 // 7/19 关键：字体/高亮颜色 popover 的 template ref + hide 回调
@@ -1634,8 +1923,8 @@ onMounted(() => {
       Highlight.configure({ multicolor: true }),
       // 7/10 关键：用支持 width/height 的 ImageResizeExt 替换默认 Image
       ImageResizeExt,
-      // 7/12 关键：豆包风格代码块 NodeView
-      CodeBlockDouBao.configure({ defaultLanguage: 'plain' }),
+      // 7/12 关键：豆包风格代码块 NodeView（lowlight 语法高亮）
+      CodeBlockDouBao.configure({ lowlight, defaultLanguage: null }),
       Placeholder.configure({ placeholder: '输入 / 唤出快捷菜单，或直接开始写作...' }),
       Table.configure({ resizable: true }), TableRow, TableCell, TableHeader,
       TaskList, TaskItem.configure({ nested: true }),
@@ -1866,15 +2155,51 @@ onMounted(() => {
         return
       }
       const rect = range.getBoundingClientRect()
-      // 用 fixed 定位，clamp 到 viewport 内
-      const menuWidth = 200
-      const menuHeight = 40
+      // 7/12 关键修复：双层 fallback 测量 bubble 尺寸
+      const bubbleEl = document.querySelector('.bubble-bar') as HTMLElement | null
+      let menuWidth = 240
+      let menuHeight = 40
+      if (bubbleEl && bubbleEl.offsetWidth > 0) {
+        menuWidth = bubbleEl.offsetWidth
+        menuHeight = bubbleEl.offsetHeight
+      }
+      // 7/12 关键修复：找到真正的编辑器内容容器边界
+      // 不管用 .md-editor-content 还是 .md-wrapper 还是 .ProseMirror（嵌套结构）
+      const editorEl = ed.view.dom.closest('.md-editor-content, .md-wrapper') as HTMLElement | null
+      const editorRect = editorEl?.getBoundingClientRect()
+      // 7/12 关键修复：编辑器容器的左右边界（bubble 必须 clamp 在内）
+      const editorLeft = editorRect ? editorRect.left : 8
+      const editorRight = editorRect ? editorRect.right : window.innerWidth
+      const margin = 8
+
+      // 默认位置：选区上方居中
       let top = rect.top - menuHeight - 8
       let left = rect.left + rect.width / 2 - menuWidth / 2
-      // 防止溢出上方
-      if (top < 4) top = rect.bottom + 8
-      // 防止溢出左右
-      left = Math.max(8, Math.min(left, window.innerWidth - menuWidth - 8))
+      // 防止溢出上方 → 选区下方
+      if (top < margin) top = rect.bottom + 8
+      // 7/12 关键修复：bubble-bar 严格 clamp 到编辑器容器内（不能超出右侧）
+      // 第一步：保证 right edge 不超过 editorRight
+      if (left + menuWidth > editorRight - margin) {
+        // 选区靠右：把 bubble 整个移到选区左边
+        left = rect.left - menuWidth - 8
+        if (left + menuWidth > editorRight - margin) {
+          // 选区也靠右（bubble 放右边会越界）→ 贴编辑器右边
+          left = editorRight - menuWidth - margin
+        }
+      }
+      // 第二步：保证 left edge 不超过 editorLeft
+      if (left < editorLeft + margin) {
+        left = editorLeft + margin
+        // 如果调整后 right 越界 → 居中
+        if (left + menuWidth > editorRight - margin) {
+          left = editorLeft + (editorRight - editorLeft - menuWidth) / 2
+        }
+      }
+      // 第三步：最终 clamp 顶部
+      if (top < margin) top = margin
+      if (top + menuHeight > window.innerHeight - margin) {
+        top = Math.max(margin, window.innerHeight - menuHeight - margin)
+      }
       bubbleStyle.value = {
         position: 'fixed',
         top: `${top}px`,
@@ -2065,6 +2390,53 @@ function insertCodeBlock() {
 }
 
 /**
+ * 7/12 增强：清洗 AI 返回的"代码 + 注释"输出
+ * - 去掉 ```lang ... ``` Markdown 代码块包裹
+ * - 去掉 "Here is the annotated code:" 之类前言
+ * - 去掉末尾 "Let me know if..." 之类后记
+ * - 提取首个 ``` 代码块内容（如果存在）
+ */
+function cleanAiCodeOutput(raw: string): string {
+  if (!raw) return ''
+  let text = raw.trim()
+  // 1. 优先提取 ```...``` 代码块（含/不含语言标识）
+  const fenceRe = /```(?:[a-zA-Z0-9_+-]*\n)?([\s\S]*?)```/
+  const fenceMatch = text.match(fenceRe)
+  if (fenceMatch) {
+    text = fenceMatch[1].trim()
+  } else {
+    // 2. 没有 ``` 包裹则剥掉首行"以下是 xxx 代码"类前言 + 末行"如有问题"类后记
+    const lines = text.split('\n')
+    let startIdx = 0
+    for (let i = 0; i < Math.min(3, lines.length); i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+      // 前言特征：含"以下""下面是""注释后""这是""代码如下"等关键词 + 没有代码特征
+      if (/^(以下是|下面是|注释(后|后：|后:)?|这是|代码(如下)?|Here|The|Below)/i.test(line)
+          && !/[{};<>=\[\]\(\)]/.test(line)) {
+        startIdx = i + 1
+      } else {
+        break
+      }
+    }
+    // 同样去掉末尾"如有问题请告诉我"类后记
+    let endIdx = lines.length
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 3); i--) {
+      const line = lines[i].trim()
+      if (!line) { endIdx = i; continue }
+      if (/^(如有问题|希望(能)?帮助|如果.*请|有问题|需要|Let me know|Please|如有|Hope)/i.test(line)
+          && !/[{};<>=\[\]\(\)]/.test(line)) {
+        endIdx = i
+      } else {
+        break
+      }
+    }
+    text = lines.slice(startIdx, endIdx).join('\n').trim()
+  }
+  return text
+}
+
+/**
  * 7/11 关键：行内代码切换
  * - 如果有选中文本 → 用 toggleCode 包裹
  * - 无选中文本 → 插入空 code mark（光标居中）
@@ -2162,107 +2534,152 @@ async function onLocalImageSelected(e: Event) {
 }
 
 /**
- * 7/19 关键：字体颜色按钮 — 直接的"切色 + 应用"语义
- * 1. 选中 swatch → 切换记忆色 + 持久化 + 立即应用到当前选区
- * 2. 再次点相同 swatch → 取消记忆色 + unset 选区颜色
- * 3. 工具栏主按钮（不选 swatch）→ 用记忆色应用到当前选区
- * 设计原因：用户操作时不需要"先记后用"两步走，记忆色的核心价值是"记住 + 可再次施给别处"
+ * 颜色按钮核心逻辑（合一按钮版）
+ * - 工具栏只有一个颜色按钮：左半 A 字 + 高亮条，右半 ▾
+ * - 单击主按钮：直接把"最近用过的字体色 + 最近用过的高亮色"应用到当前选区
+ *   （哪类没有最近记录就跳过哪类，不影响另一类）
+ * - 按钮图标：A 字用最近字体色着色，下方色条用最近高亮色填色
+ * - 关闭色板后 nextTick 回填焦点，避免"点完色板丢选区"
  */
-function setTextColor(color: string) {
-  // 切记忆色 + 持久化
-  if (currentTextColor.value === color) {
-    currentTextColor.value = '#1f2937'
-    try { localStorage.setItem(STORAGE_KEY_TEXT, '#1f2937') } catch {}
-    // 相同 swatch 二次点击：取消选区颜色
-    try { editor.value?.chain().focus().unsetColor().run() } catch {}
-  } else {
-    currentTextColor.value = color
-    try { localStorage.setItem(STORAGE_KEY_TEXT, color) } catch {}
-    // 立即应用到当前选区（有选区时）
-    try {
-      if (editor.value) {
-        const { from, to } = editor.value.state.selection
-        if (from !== to) {
-          editor.value.chain().focus().setColor(color).run()
-        }
-      }
-    } catch {}
+type ColorKind = 'text' | 'highlight'
+
+watch(colorPanelOpen, (open) => {
+  if (!open) {
+    nextTick(() => {
+      try { editor.value?.commands.focus('end') } catch {}
+    })
   }
+})
+
+/** hover 进入色板区域（含主按钮+箭头+popover）→ 自动打开 */
+function onColorAreaEnter() {
+  if (colorLeaveTimer) { clearTimeout(colorLeaveTimer); colorLeaveTimer = null }
+  if (!colorPanelOpen.value) colorPanelOpen.value = true
 }
-function unsetTextColor() {
-  currentTextColor.value = '#1f2937'
-  try { localStorage.setItem(STORAGE_KEY_TEXT, '#1f2937') } catch {}
-  try { editor.value?.chain().focus().unsetColor().run() } catch {}
+/** hover 离开：250ms 缓冲后再次检查两个区域都没 hover 才关闭 */
+function onColorAreaLeave() {
+  if (colorLeaveTimer) clearTimeout(colorLeaveTimer)
+  colorLeaveTimer = setTimeout(() => {
+    colorLeaveTimer = null
+    const splitHover = colorSplitRef.value?.matches(':hover') ?? false
+    const popoverHover = popoverPanelRef.value?.matches(':hover') ?? false
+    if (!splitHover && !popoverHover) colorPanelOpen.value = false
+  }, 250)
 }
-/**
- * 应用记忆色到当前选区（toolbar 主按钮被点击时）
- */
-function applyTextColorToSelection() {
+/** el-popover 渲染到 body 之后，从 popper DOM 抓 panel 引用供 :hover 检测 */
+function capturePopoverEl() {
+  popoverPanelRef.value = document.querySelector('.db-color-popover .db-color-panel') as HTMLElement | null
+}
+/** 箭头按钮点击（兼容移动端/触屏，无 hover） */
+function onArrowClick() {
+  if (colorLeaveTimer) { clearTimeout(colorLeaveTimer); colorLeaveTimer = null }
+  colorPanelOpen.value = !colorPanelOpen.value
+}
+
+function saveRecent() {
+  try { localStorage.setItem(STORAGE_KEY_RECENT, JSON.stringify(recentColors.value)) } catch {}
+}
+// 按 kind 分别去重（字体红和高亮红互不冲突），时间倒序，最多 8 项
+function pushRecent(kind: ColorKind, color: string) {
+  const filtered = recentColors.value.filter(r => !(r.kind === kind && r.color === color))
+  recentColors.value = [{ color, kind, ts: Date.now() }, ...filtered].slice(0, MAX_RECENT)
+  saveRecent()
+}
+// "最近用过"区高亮判定：当前记忆色与之匹配
+function isRecentActive(r: RecentItem): boolean {
+  if (r.kind === 'text') return currentTextColor.value === r.color
+  return currentHighlightColor.value === r.color
+}
+
+/** 主按钮单击：把"最近字体色 + 最近高亮色"应用到当前选区 */
+function applyRecentToSelection() {
   if (!editor.value) {
     ElMessage.warning('编辑器未就绪')
     return
   }
   const { from, to } = editor.value.state.selection
   if (from === to) {
-    ElMessage.info('请先在文档中选中文本，再应用颜色')
+    ElMessage.info('请先在文档中选中文本，再点颜色按钮')
     return
   }
-  if (currentTextColor.value === '#1f2937') {
-    editor.value.chain().focus().unsetColor().run()
+  const tRecent = lastTextRecent.value
+  const hRecent = lastHlRecent.value
+  if (!tRecent && !hRecent) {
+    ElMessage.info('请先点 ▾ 箭头选择一种颜色，再用主按钮一键上色')
+    return
+  }
+  const chain = editor.value.chain().focus()
+  if (tRecent) chain.setColor(tRecent.color)
+  if (hRecent) chain.setHighlight({ color: hRecent.color })
+  chain.run()
+}
+
+/** 色板点击：设置记忆色 + 加入最近 + 立即应用到选区（不关色板，由 hover 管理） */
+function applyAndRemember(kind: ColorKind, color: string) {
+  if (kind === 'text') {
+    currentTextColor.value = color
+    customTextColor.value = color
+    try { localStorage.setItem(STORAGE_KEY_TEXT, color) } catch {}
   } else {
-    editor.value.chain().focus().setColor(currentTextColor.value).run()
+    currentHighlightColor.value = color
+    customHlColor.value = color
+    try { localStorage.setItem(STORAGE_KEY_HL, color) } catch {}
+  }
+  pushRecent(kind, color)
+  // 自动应用：选中文本就立即应用，没选就只更新记忆色（下次点主按钮生效）
+  if (editor.value) {
+    const { from, to } = editor.value.state.selection
+    if (from !== to) {
+      const chain = editor.value.chain().focus()
+      if (kind === 'text') chain.setColor(color).run()
+      else chain.setHighlight({ color }).run()
+    }
+  }
+  // 不关闭色板：用户连续选色时 hover 全权管理开关
+}
+
+/** 自定义取色器（实时）：更新记忆色 + 加入最近 + 自动应用（不关色板） */
+function onCustomColorInput(kind: ColorKind, ev: Event) {
+  const v = (ev.target as HTMLInputElement).value
+  if (!v) return
+  if (kind === 'text') {
+    currentTextColor.value = v
+    customTextColor.value = v
+    try { localStorage.setItem(STORAGE_KEY_TEXT, v) } catch {}
+  } else {
+    currentHighlightColor.value = v
+    customHlColor.value = v
+    try { localStorage.setItem(STORAGE_KEY_HL, v) } catch {}
+  }
+  pushRecent(kind, v)
+  if (editor.value) {
+    const { from, to } = editor.value.state.selection
+    if (from !== to) {
+      const chain = editor.value.chain().focus()
+      if (kind === 'text') chain.setColor(v).run()
+      else chain.setHighlight({ color: v }).run()
+    }
   }
 }
 
-/**
- * 7/19 关键：高亮颜色按钮 — 同字体颜色
- * 1. 选中 swatch → 切换记忆色 + 持久化 + 立即应用到当前选区
- * 2. 再次点相同 swatch → 取消记忆色 + unset 选区高亮
- */
-function setHighlightColor(color: string) {
-  if (currentHighlightColor.value === color) {
-    currentHighlightColor.value = '#fef08a'
-    try { localStorage.setItem(STORAGE_KEY_HL, '#fef08a') } catch {}
-    try { editor.value?.chain().focus().unsetHighlight().run() } catch {}
+/** 清除：记忆色复位 + 选区清除（清除不污染"最近用过"） */
+function clearColor(kind: ColorKind) {
+  const fallback = kind === 'text' ? FALLBACK_TEXT : FALLBACK_HL
+  if (kind === 'text') {
+    currentTextColor.value = fallback
+    customTextColor.value = fallback
+    try { localStorage.setItem(STORAGE_KEY_TEXT, fallback) } catch {}
   } else {
-    currentHighlightColor.value = color
-    try { localStorage.setItem(STORAGE_KEY_HL, color) } catch {}
-    try {
-      if (editor.value) {
-        const { from, to } = editor.value.state.selection
-        if (from !== to) {
-          editor.value.chain().focus().setHighlight({ color }).run()
-        }
-      }
-    } catch {}
+    currentHighlightColor.value = fallback
+    customHlColor.value = fallback
+    try { localStorage.setItem(STORAGE_KEY_HL, fallback) } catch {}
   }
-}
-/**
- * 7/19 关键：高亮颜色面板的清除按钮（持久化版）
- */
-function clearHighlight() {
-  currentHighlightColor.value = '#fef08a'
-  try { localStorage.setItem(STORAGE_KEY_HL, '#fef08a') } catch {}
-  try { editor.value?.chain().focus().unsetHighlight().run() } catch {}
-}
-/**
- * 应用记忆高亮色到当前选区（toolbar 主按钮）
- */
-function applyHighlightToSelection() {
-  if (!editor.value) {
-    ElMessage.warning('编辑器未就绪')
-    return
-  }
+  if (!editor.value) return
   const { from, to } = editor.value.state.selection
-  if (from === to) {
-    ElMessage.info('请先在文档中选中文本，再应用高亮')
-    return
-  }
-  if (currentHighlightColor.value === '#fef08a') {
-    editor.value.chain().focus().unsetHighlight().run()
-  } else {
-    editor.value.chain().focus().setHighlight({ color: currentHighlightColor.value }).run()
-  }
+  if (from === to) return
+  const chain = editor.value.chain().focus()
+  if (kind === 'text') chain.unsetColor().run()
+  else chain.unsetHighlight().run()
 }
 
 async function setLink() {
@@ -2286,9 +2703,10 @@ async function handleSmartEdit() {
     ElMessage.warning('请先在文档中选中文本')
     return
   }
-  // 7/3 智能编辑：使用浮窗内嵌指令输入（与 AI 浮窗同源）
-  await runEditAi('smart-edit', { from, to }, sourceText, false, '')
+  // 7/12 修复：复用用户上次位置（避免每次 smart-edit 都重置回中央）
+  const hasShownBefore = !!aiFloatPanel.value.position
   // 浮窗已打开，用户在浮窗内输入指令 → submitSmartEditInstruction 提交
+  await runEditAi('smart-edit', { from, to }, sourceText, false, '', undefined, { preservePosition: hasShownBefore })
 }
 
 /**
@@ -2450,33 +2868,52 @@ function openAiFloatPanel(
   const end = view.coordsAtPos(range.to)
   const selTop = Math.min(start.top, end.top)
   const selBottom = Math.max(start.bottom, end.bottom)
-  const selLeftVal = Math.min(start.left, end.left)
-  const selRightVal = Math.max(start.right, end.right)
-  const selCenterX = (selLeftVal + selRightVal) / 2
 
-  // 7/5 关键：fixed 定位 - 直接使用 viewport 坐标
-  const PANEL_W = 380
+  // 7/12 增强：用户要求 — 浮窗**水平+垂直都在编辑器中间**（不靠选区）
+  // 水平：浮窗水平居中于编辑区域
+  // 垂直：浮窗垂直居中于编辑区域，**偏上 80px**（让浮窗更靠近编辑器上半部）
+  const PANEL_W = 420  // 7/12 修复：与 CSS .ai-float-panel { max-width: 480px } 中位值一致
   const PANEL_MAX_H = Math.min(560, window.innerHeight * 0.6)
-  const GAP = 12
-  const spaceAbove = selTop
-  const placeAbove = spaceAbove >= PANEL_MAX_H + GAP || spaceAbove >= window.innerHeight / 2
-  let top: number
-  if (placeAbove) {
-    top = selTop - PANEL_MAX_H - GAP
-  } else {
-    top = selBottom + GAP
-  }
-  let left = selCenterX - PANEL_W / 2
-  const minLeft = 24
-  const maxLeft = window.innerWidth - PANEL_W - 24
-  if (left < minLeft) left = minLeft
-  if (left > maxLeft) left = maxLeft
+  const margin = 12
 
-  // 7/5 关键：优先使用 localStorage 记忆的位置
-  const saved = loadAiFloatPosition()
-  const reusePosition = (preservePosition || saved) && aiFloatPanel.value.position
-  const finalTop = reusePosition ? aiFloatPanel.value.position.top : (saved?.top ?? top)
-  const finalLeft = reusePosition ? aiFloatPanel.value.position.left : (saved?.left ?? left)
+  // 找到编辑器内容容器边界
+  const editorEl = editor.value.view.dom.closest('.md-editor-content, .md-wrapper') as HTMLElement | null
+  const editorRect = editorEl?.getBoundingClientRect()
+  const fallbackRect = { left: margin, right: window.innerWidth - margin, top: margin, bottom: window.innerHeight - margin, width: window.innerWidth - 2 * margin, height: window.innerHeight - 2 * margin }
+  const r = editorRect || fallbackRect
+
+  // 1. 水平：浮窗水平居中于编辑区域
+  let left = r.left + r.width / 2 - PANEL_W / 2
+  // clamp 到编辑器内（贴边留 4px 余量）
+  if (left < r.left + 4) left = r.left + 4
+  if (left + PANEL_W > r.right - 4) left = r.right - PANEL_W - 4
+
+  // 2. 垂直：浮窗水平居中、垂直**稍微偏上**于编辑区域
+  //    top = 编辑器垂直中心 - 浮窗高度一半 - 80px（让浮窗显示在编辑器偏上位置）
+  let top = r.top + r.height / 2 - PANEL_MAX_H / 2 - 80
+  // clamp 到编辑器内
+  if (top < r.top + 4) top = r.top + 4
+  if (top + PANEL_MAX_H > r.bottom - 4) top = r.bottom - PANEL_MAX_H - 4
+
+  const placeAbove = selTop > top
+  // 7/12 修复：preservePosition=true 时（用户拖动后再次触发，或页面刷新后）复用位置
+  // 优先级：1) 当前 reactive 位置（如果用户刚才拖动过）2) localStorage 3) 初始居中
+  let savedPos: { top: number; left: number } | null = null
+  if (preservePosition) {
+    if (aiFloatPanel.value.position) {
+      savedPos = aiFloatPanel.value.position
+    } else {
+      // 页面刷新后 reactive 位置丢失，从 localStorage 读
+      savedPos = loadAiFloatPosition()
+    }
+    // 7/12 修复：localStorage 残留 0,0（被污染的旧版本 bug）→ 视为无效，回退居中
+    if (savedPos && savedPos.top === 0 && savedPos.left === 0) {
+      savedPos = null
+    }
+  }
+  const reusePosition = !!savedPos
+  const finalTop = savedPos ? savedPos.top : top
+  const finalLeft = savedPos ? savedPos.left : left
   const finalPlaceAbove = reusePosition ? aiFloatPanel.value.placeAbove : placeAbove
 
   aiFloatPanel.value = {
@@ -2806,11 +3243,17 @@ async function handleAiAction(cmd: string) {
   const { from, to } = editor.value.state.selection
   const selectedText = editor.value.state.doc.textBetween(from, to)
   const insertAtCursor = !selectedText || to <= from
+  // 7/12 修复：如果面板已经显示过（用户可能拖动过），复用其位置
+  // 否则用初始居中位置
+  const hasShownBefore = !!aiFloatPanel.value.position
   await runEditAi(
     cmd as AiFloatCommand,
     { from, to },
     selectedText,
-    insertAtCursor
+    insertAtCursor,
+    undefined,
+    undefined,
+    { preservePosition: hasShownBefore }
   )
 }
 
@@ -3024,7 +3467,15 @@ async function submitAiGenerate() {
   if (aiGenerate.status.value === 'submitted' || aiGenerate.status.value === 'streaming') return
   aiGenerateMode.value = false
   aiFloatPanel.value.status = 'streaming'
-  const systemPrompt = '你是文档写作助手。基于用户的描述直接输出内容，不要加任何前缀或解释。'
+  // 7/12 增强：极简 systemPrompt — 禁止思考/解释/Markdown 包裹/代码块包裹
+  const systemPrompt = `你是写作助手。任务：根据用户的描述生成内容。
+
+严格要求：
+1. 只输出用户要求的内容本身（代码/文字/列表等）
+2. 禁止任何思考、解释、前言、后记
+3. 禁止 Markdown 代码块标记（\`\`\`），除非用户明确要求
+4. 禁止"以下是""下面是""好的"等任何非内容字符
+5. 直接从第一行内容开始输出，不要任何引导`
   try {
     await aiGenerate.sendUserMessage(value, systemPrompt, '')
   } catch (e: any) {
@@ -4683,15 +5134,39 @@ function detectSlashTrigger(ed: any) {
   // 重置选中项（仅在刚打开时）
   if (!wasVisible) slashSelectedIndex.value = 0
 
-  // 计算弹窗位置
+  // 计算弹窗位置（7/12 增强：clamp 到视口内，避免超出编辑区底部/右侧）
   try {
     const coords = ed.view.coordsAtPos(pos)
+    const menuWidth = 260
+    const menuHeight = 420
+    const margin = 8
+    // 默认在光标下方 6px
+    let top = coords.bottom + 6
+    let placeAbove = false
+    // 如果下方放不下（剩余空间不足）→ 改成上方
+    if (top + menuHeight + margin > window.innerHeight) {
+      top = coords.top - menuHeight - 6
+      placeAbove = true
+      // 上方还不够（比如光标就在屏幕顶部）→ clamp 到顶部
+      if (top < margin) {
+        top = margin
+        // 同时把 max-height 限制一下避免超出底部
+      }
+    }
+    // 左右 clamp：菜单不能超出视口
+    let left = coords.left
+    if (left + menuWidth + margin > window.innerWidth) {
+      left = window.innerWidth - menuWidth - margin
+    }
+    if (left < margin) left = margin
     slashMenuStyle.value = {
       position: 'fixed',
-      top: (coords.bottom + 6) + 'px',
-      left: (coords.left) + 'px',
+      top: top + 'px',
+      left: left + 'px',
       transform: 'translateX(0)',
       zIndex: '300',
+      // 7/12 增强：根据位置动态调 max-height（上方时不被截断）
+      maxHeight: placeAbove ? Math.min(menuHeight, coords.top - margin * 2) + 'px' : Math.min(menuHeight, window.innerHeight - top - margin) + 'px',
     }
   } catch {}
 }
@@ -4757,6 +5232,492 @@ async function onWordFileSelected(e: Event) {
 function getContent() { return editor.value?.getHTML() || '' }
 defineExpose({ getContent })
 </script>
+
+<!-- 7/12 增强：代码块低光 token 配色（VSCode 风格）。配色随全站主题切换：默认 Light+，html.dark 时切到 Dark+ -->
+<style>
+/* 7/12 增强：VSCode Light+ 默认（全局浅色模式） */
+:root {
+  --hljs-bg: #ffffff;             /* 代码块容器背景 */
+  --hljs-fg: #1f1f1f;             /* 默认文字色 */
+  --hljs-header-bg: #f3f3f3;       /* header 背景（比容器略亮） */
+  --hljs-border: #e5e7eb;          /* header 下边框 + caption input border */
+  /* token 配色 */
+  --hljs-comment: #008000;
+  --hljs-keyword: #0000ff;
+  --hljs-string: #a31515;
+  --hljs-number: #098658;
+  --hljs-function: #795e26;
+  --hljs-variable: #001080;
+  --hljs-type: #267f99;
+  --hljs-tag: #800000;
+  --hljs-attr: #ff0000;
+  --hljs-meta: #af00db;
+  --hljs-built_in: #267f99;
+  --hljs-symbol: #098658;
+  --hljs-params: #001080;
+  --hljs-class: #267f99;
+  --hljs-regexp: #811f3f;
+  --hljs-emphasis: #1f1f1f;
+  --hljs-strong: #1f1f1f;
+  --hljs-deletion: #a31515;
+  --hljs-addition: #098658;
+  --hljs-title: #795e26;
+  --hljs-attribute: #ff0000;
+  --hljs-built_in-name: #267f99;
+  --hljs-doctag: #608b4e;
+  --hljs-section: #1f1f1f;
+  --hljs-name: #795e26;
+  --hljs-bullet: #098658;
+  --hljs-literal: #0000ff;
+  --hljs-meta-keyword: #af00db;
+  --hljs-meta-string: #a31515;
+  --hljs-template-tag: #0000ff;
+  --hljs-template-variable: #001080;
+  --hljs-link: #0000ff;
+  /* 7/12 增强：header 按钮/UI 控件色（浅色版）— 与 VSCode 浅色 title bar 一致 */
+  --hljs-ui-fg: #616161;
+  --hljs-ui-fg-hover: #1f1f1f;
+  --hljs-ui-fg-strong: #1f1f1f;
+  --hljs-ui-fg-faint: #9ca3af;
+  --hljs-ui-hover-bg: rgba(0, 0, 0, 0.08);
+  --hljs-ui-focus-bg: rgba(0, 0, 255, 0.10);
+  --hljs-ui-focus-ring: rgba(0, 0, 255, 0.30);
+}
+
+/* 7/12 重构：去掉深色模式。NodeView DOM 不继承 :root 的 token 变量，
+   所以 db-code-block 的所有 hljs-* 颜色通过 inline style 直接写死（VSCode Light+），
+   见 applyStaticVars()。这里不再需要任何 [data-theme] 覆盖。*/
+
+
+/* ===== 7/12 增强：所有 .db-code-block 容器内样式必须在全局（避开 scoped）=====
+   NodeView 渲染的 DOM 元素没有 Vue scoped 的 [data-v-xxx] 属性，
+   放在 scoped 块里用 :deep() 引用虽然能匹配，但 CSS 变量继承会被 [data-v-xxx] 边界切断
+   （var(--hljs-*) 在 :root 上定义，无法穿透 scoped 边界到达 NodeView DOM）。
+   解决办法：放到非 scoped <style> 块，让 :root 的变量正常继承。 */
+.db-code-block {
+  position: relative;
+  margin: 0.8em 0;
+  border-radius: 4px;            /* VSCode Light+ 圆角 */
+  overflow: hidden;
+  background: var(--hljs-bg);     /* 容器背景 = 代码区背景，去掉视觉断裂 */
+  border: 1px solid var(--hljs-border);
+  /* 7/12 重构：去掉阴影 — VSCode 没有 box-shadow */
+  font-family: 'Menlo', 'Monaco', 'Consolas', 'Cascadia Code', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.db-cb-header {
+  display: flex; align-items: center;
+  padding: 4px 10px;              /* VSCode Light+ header 上下 padding 4px（更紧凑） */
+  background: var(--hljs-header-bg);
+  border-bottom: 1px solid var(--hljs-border);
+  user-select: none;
+  gap: 8px;
+  min-height: 26px;               /* VSCode Light+ header 高度约 26-28px */
+  font-size: 11px;                /* VSCode Light+ header 字号 11px */
+}
+.db-cb-caption-section {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex; align-items: center;
+}
+.db-cb-tools-section {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 4px;
+}
+.db-cb-lang {
+  position: relative;
+  display: inline-flex;
+  pointer-events: auto;
+}
+.db-cb-lang-btn {
+  display: inline-flex; align-items: center;
+  padding: 3px 6px 3px 8px;
+  background: transparent; border: none;
+  color: var(--hljs-ui-fg);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer; border-radius: 4px;
+  font-family: inherit;
+  transition: background 0.15s;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.db-cb-lang-btn:hover { background: var(--hljs-ui-hover-bg); }
+.db-cb-lang-btn-text {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.db-cb-lang-menu {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  z-index: 50;
+  min-width: 220px; max-height: 320px;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* 默认浅色（lang menu 配色跟全站走，不跟代码块 data-theme 走） */
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+/* 全站深色模式时语言菜单也变深色 */
+html.dark .md-editor-content .db-cb-lang-menu,
+:root.dark .md-editor-content .db-cb-lang-menu {
+  background: #1f2937;
+  border-color: #374151;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.db-cb-lang-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.db-cb-lang-search::placeholder { color: #9ca3af; }
+.db-cb-lang-search:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+html.dark .md-editor-content .db-cb-lang-search,
+:root.dark .md-editor-content .db-cb-lang-search {
+  background: #111827;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+html.dark .md-editor-content .db-cb-lang-search::placeholder,
+:root.dark .md-editor-content .db-cb-lang-search::placeholder { color: #6b7280; }
+.db-cb-lang-list {
+  overflow-y: auto;
+  max-height: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.db-cb-lang-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  color: #1f2937;
+  font-size: 13px;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  font-family: inherit;
+}
+.db-cb-lang-item:hover {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+.db-cb-lang-item.active {
+  background: #4f46e5;
+  color: #fff;
+}
+html.dark .md-editor-content .db-cb-lang-item,
+:root.dark .md-editor-content .db-cb-lang-item { color: #e5e7eb; }
+html.dark .md-editor-content .db-cb-lang-item:hover,
+:root.dark .md-editor-content .db-cb-lang-item:hover {
+  background: #4b5563;
+  color: #fff;
+}
+html.dark .md-editor-content .db-cb-lang-item.active,
+:root.dark .md-editor-content .db-cb-lang-item.active {
+  background: #4f46e5;
+  color: #fff;
+}
+.db-cb-lang-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.db-cb-caption {
+  display: flex; align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.db-cb-caption-label {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hljs-ui-fg-strong);
+  border-radius: 4px;
+  cursor: text;
+  outline: none;
+  min-width: 60px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, box-shadow 0.15s;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.db-cb-caption-label:hover { background: var(--hljs-ui-hover-bg); }
+.db-cb-caption-label:focus {
+  background: var(--hljs-ui-focus-bg);
+  box-shadow: 0 0 0 2px var(--hljs-ui-focus-ring);
+}
+.db-cb-caption-label.is-placeholder {
+  color: var(--hljs-ui-fg-faint);
+  font-style: italic;
+  font-weight: 400;
+}
+.db-cb-wrap-btn,
+.db-cb-copy-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px;
+  background: transparent; border: none;
+  color: var(--hljs-ui-fg);
+  font-size: 11.5px;
+  cursor: pointer; border-radius: 4px;
+  font-family: inherit;
+  transition: all 0.15s;
+  pointer-events: auto;
+}
+.db-cb-wrap-btn:hover,
+.db-cb-copy-btn:hover {
+  background: var(--hljs-ui-hover-bg);
+  color: var(--hljs-ui-fg-hover);
+}
+/* 7/12 增强：wrap 选中态用浅紫色（用户要求）— 浅深都明显 */
+.db-cb-wrap-btn.active {
+  background: #c4b5fd;
+  color: #4c1d95;
+}
+html.dark .md-editor-content .db-cb-wrap-btn.active,
+:root.dark .md-editor-content .db-cb-wrap-btn.active {
+  background: #c4b5fd;
+  color: #4c1d95;
+}
+.db-cb-pre {
+  margin: 0;
+  padding: 10px 16px;             /* VSCode Light+ pre 上下 10, 左右 16 */
+  background: var(--hljs-bg);
+  color: var(--hljs-fg);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+  overflow-x: auto;
+  white-space: pre;
+  min-height: 32px;
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+.db-code-block[data-wrap="1"] .db-cb-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 7/12 增强：hljs token 配色 — 走 CSS 变量，自动跟 light/dark 切换 */
+.md-editor-content pre code.hljs { color: var(--hljs-fg); background: var(--hljs-bg); }
+.md-editor-content .hljs-comment, .md-editor-content .hljs-quote { color: var(--hljs-comment); font-style: italic; }
+.md-editor-content .hljs-keyword, .md-editor-content .hljs-selector-tag, .md-editor-content .hljs-built_in, .md-editor-content .hljs-doctag, .md-editor-content .hljs-section { color: var(--hljs-keyword); font-weight: 600; }
+.md-editor-content .hljs-string, .md-editor-content .hljs-attr, .md-editor-content .hljs-template-tag, .md-editor-content .hljs-template-variable, .md-editor-content .hljs-link, .md-editor-content .hljs-regexp { color: var(--hljs-string); }
+.md-editor-content .hljs-number, .md-editor-content .hljs-literal, .md-editor-content .hljs-symbol, .md-editor-content .hljs-bullet { color: var(--hljs-number); }
+.md-editor-content .hljs-title.function_, .md-editor-content .hljs-title.function, .md-editor-content .hljs-title, .md-editor-content .hljs-name, .md-editor-content .hljs-attribute { color: var(--hljs-function); font-weight: 500; }
+.md-editor-content .hljs-variable, .md-editor-content .hljs-template-variable, .md-editor-content .hljs-params { color: var(--hljs-variable); }
+.md-editor-content .hljs-type, .md-editor-content .hljs-class .hljs-title, .md-editor-content .hljs-class, .md-editor-content .hljs-built_in-name { color: var(--hljs-type); }
+.md-editor-content .hljs-tag, .md-editor-content .hljs-name { color: var(--hljs-tag); }
+.md-editor-content .hljs-meta, .md-editor-content .hljs-meta-keyword, .md-editor-content .hljs-meta-string { color: var(--hljs-meta); }
+.md-editor-content .hljs-emphasis { color: var(--hljs-emphasis); font-style: italic; }
+.md-editor-content .hljs-strong { color: var(--hljs-strong); font-weight: 700; }
+.md-editor-content .hljs-deletion { color: var(--hljs-deletion); background: rgba(228, 86, 73, 0.12); }
+.hljs-addition { color: var(--hljs-addition); background: rgba(80, 161, 79, 0.12); }
+.hljs-attr { color: var(--hljs-attr); }
+
+/* ===== 7/12 增强：所有 .db-code-block 容器样式（裸选择器，必须放在非 scoped 块）=====
+   Vue scoped 块会给选择器加 [data-v-xxx] 属性。NodeView 渲染的 DOM 元素没有
+   这个 data-v 属性，所以 scoped 块里的 .db-code-block / .hljs-* / .tiptap* 规则全部不匹配。
+   解决办法：所有这些规则放在非 scoped 块，用裸选择器，浏览器原生匹配。 */
+.db-code-block {
+  position: relative;
+  margin: 0.8em 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--hljs-bg);
+  border: 1px solid var(--hljs-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+}
+.db-cb-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--hljs-header-bg);
+  border-bottom: 1px solid var(--hljs-border);
+  user-select: none;
+  gap: 8px;
+  min-height: 32px;
+}
+.db-cb-caption-section { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+.db-cb-tools-section { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.db-cb-lang { position: relative; display: inline-flex; pointer-events: auto; }
+.db-cb-lang-btn {
+  display: inline-flex; align-items: center;
+  padding: 3px 6px 3px 8px;
+  background: transparent; border: none;
+  color: var(--hljs-ui-fg);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer; border-radius: 4px;
+  font-family: inherit;
+  transition: background 0.15s;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.db-cb-lang-btn:hover { background: var(--hljs-ui-hover-bg); color: var(--hljs-ui-fg-hover); }
+.db-cb-lang-btn-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-cb-lang-menu {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  z-index: 50;
+  min-width: 220px; max-height: 320px;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+html.dark .db-cb-lang-menu,
+:root.dark .db-cb-lang-menu {
+  background: #1f2937;
+  border-color: #374151;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.db-cb-lang-search {
+  width: 100%; padding: 6px 10px;
+  border: 1px solid #d1d5db; border-radius: 4px;
+  font-size: 13px; outline: none;
+  background: #ffffff; color: #1f2937;
+  font-family: inherit; box-sizing: border-box;
+}
+.db-cb-lang-search::placeholder { color: #9ca3af; }
+.db-cb-lang-search:focus { border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2); }
+html.dark .db-cb-lang-search,
+:root.dark .db-cb-lang-search {
+  background: #111827; border-color: #374151; color: #e5e7eb;
+}
+html.dark .db-cb-lang-search::placeholder,
+:root.dark .db-cb-lang-search::placeholder { color: #6b7280; }
+.db-cb-lang-list { overflow-y: auto; max-height: 240px; display: flex; flex-direction: column; gap: 1px; }
+.db-cb-lang-item {
+  padding: 6px 10px; cursor: pointer;
+  color: #1f2937; font-size: 13px;
+  border-radius: 4px; transition: background 0.12s, color 0.12s;
+  text-align: left; background: transparent; border: 0;
+  width: 100%; font-family: inherit;
+}
+.db-cb-lang-item:hover { background: #eef2ff; color: #4f46e5; }
+.db-cb-lang-item.active { background: #4f46e5; color: #fff; }
+html.dark .db-cb-lang-item,
+:root.dark .db-cb-lang-item { color: #e5e7eb; }
+html.dark .db-cb-lang-item:hover,
+:root.dark .db-cb-lang-item:hover { background: #4b5563; color: #fff; }
+html.dark .db-cb-lang-item.active,
+:root.dark .db-cb-lang-item.active { background: #4f46e5; color: #fff; }
+.db-cb-lang-empty { padding: 12px; text-align: center; font-size: 12px; color: #9ca3af; }
+.db-cb-caption { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
+.db-cb-caption-label {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 12px; font-weight: 600;
+  color: var(--hljs-ui-fg-strong);
+  border-radius: 4px; cursor: text; outline: none;
+  min-width: 60px; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.15s, box-shadow 0.15s;
+  user-select: text; -webkit-user-select: text;
+}
+.db-cb-caption-label:hover { background: var(--hljs-ui-hover-bg); }
+.db-cb-caption-label:focus { background: var(--hljs-ui-focus-bg); box-shadow: 0 0 0 2px var(--hljs-ui-focus-ring); }
+.db-cb-caption-label.is-placeholder { color: var(--hljs-ui-fg-faint); font-style: italic; font-weight: 400; }
+.db-cb-wrap-btn, .db-cb-copy-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; background: transparent; border: none;
+  color: var(--hljs-ui-fg);
+  font-size: 11.5px; cursor: pointer; border-radius: 4px;
+  font-family: inherit; transition: all 0.15s;
+  pointer-events: auto;
+}
+.db-cb-wrap-btn:hover, .db-cb-copy-btn:hover {
+  background: var(--hljs-ui-hover-bg); color: var(--hljs-ui-fg-hover);
+}
+.db-cb-wrap-btn.active { background: #c4b5fd; color: #4c1d95; }
+html.dark .db-cb-wrap-btn.active,
+:root.dark .db-cb-wrap-btn.active { background: #c4b5fd; color: #4c1d95; }
+.db-cb-pre {
+  margin: 0; padding: 12px 16px;
+  background: var(--hljs-bg);
+  color: var(--hljs-fg);
+  font-size: 13px; line-height: 1.6;
+  font-family: 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+  overflow-x: auto; white-space: pre;
+  min-height: 40px; tab-size: 4; -moz-tab-size: 4;
+}
+.db-code-block[data-wrap="1"] .db-cb-pre { white-space: pre-wrap; word-break: break-word; }
+pre code.hljs { color: var(--hljs-fg); background: var(--hljs-bg); }
+.hljs-comment, .hljs-quote { color: var(--hljs-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag, .hljs-section { color: var(--hljs-keyword); font-weight: 600; }
+.hljs-string, .hljs-attr, .hljs-template-tag, .hljs-template-variable, .hljs-link, .hljs-regexp { color: var(--hljs-string); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--hljs-number); }
+.hljs-title.function_, .hljs-title.function, .hljs-title, .hljs-name, .hljs-attribute { color: var(--hljs-function); font-weight: 500; }
+.hljs-variable, .hljs-template-variable, .hljs-params { color: var(--hljs-variable); }
+.hljs-type, .hljs-class .hljs-title, .hljs-class, .hljs-built_in-name { color: var(--hljs-type); }
+.hljs-tag, .hljs-name { color: var(--hljs-tag); }
+.hljs-meta, .hljs-meta-keyword, .hljs-meta-string { color: var(--hljs-meta); }
+.hljs-emphasis { color: var(--hljs-emphasis); font-style: italic; }
+.hljs-strong { color: var(--hljs-strong); font-weight: 700; }
+.hljs-deletion { color: var(--hljs-deletion); background: rgba(228, 86, 73, 0.12); }
+.hljs-addition { color: var(--hljs-addition); background: rgba(80, 161, 79, 0.12); }
+.hljs-attr { color: var(--hljs-attr); }
+
+/* ===== 7/12 增强：ProseMirror 编辑器全局样式（裸选择器）=====
+   7/12 注：ProseMirror 渲染的 .ProseMirror 和 .tiptap 类在 NodeView DOM 上，
+   scoped 块的 :deep() 会带 data-v-xxx 失效。必须放在非 scoped 块。 */
+.ProseMirror { outline: none; }
+.ProseMirror .tableWrapper { overflow-x: auto; }
+.ProseMirror .tableWrapper table { border-collapse: collapse; width: auto; max-width: 100%; margin: 0.8em 0; }
+.ProseMirror .tableWrapper table .selectedCell { background: rgba(99, 102, 241, 0.08); }
+.ProseMirror .tableWrapper table .column-resize-handle { position: absolute; right: -2px; top: 0; bottom: 0; width: 4px; background: rgba(99, 102, 241, 0.4); pointer-events: none; }
+.ProseMirror .tableWrapper table:hover .column-resize-handle,
+.ProseMirror .tableWrapper table .column-resize-handle:hover { pointer-events: auto; }
+.ProseMirror .tableWrapper th { background: #f6f8fa; font-weight: 600; border: 1px solid #d0d7de; padding: 8px 12px; }
+.ProseMirror .tableWrapper td { border: 1px solid #d0d7de; padding: 8px 12px; }
+.ProseMirror hr { border: none; border-top: 1px solid #d0d7de; margin: 1.5em 0; }
+.ProseMirror img { max-width: 100%; border-radius: 6px; }
+.ProseMirror img.ProseMirror-selected { outline: 2px solid #6366f1; outline-offset: 1px; }
+.ProseMirror a { color: #0969da; }
+.ProseMirror mark { background: #fff8c5; padding: 1px 3px; }
+.ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+.ProseMirror ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 6px; }
+.ProseMirror p.is-editor-empty:first-child::before { color: #a0a0a0; content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
+.ProseMirror .table-float-layer > * { pointer-events: auto; }
+
+/* ===== 7/12 增强：.db-cb-ai-btn 头部 AI 注释按钮（非 scoped）===== */
+.db-cb-ai-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 10px;
+  background: transparent;
+  color: #8b5cf6; border: 0; border-radius: 4px;
+  cursor: pointer; font-size: 11px; font-weight: 500;
+  pointer-events: auto; font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.db-cb-ai-btn:hover { background: rgba(139, 92, 246, 0.12); color: #7c3aed; }
+.db-cb-ai-btn:disabled { opacity: 0.5; cursor: wait; }
+.db-cb-ai-icon { display: inline-flex; align-items: center; width: 12px; height: 12px; }
+html.dark .db-cb-ai-btn,
+:root.dark .db-cb-ai-btn { color: #a78bfa; }
+html.dark .db-cb-ai-btn:hover,
+:root.dark .db-cb-ai-btn:hover { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; }
+</style>
 
 <style scoped>
 .md-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; background: #fff; overflow: hidden; }
@@ -4828,6 +5789,28 @@ defineExpose({ getContent })
   border-radius: 1px;
   margin-top: 1px;
 }
+/* 主按钮（单击应用记忆色）+ ▾ 箭头按钮（打开色板）的并排布局 */
+.db-color-split {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+}
+.db-color-split .db-color-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.db-color-split .db-color-arrow {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding: 0 4px;
+  min-width: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.db-color-split .db-color-arrow svg { display: block; }
+.db-color-split .db-color-arrow.on {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+}
 .db-color-panel {
   padding: 4px;
   display: flex; flex-direction: column; gap: 4px;
@@ -4877,6 +5860,33 @@ defineExpose({ getContent })
   height: 1px;
   background: #e5e7eb;
   margin: 2px 0;
+}
+/* 段标题右侧的自定义取色器：隐藏原生 input，用 + 号图标代替 */
+.db-color-custom {
+  margin-left: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border: 1px dashed #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #6b7280;
+  position: relative;
+  background: #fff;
+}
+.db-color-custom:hover {
+  border-color: #4f46e5;
+  color: #4f46e5;
+  background: #eef2ff;
+}
+.db-color-custom input[type="color"] {
+  position: absolute; inset: 0;
+  opacity: 0; cursor: pointer; border: 0; padding: 0; margin: 0;
+}
+/* "最近用过"空状态提示 */
+.db-color-empty {
+  font-size: 11px;
+  color: #9ca3af;
+  padding: 4px 2px 2px;
 }
 /* 7/12 关键：豆包风格的 popover（白底 + 圆角 + 阴影） */
 :deep(.db-color-popover.el-popper) {
@@ -4945,201 +5955,14 @@ defineExpose({ getContent })
 .md-editor-content :deep(.tiptap h3) { font-size: 16px; font-weight: 600; margin: 0.7em 0 0.3em; color: #1b1f23; }
 .md-editor-content :deep(.tiptap ul), .md-editor-content :deep(.tiptap ol) { padding-left: 1.5em; }
 .md-editor-content :deep(.tiptap blockquote) { border-left: 3px solid #d0d7de; padding: 0.5em 1em; margin: 0.8em 0; color: #57606a; background: #f6f8fa; }
-.md-editor-content :deep(.tiptap pre) { background: #161b22; color: #c9d1d9; border-radius: 6px; padding: 14px 18px; margin: 0.8em 0; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; }
-/* ===== 7/12 关键：豆包风格代码块 ===== */
-.md-editor-content :deep(.db-code-block) {
-  position: relative;
-  margin: 0.8em 0;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #1e1e1e;
-  border: 1px solid #2d2d2d;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
-}
-.md-editor-content :deep(.db-cb-header) {
-  display: flex; align-items: center;
-  padding: 6px 10px;
-  background: #252526;
-  border-bottom: 1px solid #2d2d2d;
-  user-select: none;
-  gap: 8px;
-  min-height: 32px;
-}
-/* 7/19 关键：caption 区靠左占满（flex:1），tools 区靠右（不收缩） */
-.md-editor-content :deep(.db-cb-caption-section) {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex; align-items: center;
-}
-.md-editor-content :deep(.db-cb-tools-section) {
-  flex: 0 0 auto;
-  display: flex; align-items: center; gap: 4px;
-}
-.md-editor-content :deep(.db-cb-lang) {
-  position: relative;
-  display: inline-flex;
-  pointer-events: auto;
-}
-/* 7/16 关键：语言下拉按钮（Plain Text / Python 等） */
-.md-editor-content :deep(.db-cb-lang-btn) {
-  display: inline-flex; align-items: center;
-  padding: 3px 6px 3px 8px;
-  background: transparent; border: none;
-  color: #c9d1d9; font-size: 12px; font-weight: 500;
-  cursor: pointer; border-radius: 4px;
-  font-family: inherit;
-  transition: background 0.15s;
-  white-space: nowrap;
-  max-width: 140px;
-}
-.md-editor-content :deep(.db-cb-lang-btn:hover) { background: #333333; }
-.md-editor-content :deep(.db-cb-lang-btn-text) {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.md-editor-content :deep(.db-cb-lang-menu) {
-  position: absolute; top: calc(100% + 4px); left: 0;
-  z-index: 50;
-  min-width: 160px; max-height: 320px; overflow-y: auto;
-  background: #2d2d2d;
-  border: 1px solid #404040;
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  padding: 4px;
-}
-.md-editor-content :deep(.db-cb-lang-item) {
-  padding: 6px 10px; cursor: pointer;
-  color: #c9d1d9; font-size: 12px;
-  border-radius: 4px;
-  transition: background 0.12s;
-}
-.md-editor-content :deep(.db-cb-lang-item:hover) { background: #404040; }
-.md-editor-content :deep(.db-cb-lang-item.active) {
-  background: #0e639c; color: #fff;
-}
-/* 7/16 关键：代码块名称 caption（左侧可编辑） */
-.md-editor-content :deep(.db-cb-caption) {
-  display: flex; align-items: center;
-  flex: 1 1 auto;
-  min-width: 60px;
-  max-width: 100%;
-  overflow: hidden;
-}
-.md-editor-content :deep(.db-cb-caption-label) {
-  display: inline-block;
-  padding: 3px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #f3f4f6;
-  border-radius: 4px;
-  cursor: text;
-  outline: none;
-  min-width: 60px;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background 0.15s, box-shadow 0.15s;
-  user-select: text;
-  -webkit-user-select: text;
-}
-.md-editor-content :deep(.db-cb-caption-label:hover) { background: rgba(255, 255, 255, 0.08); }
-.md-editor-content :deep(.db-cb-caption-label:focus) {
-  background: rgba(99, 102, 241, 0.18);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35);
-}
-.md-editor-content :deep(.db-cb-caption-label.is-placeholder) {
-  color: #9ca3af;
-  font-style: italic;
-  font-weight: 400;
-}
-/* 7/16 关键：主题切换按钮（月亮 / 太阳） */
-.md-editor-content :deep(.db-cb-theme-btn) {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px;
-  padding: 0;
-  background: transparent; border: none;
-  color: #8b949e;
-  cursor: pointer; border-radius: 4px;
-  transition: all 0.15s;
-}
-.md-editor-content :deep(.db-cb-theme-btn:hover) { background: #333333; color: #c9d1d9; }
-.md-editor-content :deep(.db-cb-wrap-btn),
-.md-editor-content :deep(.db-cb-copy-btn) {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 8px;
-  background: transparent; border: none;
-  color: #8b949e; font-size: 11.5px;
-  cursor: pointer; border-radius: 4px;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.md-editor-content :deep(.db-cb-wrap-btn:hover),
-.md-editor-content :deep(.db-cb-copy-btn:hover) {
-  background: #333333; color: #c9d1d9;
-}
-.md-editor-content :deep(.db-cb-wrap-btn.active) {
-  background: #0e639c; color: #fff;
-}
-.md-editor-content :deep(.db-cb-pre) {
-  margin: 0;
-  padding: 12px 16px;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-x: auto;
-  white-space: pre;
-  min-height: 40px;
-}
-.md-editor-content :deep(.db-code-block[data-wrap="1"] .db-cb-pre) {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-/* 7/16 关键：浅色主题变体 */
-.md-editor-content :deep(.db-code-block[data-theme="light"]) {
-  background: #fafbfc;
-  border-color: #e5e7eb;
-}
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-header) {
-  background: #f3f4f6;
-  border-bottom-color: #e5e7eb;
-}
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-btn),
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-caption-label) {
-  color: #1f2937;
-}
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-btn:hover) { background: #e5e7eb; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-caption-label:hover) { background: rgba(0, 0, 0, 0.06); }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-menu) {
-  background: #fff;
-  border-color: #d1d5db;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-item) { color: #1f2937; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-item:hover) { background: #f3f4f6; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-lang-item.active) { background: #6366f1; color: #fff; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-theme-btn) { color: #6b7280; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-theme-btn:hover) { background: #e5e7eb; color: #1f2937; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-wrap-btn),
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-copy-btn) { color: #6b7280; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-wrap-btn:hover),
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-copy-btn:hover) { background: #e5e7eb; color: #1f2937; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-wrap-btn.active) { background: #6366f1; color: #fff; }
-.md-editor-content :deep(.db-code-block[data-theme="light"] .db-cb-pre) {
-  background: #fafbfc;
-  color: #1f2937;
-}
-.md-editor-content :deep(.db-code-block[data-wrap="1"] .db-cb-pre) {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+.md-editor-content :deep(.tiptap pre) { background: transparent; color: inherit; border-radius: 6px; padding: 0; margin: 0; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; }
+/* 7/12 重构：浅色模式 — .db-cb-pre 自己的 background: var(--hljs-bg) 控制整体底色 */
+.db-cb-pre { background: #ffffff !important; }
 .md-editor-content :deep(.db-cb-pre code) {
   background: transparent; padding: 0; border-radius: 0; font-size: inherit;
   font-family: inherit;
   color: inherit;
-}
-.md-editor-content :deep(.tiptap code) { background: #eff1f3; padding: 2px 5px; border-radius: 3px; font-size: 0.88em; font-family: 'JetBrains Mono', Consolas, monospace; }
+}.md-editor-content :deep(.tiptap code) { background: #eff1f3; padding: 2px 5px; border-radius: 3px; font-size: 0.88em; font-family: 'JetBrains Mono', Consolas, monospace; }
 .md-editor-content :deep(.tiptap pre code) { background: transparent; color: inherit; padding: 0; }
 .md-editor-content :deep(.tiptap table) { border-collapse: collapse; width: auto; max-width: 100%; margin: 0.8em 0; }
 .md-editor-content :deep(.tiptap table .selectedCell) { background: rgba(99, 102, 241, 0.08); }
@@ -7147,4 +7970,121 @@ defineExpose({ getContent })
   background: rgba(167, 139, 250, 0.32) !important;
   color: inherit !important;
 }
+
+/* ===== 7/12 增强：代码块语言菜单（搜索框 + 滚动列表） ===== */
+.db-cb-lang-menu {
+  background: var(--db-color-bg, #fff);
+  border: 1px solid var(--db-color-border, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  min-width: 240px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--db-color-text, #1f2937);
+}
+.db-cb-lang-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--db-color-border, #d1d5db);
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
+  background: var(--db-color-bg, #fff);
+  color: var(--db-color-text, #1f2937);
+  pointer-events: auto;
+}
+.db-cb-lang-search::placeholder { color: #9ca3af; }
+.db-cb-lang-search:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+.db-cb-lang-list {
+  overflow-y: auto;
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.db-cb-lang-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--db-color-text, #1f2937);
+  border-radius: 4px;
+  pointer-events: auto;
+}
+.db-cb-lang-item:hover {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+.db-cb-lang-item.active {
+  background: #4f46e5;
+  color: #fff;
+}
+.db-cb-lang-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 7/12 增强：AI 注释按钮 — NodeView 内的 DOM 没 scoped 属性，必须用 :deep */
+.md-editor-content :deep(.db-cb-ai-btn) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  background: transparent;
+  color: #8b5cf6;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  pointer-events: auto;
+  transition: background 0.12s, color 0.12s;
+  font-family: inherit;
+}
+.md-editor-content :deep(.db-cb-ai-btn:hover) {
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+}
+.md-editor-content :deep(.db-cb-ai-btn:disabled) {
+  opacity: 0.5;
+  cursor: wait;
+}
+.md-editor-content :deep(.db-cb-ai-icon) {
+  display: inline-flex;
+  align-items: center;
+  width: 12px; height: 12px;
+}
+.db-cb-ai-btn:hover { background: rgba(139, 92, 246, 0.18); }
+
+/* 7/12 重构：去掉主题切换 — 代码块只有浅色（VSCode Light+）。 */
+
+/* 7/12 增强：lowlight token 配色 — 直接走 CSS 变量 */
+.md-editor-content :deep(pre code.hljs) { color: var(--hljs-fg); background: var(--hljs-bg); }
+.md-editor-content :deep(.hljs-comment), .md-editor-content :deep(.hljs-quote) { color: var(--hljs-comment); font-style: italic; }
+.md-editor-content :deep(.hljs-keyword), .md-editor-content :deep(.hljs-selector-tag), .md-editor-content :deep(.hljs-built_in), .md-editor-content :deep(.hljs-doctag), .md-editor-content :deep(.hljs-section) { color: var(--hljs-keyword); font-weight: 600; }
+.md-editor-content :deep(.hljs-string), .md-editor-content :deep(.hljs-attr), .md-editor-content :deep(.hljs-template-tag), .md-editor-content :deep(.hljs-template-variable), .md-editor-content :deep(.hljs-link), .md-editor-content :deep(.hljs-regexp) { color: var(--hljs-string); }
+.md-editor-content :deep(.hljs-number), .md-editor-content :deep(.hljs-literal), .md-editor-content :deep(.hljs-symbol), .md-editor-content :deep(.hljs-bullet) { color: var(--hljs-number); }
+.md-editor-content :deep(.hljs-title.function_), .md-editor-content :deep(.hljs-title.function), .md-editor-content :deep(.hljs-title), .md-editor-content :deep(.hljs-name), .md-editor-content :deep(.hljs-attribute) { color: var(--hljs-function); font-weight: 500; }
+.md-editor-content :deep(.hljs-variable), .md-editor-content :deep(.hljs-template-variable), .md-editor-content :deep(.hljs-params) { color: var(--hljs-variable); }
+.md-editor-content :deep(.hljs-type), .md-editor-content :deep(.hljs-class .hljs-title), .md-editor-content :deep(.hljs-class), .md-editor-content :deep(.hljs-built_in-name) { color: var(--hljs-type); }
+.md-editor-content :deep(.hljs-tag), .md-editor-content :deep(.hljs-name) { color: var(--hljs-tag); }
+.md-editor-content :deep(.hljs-meta), .md-editor-content :deep(.hljs-meta-keyword), .md-editor-content :deep(.hljs-meta-string) { color: var(--hljs-meta); }
+.md-editor-content :deep(.hljs-emphasis) { color: var(--hljs-emphasis); font-style: italic; }
+.md-editor-content :deep(.hljs-strong) { color: var(--hljs-strong); font-weight: 700; }
+.md-editor-content :deep(.hljs-deletion) { color: var(--hljs-deletion); background: rgba(228, 86, 73, 0.12); }
+.md-editor-content :deep(.hljs-addition) { color: var(--hljs-addition); background: rgba(80, 161, 79, 0.12); }
+.md-editor-content :deep(.hljs-attr) { color: var(--hljs-attr); }
 </style>
