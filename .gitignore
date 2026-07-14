@@ -28,6 +28,12 @@ target/
 miaotongdoc-web/dist/
 miaotongdoc-web/node_modules/
 
+# Docker 部署包（构建产物，不入库；本地保留用于 docker compose）
+MiaotongDoc-Docker/app/server/*.jar
+MiaotongDoc-Docker/app/editor/docservice_patched
+MiaotongDoc-Editor/docservice_patched
+MiaotongDoc-Docker/app/web/dist/
+
 # OnlyOffice 编辑器插件第三方资源（构建脚本引入）
 MiaotongDoc-Editor/plugins/*/vendor/
 MiaotongDoc-Editor/plugins/*/translations/
