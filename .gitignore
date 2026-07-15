@@ -28,6 +28,12 @@ target/
 miaotongdoc-web/dist/
 miaotongdoc-web/node_modules/
 
+# v2.7.3 通配兜底：禁止任何 dist/target 子目录被 git add
+**/dist/
+**/dist/**
+**/target/
+**/target/**
+
 # Docker 部署包（构建产物，不入库；本地保留用于 docker compose）
 MiaotongDoc-Docker/app/server/*.jar
 MiaotongDoc-Docker/app/editor/docservice_patched
