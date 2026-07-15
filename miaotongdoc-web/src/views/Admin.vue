@@ -262,86 +262,336 @@
           </div>
         </el-tab-pane>
 
-        <!-- AI 配置 -->
+        <!-- AI 配置 (v2.7 多 Provider 管理) — 现代 SaaS 风格 -->
         <el-tab-pane label="AI 配置" name="ai-config">
-          <div class="ai-config-layout">
-            <!-- 左栏：配置 + 模型 -->
-            <div class="ai-config-left">
-              <el-card>
-                <template #header>
-                  <div class="card-header">
-                    <span>大模型配置</span>
-                    <div style="display:flex;gap:8px;align-items:center">
-                      <el-tag v-if="aiTestStatus === 'ok'" type="success" size="small">连接正常</el-tag>
-                      <el-tag v-else-if="aiTestStatus === 'fail'" type="danger" size="small">连接失败</el-tag>
-                      <el-button size="small" @click="testAiConnection" :loading="aiTesting">
-                        测试连接
-                      </el-button>
-                      <el-button type="primary" size="small" @click="saveAiConfig" :loading="aiSaving">
-                        保存配置
-                      </el-button>
-                    </div>
-                  </div>
-                </template>
-                <el-form :model="aiConfig" label-width="100px" class="ai-form">
-                  <el-form-item label="服务地址">
-                    <el-input v-model="aiConfig.llmUrl" placeholder="http://192.168.1.100:8080/v1" />
-                    <div class="form-tip">OpenAI 兼容地址，以 <b>/v1</b> 结尾</div>
-                  </el-form-item>
-                  <el-form-item label="API 密钥">
-                    <el-input v-model="aiConfig.llmKey" type="password" show-password placeholder="sk-..." />
-                  </el-form-item>
-                  <el-form-item label="默认模型">
-                    <el-select v-model="aiConfig.defaultModel" style="width: 100%" placeholder="测试连接后自动加载">
-                      <el-option v-for="m in aiModels" :key="m" :label="m" :value="m" />
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item label="超时(秒)">
-                    <el-input-number v-model="aiConfig.timeout" :min="30" :max="600" />
-                  </el-form-item>
-                </el-form>
-              </el-card>
-
-              <el-card style="margin-top:16px">
-                <template #header>
-                  <div class="card-header">
-                    <span>可用模型</span>
-                    <el-tag size="small">{{ aiModels.length }} 个</el-tag>
-                  </div>
-                </template>
-                <div v-if="aiModels.length > 0" class="ai-models-list">
-                  <div v-for="m in aiModels" :key="m" class="ai-model-item"
-                    :class="{ active: aiConfig.defaultModel === m }"
-                    @click="aiConfig.defaultModel = m">
-                    <el-icon><Cpu /></el-icon>
-                    <span>{{ m }}</span>
-                    <el-tag v-if="aiConfig.defaultModel === m" size="small" type="success">默认</el-tag>
-                  </div>
-                </div>
-                <el-empty v-else description="暂无可用模型，请先测试连接" :image-size="60" />
-              </el-card>
+          <div class="ai-saas-wrap">
+            <!-- 顶部统计 / 标题 -->
+            <div class="ai-saas-header">
+              <div class="ai-saas-header-info">
+                <h2 class="ai-saas-title">{{ typeLabel(aiActiveType) }}</h2>
+                <p class="ai-saas-subtitle">管理 {{ typeLabel(aiActiveType) }} Provider · 切换 / 增删改 / 设为默认</p>
+              </div>
+              <div class="ai-saas-header-actions">
+                <el-button class="ai-saas-btn-secondary" @click="loadAiConfig" :loading="loadingAi">
+                  <el-icon><Refresh /></el-icon>
+                  <span>刷新</span>
+                </el-button>
+                <el-button class="ai-saas-btn-primary" @click="openProviderDialog()">
+                  <el-icon><Plus /></el-icon>
+                  <span>添加 Provider</span>
+                </el-button>
+              </div>
             </div>
 
-            <!-- 右栏：AI 功能 -->
-            <div class="ai-config-right">
-              <el-card>
-                <template #header>
-                  <span>已接入的 AI 功能</span>
-                </template>
-                <div class="ai-features-list">
-                  <div class="ai-feature-item" v-for="f in aiFeatures" :key="f.name">
-                    <el-icon :size="20" :color="f.color"><component :is="f.icon" /></el-icon>
-                    <div class="ai-feature-info">
-                      <div class="ai-feature-name">{{ f.name }}</div>
-                      <div class="ai-feature-desc">{{ f.desc }}</div>
-                    </div>
-                  </div>
+            <div class="ai-saas-body">
+              <!-- 左侧：type 切换 -->
+              <aside class="ai-saas-sidebar">
+                <div class="ai-saas-sidebar-section">
+                  <div class="ai-saas-sidebar-title">类型</div>
+                  <nav class="ai-saas-type-list">
+                    <button
+                      v-for="t in providerTypes"
+                      :key="t.value"
+                      :class="['ai-saas-type-item', { active: aiActiveType === t.value }]"
+                      @click="onAiTypeSelect(t.value)"
+                    >
+                      <span class="ai-saas-type-icon" :style="{ background: t.color + '20', color: t.color }">
+                        <el-icon><component :is="t.icon" /></el-icon>
+                      </span>
+                      <span class="ai-saas-type-name">{{ t.label }}</span>
+                      <span v-if="providerCounts[t.value] > 0" class="ai-saas-type-badge" :style="{ background: t.color }">
+                        {{ providerCounts[t.value] }}
+                      </span>
+                    </button>
+                  </nav>
                 </div>
-              </el-card>
+
+                <div class="ai-saas-sidebar-section">
+                  <div class="ai-saas-sidebar-title">说明</div>
+                  <ul class="ai-saas-tip-list">
+                    <li>每个 type 可添加多个 Provider</li>
+                    <li>带<span class="ai-saas-dot success"></span>默认 标记的会被系统优先调用</li>
+                    <li>禁用后系统不会调用（保留配置）</li>
+                    <li>修改后<strong>立即生效</strong>，无需重启</li>
+                  </ul>
+                </div>
+              </aside>
+
+              <!-- 右侧：Provider 列表 -->
+              <main class="ai-saas-main">
+                <div v-if="loadingAi && currentProviders.length === 0" class="ai-saas-loading">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>加载中…</span>
+                </div>
+
+                <div v-else-if="currentProviders.length === 0" class="ai-saas-empty">
+                  <div class="ai-saas-empty-icon">
+                    <el-icon><ChatLineRound /></el-icon>
+                  </div>
+                  <h3 class="ai-saas-empty-title">还没有 {{ typeLabel(aiActiveType) }} Provider</h3>
+                  <p class="ai-saas-empty-desc">添加第一个 Provider 来配置 {{ typeLabel(aiActiveType) }} 服务</p>
+                  <el-button class="ai-saas-btn-primary" @click="openProviderDialog()">
+                    <el-icon><Plus /></el-icon>
+                    <span>添加 Provider</span>
+                  </el-button>
+                </div>
+
+                <div v-else class="ai-saas-grid">
+                  <article
+                    v-for="p in currentProviders"
+                    :key="p.id"
+                    class="ai-saas-card"
+                    :class="{ 'is-default': p.isDefault, 'is-disabled': !p.enabled }"
+                  >
+                    <header class="ai-saas-card-header">
+                      <div class="ai-saas-card-title-row">
+                        <div class="ai-saas-card-name">
+                          <h3 class="ai-saas-card-name-text">{{ p.name }}</h3>
+                          <span v-if="p.isDefault" class="ai-saas-badge default">
+                            <el-icon><Check /></el-icon>
+                            默认
+                          </span>
+                          <span v-else-if="!p.enabled" class="ai-saas-badge disabled">已禁用</span>
+                        </div>
+                        <el-switch
+                          v-model="p.enabled"
+                          @change="toggleProvider(p)"
+                          inline-prompt
+                        />
+                      </div>
+                      <p v-if="p.defaultModel" class="ai-saas-card-model">
+                        <el-icon><Cpu /></el-icon>
+                        {{ p.defaultModel }}
+                      </p>
+                    </header>
+
+                    <div class="ai-saas-card-fields">
+                      <div class="ai-saas-field">
+                        <span class="ai-saas-field-label">Base URL</span>
+                        <code class="ai-saas-field-value">{{ p.baseUrl || '—' }}</code>
+                      </div>
+                      <div class="ai-saas-field">
+                        <span class="ai-saas-field-label">API Key</span>
+                        <div class="ai-saas-key-row">
+                          <code class="ai-saas-field-value">
+                            {{ revealedKeys[p.id || 0] ?? p.apiKeyMask ?? '—' }}
+                          </code>
+                          <el-button
+                            v-if="p.hasKey"
+                            link
+                            size="small"
+                            :loading="revealingId === p.id"
+                            @click="toggleKeyReveal(p.id || 0)"
+                            :title="revealedKeys[p.id || 0] ? '隐藏 API Key' : '查看完整 API Key'"
+                          >
+                            <el-icon><component :is="revealedKeys[p.id || 0] ? 'View' : 'Hide'" /></el-icon>
+                          </el-button>
+                          <el-button
+                            v-if="p.hasKey"
+                            link
+                            size="small"
+                            @click="copyToClipboard(revealedKeys[p.id || 0] || '')"
+                            :disabled="!revealedKeys[p.id || 0]"
+                            title="先查看再复制"
+                          >
+                            <el-icon><DocumentCopy /></el-icon>
+                          </el-button>
+                        </div>
+                      </div>
+                      <div class="ai-saas-field-row">
+                        <div class="ai-saas-field">
+                          <span class="ai-saas-field-label">超时</span>
+                          <span class="ai-saas-field-value">{{ p.timeout || 300 }}s</span>
+                        </div>
+                        <div class="ai-saas-field">
+                          <span class="ai-saas-field-label">更新</span>
+                          <span class="ai-saas-field-value">{{ formatTime(p.updatedAt) }}</span>
+                        </div>
+                      </div>
+                      <p v-if="p.remark" class="ai-saas-card-remark">{{ p.remark }}</p>
+                    </div>
+
+                    <footer class="ai-saas-card-footer">
+                      <el-button
+                        v-if="!p.isDefault && p.enabled"
+                        link
+                        type="primary"
+                        size="small"
+                        @click="setAsDefault(p)"
+                      >
+                        设为默认
+                      </el-button>
+                      <el-button link size="small" @click="testProvider(p)" :loading="testingId === p.id">
+                        测试
+                      </el-button>
+                      <el-button link size="small" @click="openProviderDialog(p)">
+                        编辑
+                      </el-button>
+                      <el-popconfirm
+                        :title="`确定删除 Provider '${p.name}'?`"
+                        @confirm="deleteProvider(p)"
+                      >
+                        <template #reference>
+                          <el-button link type="danger" size="small">删除</el-button>
+                        </template>
+                      </el-popconfirm>
+                    </footer>
+                  </article>
+                </div>
+              </main>
             </div>
           </div>
-        </el-tab-pane>
 
+          <!-- Provider 编辑对话框 — 现代风格 -->
+          <el-dialog
+            v-model="providerDialogVisible"
+            :title="editingProvider?.id ? '编辑 Provider' : '添加 Provider'"
+            width="640px"
+            :show-close="false"
+            class="ai-saas-dialog"
+            @closed="resetProviderForm"
+          >
+            <template #header>
+              <div class="ai-saas-dialog-header">
+                <div class="ai-saas-dialog-title">
+                  <el-icon class="ai-saas-dialog-icon"><component :is="editingProvider?.id ? 'EditPen' : 'Plus'" /></el-icon>
+                  {{ editingProvider?.id ? '编辑 Provider' : '添加 Provider' }}
+                </div>
+                <el-button link @click="providerDialogVisible = false">
+                  <el-icon><Close /></el-icon>
+                </el-button>
+              </div>
+            </template>
+
+            <el-form
+              v-if="editingProvider"
+              :model="editingProvider"
+              label-position="top"
+              class="ai-saas-form"
+            >
+              <div class="ai-saas-form-row">
+                <el-form-item label="类型">
+                  <el-select v-model="editingProvider.type" :disabled="!!editingProvider.id" style="width:100%">
+                    <el-option
+                      v-for="t in providerTypes"
+                      :key="t.value"
+                      :label="t.label"
+                      :value="t.value"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="名称" required>
+                  <el-input v-model="editingProvider.name" placeholder="如：default / openai-main" />
+                </el-form-item>
+              </div>
+
+              <el-form-item label="服务地址 (Base URL)" required>
+                <el-input
+                  v-model="editingProvider.baseUrl"
+                  placeholder="https://api.openai.com/v1"
+                />
+                <div class="ai-saas-form-hint">OpenAI 兼容地址，必须以 <code>/v1</code> 结尾</div>
+              </el-form-item>
+
+              <el-form-item label="API 密钥">
+                <div class="ai-saas-key-row">
+                  <el-input
+                    v-model="editingProvider.apiKey"
+                    :type="showDialogApiKey ? 'text' : 'password'"
+                    :placeholder="dialogKeyPlaceholder"
+                  />
+                  <el-button
+                    :icon="showDialogApiKey ? 'Hide' : 'View'"
+                    :loading="dialogRevealing"
+                    plain
+                    @click="toggleDialogKeyReveal"
+                  />
+                </div>
+                <div class="ai-saas-form-hint">{{ dialogKeyHint }}</div>
+              </el-form-item>
+
+              <el-form-item label="默认模型">
+                <div class="ai-saas-model-row">
+                  <el-select
+                    v-model="editingProvider.defaultModel"
+                    filterable
+                    clearable
+                    allow-create
+                    placeholder="选择模型（也可手动输入）"
+                    class="ai-saas-model-select"
+                  >
+                    <el-option
+                      v-for="m in availableModels"
+                      :key="m"
+                      :label="m"
+                      :value="m"
+                    />
+                  </el-select>
+                  <el-button
+                    :loading="fetchingModels"
+                    :disabled="!editingProvider.baseUrl"
+                    @click="fetchProviderModels"
+                    plain
+                  >
+                    <el-icon><Refresh /></el-icon>
+                    <span>获取模型</span>
+                  </el-button>
+                  <el-button
+                    :loading="testingId === 'dialog'"
+                    :disabled="!editingProvider.baseUrl"
+                    @click="testDialogConnection"
+                    plain
+                    type="success"
+                  >
+                    <el-icon><Connection /></el-icon>
+                    <span>测试连接</span>
+                  </el-button>
+                </div>
+                <div
+                  v-if="testResult"
+                  :class="['ai-saas-test-result', testResult.status === 'ok' ? 'success' : 'error']"
+                >
+                  <el-icon><component :is="testResult.status === 'ok' ? 'Check' : 'CircleClose'" /></el-icon>
+                  <span>{{ testResult.message }}</span>
+                  <span v-if="testResult.latencyMs !== undefined" class="ai-saas-test-latency">
+                    {{ testResult.latencyMs }}ms
+                  </span>
+                </div>
+                <div v-else-if="availableModels.length > 0" class="ai-saas-form-hint success">
+                  <el-icon><Check /></el-icon>
+                  已获取 {{ availableModels.length }} 个模型
+                </div>
+                <div v-else class="ai-saas-form-hint">先填服务地址，点"获取模型"自动拉取</div>
+              </el-form-item>
+
+              <div class="ai-saas-form-row">
+                <el-form-item label="超时(秒)">
+                  <el-input-number v-model="editingProvider.timeout" :min="10" :max="3600" :step="30" style="width:100%" />
+                </el-form-item>
+                <el-form-item label="启用">
+                  <el-switch v-model="editingProvider.enabled" />
+                </el-form-item>
+                <el-form-item label="设为默认">
+                  <el-switch v-model="editingProvider.isDefault" />
+                </el-form-item>
+              </div>
+
+              <el-form-item label="备注">
+                <el-input v-model="editingProvider.remark" type="textarea" :rows="2" placeholder="可选" />
+              </el-form-item>
+            </el-form>
+
+            <template #footer>
+              <div class="ai-saas-dialog-footer">
+                <el-button @click="providerDialogVisible = false">取消</el-button>
+                <el-button class="ai-saas-btn-primary" @click="saveProvider" :loading="providerSaving">
+                  <el-icon><Check /></el-icon>
+                  <span>{{ editingProvider?.id ? '保存修改' : '创建 Provider' }}</span>
+                </el-button>
+              </div>
+            </template>
+          </el-dialog>
+        </el-tab-pane>
         <!-- 文件夹模板 -->
         <el-tab-pane label="文件夹模板" name="folder-templates">
           <div class="tab-header">
@@ -577,29 +827,360 @@ const watermarkConfig = ref<WatermarkConfig>({
 })
 
 // AI 配置
-const aiConfig = ref({
-  llmUrl: '',
-  llmKey: '',
-  defaultModel: '',
-  timeout: 300
-})
-const aiModels = ref<string[]>([])
-const aiTestStatus = ref<'idle' | 'ok' | 'fail'>('idle')
-const aiTesting = ref(false)
-const aiSaving = ref(false)
+// ========== AI Provider 多 Provider 管理（v2.7） ==========
+import { aiProvidersApi, PROVIDER_TYPE_LABELS } from '../api/aiProviders'
+import type { ProviderType, AiProvider } from '../api/aiProviders'
 
-const aiFeatures = [
-  { name: '拼写与语法检查', desc: '检查文档中的拼写和语法错误', icon: 'Document', color: '#409eff' },
-  { name: 'AI 聊天', desc: '对话式 AI 助手', icon: 'ChatDotRound', color: '#67c23a' },
-  { name: '文本摘要', desc: '生成选中文本的摘要', icon: 'Document', color: '#e6a23c' },
-  { name: '翻译', desc: '支持 9 种语言互译', icon: 'Promotion', color: '#9b59b6' },
-  { name: '文本分析', desc: '改写、加长、缩短、解释、关键词提取', icon: 'DataAnalysis', color: '#1abc9c' },
-  { name: 'AI 生成图片', desc: '根据文字描述生成图片', icon: 'Picture', color: '#e91e63' },
-  { name: 'OCR 文字识别', desc: '从图片中提取文字', icon: 'Document', color: '#f56c6c' },
-  { name: '文档问答', desc: '基于文档内容回答问题（后端）', icon: 'ChatDotRound', color: '#2b579a' },
+const aiActiveType = ref<ProviderType>('LLM')
+const aiProviders = ref<AiProvider[]>([])
+const providerDialogVisible = ref(false)
+const editingProvider = ref<AiProvider | null>(null)
+const providerSaving = ref(false)
+const testingId = ref<number | 'dialog' | null>(null)
+const fetchingModels = ref(false)
+const loadingAi = ref(false)
+const togglingId = ref<number | null>(null)
+const availableModels = ref<string[]>([])
+const testResult = ref<{
+  status: 'ok' | 'fail'
+  url: string
+  httpCode: number
+  latencyMs: number
+  model?: string
+  modelCount?: number
+  message: string
+  error?: string
+  detail?: string
+} | null>(null)
+const visibleKeyIds = ref<Set<number>>(new Set())
+// v2.7.3：缓存已解密的明文 key（id -> 明文），仅 admin 内存常驻，关闭弹窗/刷新页面即丢
+const revealedKeys = ref<Record<number, string>>({})
+const revealingId = ref<number | null>(null)
+const showDialogApiKey = ref(false)
+const dialogRevealing = ref(false)
+
+const providerTypes: Array<{ value: ProviderType; label: string; icon: string; color: string; tagType: 'primary'|'success'|'warning'|'info'|'danger' }> = [
+  { value: 'LLM',           label: PROVIDER_TYPE_LABELS.LLM,           icon: 'MagicStick', color: '#409EFF', tagType: 'primary' },
+  { value: 'VISION',        label: PROVIDER_TYPE_LABELS.VISION,        icon: 'View',       color: '#7C3AED', tagType: 'primary' },
+  { value: 'OCR_PADDLE',    label: PROVIDER_TYPE_LABELS.OCR_PADDLE,    icon: 'Reading',    color: '#10B981', tagType: 'success' },
+  { value: 'DOCLING',       label: PROVIDER_TYPE_LABELS.DOCLING,       icon: 'Files',      color: '#F59E0B', tagType: 'warning' },
+  { value: 'OCR_TESSERACT', label: PROVIDER_TYPE_LABELS.OCR_TESSERACT, icon: 'Document',   color: '#909399', tagType: 'info' },
 ]
 
-// 文档模板
+const currentProviders = computed(() => {
+  return aiProviders.value
+    .filter((p: any) => p.type === aiActiveType.value)
+    .sort((a: any, b: any) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1
+      return (a.name || '').localeCompare(b.name || '')
+    })
+})
+
+const providerCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const t of providerTypes) counts[t.value] = 0
+  for (const p of aiProviders.value) {
+    if (counts[p.type] !== undefined) counts[p.type]++
+  }
+  return counts
+})
+
+function typeLabel(t: ProviderType): string {
+  return PROVIDER_TYPE_LABELS[t] || t
+}
+
+async function loadAiConfig() {
+  try {
+    aiProviders.value = await aiProvidersApi.list()
+  } catch (e: any) {
+    ElMessage.error('加载 Provider 列表失败：' + (e?.message || '未知错误'))
+  }
+}
+
+async function handleTabChange(tabName: string) {
+  if (tabName === 'ai-config') {
+    await loadAiConfig()
+  }
+}
+
+function onAiTypeSelect(index: string) {
+  aiActiveType.value = index as ProviderType
+}
+
+async function openProviderDialog(p?: AiProvider) {
+  if (p) {
+    // v2.7.3：编辑时不直接预填明文 key，只携带掩码显示；用户点眼睛再 reveal
+    editingProvider.value = {
+      ...p,
+      apiKey: '',
+      apiKeyChanged: false,
+    } as any
+  } else {
+    editingProvider.value = {
+      type: aiActiveType.value,
+      name: '',
+      baseUrl: '',
+      apiKey: '',
+      defaultModel: '',
+      timeout: 300,
+      enabled: true,
+      isDefault: currentProviders.value.length === 0,
+      remark: '',
+      apiKeyChanged: true,
+    } as any
+  }
+  showDialogApiKey.value = false
+  providerDialogVisible.value = true
+}
+
+function resetProviderForm() {
+  editingProvider.value = null
+  availableModels.value = []
+  testResult.value = null
+  showDialogApiKey.value = false
+  dialogRevealing.value = false
+}
+
+async function toggleKeyReveal(id: number) {
+  if (revealedKeys.value[id]) {
+    delete revealedKeys.value[id]
+    revealedKeys.value = { ...revealedKeys.value }
+    return
+  }
+  revealingId.value = id
+  try {
+    const res = await aiProvidersApi.revealKey(id)
+    revealedKeys.value = { ...revealedKeys.value, [id]: res.apiKey || '' }
+  } catch (e: any) {
+    ElMessage.error(`查看失败：${e?.message || '未知错误'}`)
+  } finally {
+    revealingId.value = null
+  }
+}
+
+// v2.7.3 编辑弹窗里的密钥占位提示（显示后端掩码，不直接预填明文）
+const dialogKeyPlaceholder = computed(() => {
+  const p: any = editingProvider.value
+  if (!p) return ''
+  if (p.id) {
+    if (p.apiKey) return '已查看明文，可直接修改后保存'
+    if (p.apiKeyMask) return `当前：${p.apiKeyMask}（点眼睛查看完整）`
+    return '点眼睛查看完整密钥'
+  }
+  return 'sk-...'
+})
+
+const dialogKeyHint = computed(() => {
+  const p: any = editingProvider.value
+  if (!p) return ''
+  return p.id ? '编辑后保存即覆盖；不修改请留空' : '不填则用环境变量兜底'
+})
+
+async function toggleDialogKeyReveal() {
+  const p: any = editingProvider.value
+  if (!p) return
+  if (showDialogApiKey.value) {
+    // 切回密码态：清空已 reveal 的明文，避免常驻内存
+    showDialogApiKey.value = false
+    if (p.apiKey) editingProvider.value = { ...p, apiKey: '' }
+    return
+  }
+  if (!p.id) {
+    ElMessage.warning('新增 Provider 直接在输入框填写即可')
+    showDialogApiKey.value = true
+    return
+  }
+  if (p.apiKey) {
+    // 内存里已有明文，直接切到显示态
+    showDialogApiKey.value = true
+    return
+  }
+  dialogRevealing.value = true
+  try {
+    const res = await aiProvidersApi.revealKey(p.id)
+    editingProvider.value = { ...p, apiKey: res.apiKey || '' }
+    showDialogApiKey.value = true
+  } catch (e: any) {
+    ElMessage.error(`查看失败：${e?.message || '未知错误'}`)
+  } finally {
+    dialogRevealing.value = false
+  }
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success('已复制到剪贴板')
+    } catch {
+      ElMessage.error('复制失败')
+    }
+    document.body.removeChild(textarea)
+  }
+}
+
+async function saveProvider() {
+  if (!editingProvider.value) return
+  const p: any = editingProvider.value
+  if (!p.name || !p.baseUrl) {
+    ElMessage.warning('名称和服务地址必填')
+    return
+  }
+  providerSaving.value = true
+  try {
+    const payload: any = {
+      type: p.type,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      defaultModel: p.defaultModel || null,
+      timeout: p.timeout || 300,
+      enabled: p.enabled,
+      isDefault: p.isDefault,
+      remark: p.remark || '',
+    }
+    if (p.id) {
+      if (p.apiKey) payload.apiKey = p.apiKey
+      await aiProvidersApi.update(p.id, payload)
+      ElMessage.success('已保存')
+    } else {
+      if (!p.apiKey) {
+        ElMessage.warning('新增 Provider 必须填 API Key')
+        providerSaving.value = false
+        return
+      }
+      payload.apiKey = p.apiKey
+      await aiProvidersApi.create(payload)
+      ElMessage.success('已创建')
+    }
+    providerDialogVisible.value = false
+    await loadAiConfig()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || e?.message || '保存失败')
+  } finally {
+    providerSaving.value = false
+  }
+}
+
+async function setAsDefault(p: AiProvider) {
+  if (!p.id) return
+  try {
+    await aiProvidersApi.setDefault(p.id)
+    ElMessage.success(`已设为默认：${p.name}`)
+    await loadAiConfig()
+  } catch (e: any) {
+    ElMessage.error('设置失败：' + (e?.response?.data?.error || e?.message))
+  }
+}
+
+async function toggleProvider(p: AiProvider) {
+  if (!p.id) return
+  if (!p.enabled && p.isDefault) {
+    ElMessage.warning('不能禁用在用的默认 Provider，请先将其他 Provider 设为默认')
+    ;(p as any).enabled = true
+    return
+  }
+  try {
+    await aiProvidersApi.setEnabled(p.id, p.enabled)
+    ElMessage.success(p.enabled ? '已启用' : '已禁用')
+  } catch {
+    ;(p as any).enabled = !p.enabled
+    ElMessage.error('操作失败')
+  }
+}
+
+async function deleteProvider(p: AiProvider) {
+  if (!p.id) return
+  if (p.isDefault) {
+    ElMessage.warning('默认 Provider 不能删除，请先将其他 Provider 设为默认')
+    return
+  }
+  try {
+    await aiProvidersApi.remove(p.id)
+    ElMessage.success('已删除')
+    await loadAiConfig()
+  } catch (e: any) {
+    ElMessage.error('删除失败：' + (e?.response?.data?.error || e?.message))
+  }
+}
+
+async function testProvider(p: AiProvider) {
+  if (!p.id) return
+  testingId.value = p.id
+  try {
+    const result: any = await aiProvidersApi.testConnection({ id: p.id })
+    if (result.status === 'ok') {
+      ElMessage.success(`✓ ${p.name} 连接成功（${result.latencyMs}ms），发现 ${result.modelCount} 个模型`)
+    } else {
+      ElMessage.error(`✗ ${p.name} ${result.message || '连接失败'}`)
+    }
+  } catch (e: any) {
+    ElMessage.error(`✗ ${p.name} ${e?.response?.data?.message || e?.message || '连接失败'}`)
+  } finally {
+    testingId.value = null
+  }
+}
+
+async function fetchProviderModels() {
+  if (!editingProvider.value?.baseUrl) {
+    ElMessage.warning('请先填服务地址')
+    return
+  }
+  fetchingModels.value = true
+  availableModels.value = []
+  try {
+    const data: any = {
+      baseUrl: editingProvider.value.baseUrl,
+      apiKey: editingProvider.value.apiKey || '',
+    }
+    if ((editingProvider.value as any).id) data.id = (editingProvider.value as any).id
+    const result: any = await aiProvidersApi.fetchModels(data)
+    if (result.status === 'ok') {
+      availableModels.value = result.models || []
+      ElMessage.success(`✓ 获取 ${availableModels.value.length} 个模型`)
+    } else {
+      ElMessage.warning('获取模型失败：' + (result.error || '未知错误'))
+    }
+  } catch (e: any) {
+    ElMessage.error('获取模型失败：' + (e?.response?.data?.error || e?.message))
+  } finally {
+    fetchingModels.value = false
+  }
+}
+
+async function testDialogConnection() {
+  if (!editingProvider.value?.baseUrl) {
+    ElMessage.warning('请先填服务地址')
+    return
+  }
+  testingId.value = 'dialog'
+  testResult.value = null
+  try {
+    const data: any = {
+      baseUrl: editingProvider.value.baseUrl,
+      apiKey: editingProvider.value.apiKey || '',
+      model: editingProvider.value.defaultModel || '',
+    }
+    if ((editingProvider.value as any).id) data.id = (editingProvider.value as any).id
+    testResult.value = await aiProvidersApi.testConnection(data)
+  } catch (e: any) {
+    testResult.value = {
+      status: 'fail',
+      url: editingProvider.value.baseUrl,
+      httpCode: 0,
+      latencyMs: 0,
+      message: '请求失败：' + (e?.response?.data?.message || e?.message || '网络错误'),
+    }
+  } finally {
+    testingId.value = null
+  }
+}
 const templates = ref<DocumentTemplate[]>([])
 const templateCategories = ref<string[]>([])
 const templateTypeFilter = ref('')
@@ -825,71 +1406,6 @@ async function saveWatermarkConfig() {
     ElMessage.success('水印配置已保存')
   } catch {
     ElMessage.error('保存失败')
-  }
-}
-
-// AI 配置
-async function loadAiConfig() {
-  try {
-    const settings = await api.get<any, any>('/ai/settings')
-    aiConfig.value.llmUrl = settings.targetUrl || ''
-    aiConfig.value.llmKey = settings.apiKey || ''
-    aiConfig.value.timeout = settings.timeout || 300
-    aiConfig.value.defaultModel = settings.defaultModel || ''
-    // 同时加载模型列表
-    const config = await api.get<any, any>('/ai/config')
-    aiModels.value = (config.models || []).map((m: any) => m.id)
-    // 如果配置中没有默认模型，用 config 推荐的
-    if (!aiConfig.value.defaultModel && config.actions?.Chat?.model) {
-      aiConfig.value.defaultModel = config.actions.Chat.model
-    }
-  } catch {}
-}
-
-// 切换 tab 时自动重新加载（AI 配置实时刷新）
-async function handleTabChange(tabName: string) {
-  if (tabName === 'ai-config') {
-    await loadAiConfig()
-  }
-}
-
-async function saveAiConfig() {
-  aiSaving.value = true
-  try {
-    await api.put('/ai/settings', {
-      targetUrl: aiConfig.value.llmUrl,
-      apiKey: aiConfig.value.llmKey,
-      defaultModel: aiConfig.value.defaultModel,
-      timeout: aiConfig.value.timeout
-    })
-    ElMessage.success('AI 配置已保存')
-    aiTestStatus.value = 'idle'
-    await loadAiConfig()
-  } catch {
-    ElMessage.error('保存失败')
-  } finally {
-    aiSaving.value = false
-  }
-}
-
-async function testAiConnection() {
-  aiTesting.value = true
-  aiTestStatus.value = 'idle'
-  try {
-    const config = await api.get<any, any>('/ai/config')
-    if (config.models && config.models.length > 0) {
-      aiModels.value = config.models.map((m: any) => m.id)
-      aiTestStatus.value = 'ok'
-      ElMessage.success(`连接成功，发现 ${config.models.length} 个模型`)
-    } else {
-      aiTestStatus.value = 'fail'
-      ElMessage.warning('连接成功但未发现可用模型')
-    }
-  } catch {
-    aiTestStatus.value = 'fail'
-    ElMessage.error('连接失败，请检查地址和密钥')
-  } finally {
-    aiTesting.value = false
   }
 }
 
@@ -1202,13 +1718,613 @@ function handleAuditPageChange(page: number) {
   loadAuditLogs()
 }
 
-function formatTime(str: string) {
+function formatTime(str?: string) {
   if (!str) return ''
   return new Date(str).toLocaleString('zh-CN')
 }
 </script>
 
 <style scoped>
+/* ============================================
+   AI 配置 Tab — 现代 SaaS 风格
+   设计 tokens: Plus Jakarta Sans + Book Brown 配色
+   ============================================ */
+
+.ai-saas-wrap {
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #0F172A;
+  padding: 0;
+}
+
+/* 顶部 Header */
+.ai-saas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 28px;
+  background: #FFFFFF;
+  border-radius: 12px;
+  border: 1px solid #E5E5E5;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.ai-saas-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-saas-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.ai-saas-subtitle {
+  font-size: 13px;
+  color: #78716C;
+  margin: 0;
+}
+.ai-saas-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 按钮 */
+.ai-saas-btn-primary {
+  background: #78716C !important;
+  border-color: #78716C !important;
+  color: #FFFFFF !important;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: all 150ms ease;
+}
+.ai-saas-btn-primary:hover {
+  background: #57534E !important;
+  border-color: #57534E !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(120, 113, 108, 0.25);
+}
+.ai-saas-btn-secondary {
+  background: #FFFFFF !important;
+  border: 1px solid #D4D4D4 !important;
+  color: #0F172A !important;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: all 150ms ease;
+}
+.ai-saas-btn-secondary:hover {
+  background: #FAFAFA !important;
+  border-color: #A3A3A3 !important;
+}
+
+/* 主体两栏布局 */
+.ai-saas-body {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 20px;
+}
+
+/* 左侧 Sidebar */
+.ai-saas-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.ai-saas-sidebar-section {
+  background: #FFFFFF;
+  border-radius: 12px;
+  border: 1px solid #E5E5E5;
+  padding: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.ai-saas-sidebar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #78716C;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
+}
+
+/* type 列表 */
+.ai-saas-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-saas-type-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 150ms ease;
+  text-align: left;
+  font-family: inherit;
+  font-size: 14px;
+  color: #0F172A;
+  width: 100%;
+}
+.ai-saas-type-item:hover {
+  background: #FAFAFA;
+}
+.ai-saas-type-item.active {
+  background: #FFFBEB;
+  box-shadow: inset 0 0 0 1px #D97706;
+}
+.ai-saas-type-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.ai-saas-type-name {
+  flex: 1;
+  font-weight: 500;
+}
+.ai-saas-type-badge {
+  min-width: 22px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #FFFFFF;
+  padding: 0 6px;
+}
+
+/* 说明列表 */
+.ai-saas-tip-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-saas-tip-list li {
+  font-size: 12px;
+  color: #57534E;
+  line-height: 1.6;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ai-saas-tip-list li::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #D97706;
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+.ai-saas-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #A3A3A3;
+  margin: 0 4px;
+}
+.ai-saas-dot.success {
+  background: #16A34A;
+}
+
+/* 右侧 Main */
+.ai-saas-main {
+  min-height: 400px;
+}
+.ai-saas-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 80px 20px;
+  color: #78716C;
+  font-size: 14px;
+}
+.ai-saas-loading .is-loading {
+  animation: ai-saas-spin 1s linear infinite;
+}
+@keyframes ai-saas-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 空状态 */
+.ai-saas-empty {
+  background: #FFFFFF;
+  border: 2px dashed #E5E5E5;
+  border-radius: 12px;
+  padding: 64px 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.ai-saas-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #FFFBEB;
+  color: #D97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+.ai-saas-empty-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0F172A;
+  margin: 0;
+}
+.ai-saas-empty-desc {
+  font-size: 14px;
+  color: #78716C;
+  margin: 0 0 16px 0;
+}
+
+/* Provider 卡片网格 */
+.ai-saas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 16px;
+}
+
+/* Provider 卡片 */
+.ai-saas-card {
+  background: #FFFFFF;
+  border: 1px solid #E5E5E5;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: all 200ms ease;
+  position: relative;
+  overflow: hidden;
+}
+.ai-saas-card:hover {
+  border-color: #A8A29E;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  transform: translateY(-2px);
+}
+.ai-saas-card.is-default {
+  background: linear-gradient(135deg, #FFFBEB 0%, #FFFFFF 100%);
+  border-color: #D97706;
+}
+.ai-saas-card.is-default::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #D97706;
+}
+.ai-saas-card.is-disabled {
+  opacity: 0.55;
+}
+
+.ai-saas-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ai-saas-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ai-saas-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-saas-card-name-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0F172A;
+  margin: 0;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-saas-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ai-saas-badge.default {
+  background: #16A34A;
+  color: #FFFFFF;
+}
+.ai-saas-badge.disabled {
+  background: #E5E5E5;
+  color: #78716C;
+}
+.ai-saas-badge .el-icon {
+  font-size: 10px;
+}
+.ai-saas-card-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #57534E;
+  margin: 0;
+  padding: 4px 0;
+}
+.ai-saas-card-model .el-icon {
+  color: #78716C;
+}
+
+/* 字段 */
+.ai-saas-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-saas-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-saas-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #78716C;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+.ai-saas-field-value {
+  font-size: 12px;
+  color: #0F172A;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Consolas', monospace;
+  background: #FAFAFA;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #F0F0F0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.ai-saas-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ai-saas-key-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.ai-saas-key-row .ai-saas-field-value {
+  flex: 1;
+}
+.ai-saas-key-row .el-button {
+  flex-shrink: 0;
+}
+
+.ai-saas-card-remark {
+  font-size: 12px;
+  color: #78716C;
+  background: #FAFAFA;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 0;
+  border-left: 2px solid #D97706;
+  line-height: 1.5;
+}
+
+/* 卡片 footer */
+.ai-saas-card-footer {
+  display: flex;
+  gap: 4px;
+  padding-top: 12px;
+  border-top: 1px solid #F6F6F6;
+  margin-top: auto;
+}
+.ai-saas-card-footer .el-button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+/* 编辑对话框 */
+.ai-saas-dialog .el-dialog__header {
+  padding: 0;
+  margin-right: 0;
+  border-bottom: 1px solid #F0F0F0;
+}
+.ai-saas-dialog .el-dialog__body {
+  padding: 24px;
+}
+.ai-saas-dialog .el-dialog__footer {
+  padding: 16px 24px;
+  border-top: 1px solid #F0F0F0;
+  background: #FAFAFA;
+}
+.ai-saas-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  width: 100%;
+}
+.ai-saas-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0F172A;
+}
+.ai-saas-dialog-icon {
+  color: #D97706;
+  font-size: 18px;
+}
+.ai-saas-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 表单 */
+.ai-saas-form {
+  font-family: inherit;
+}
+.ai-saas-form .el-form-item__label {
+  font-weight: 500;
+  color: #0F172A;
+  font-size: 13px;
+  padding-bottom: 4px;
+}
+.ai-saas-form .el-input__wrapper {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #D4D4D4;
+  padding: 4px 12px;
+  transition: all 150ms ease;
+}
+.ai-saas-form .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #A3A3A3;
+}
+.ai-saas-form .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px #D97706;
+}
+.ai-saas-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.ai-saas-form-row:has(.el-form-item:nth-child(3)) {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.ai-saas-form-hint {
+  font-size: 12px;
+  color: #A8A29E;
+  margin-top: 4px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-style: italic;
+}
+.ai-saas-form-hint code {
+  background: #FAFAFA;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: #78716C;
+  font-style: normal;
+}
+.ai-saas-form-hint.success {
+  color: #16A34A;
+  font-style: normal;
+}
+.ai-saas-model-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.ai-saas-model-row .ai-saas-model-select {
+  flex: 1 1 280px;
+  min-width: 280px;
+}
+.ai-saas-model-row .el-button {
+  flex-shrink: 0;
+}
+.ai-saas-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.ai-saas-key-row .el-input {
+  flex: 1;
+}
+.ai-saas-test-result {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.ai-saas-test-result.success {
+  background: #DCFCE7;
+  color: #166534;
+}
+.ai-saas-test-result.error {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+.ai-saas-test-latency {
+  margin-left: auto;
+  font-family: 'SF Mono', monospace;
+  font-size: 12px;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+}
+
+/* 暗色模式适配（element-plus 自带） */
+@media (prefers-color-scheme: dark) {
+  /* 暂不实现暗色，保持简单 */
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+  .ai-saas-body {
+    grid-template-columns: 200px 1fr;
+  }
+}
+@media (max-width: 768px) {
+  .ai-saas-body {
+    grid-template-columns: 1fr;
+  }
+  .ai-saas-form-row {
+    grid-template-columns: 1fr;
+  }
+  .ai-saas-field-row {
+    grid-template-columns: 1fr;
+  }
+}
 .admin-page {
   width: 100%;
 }

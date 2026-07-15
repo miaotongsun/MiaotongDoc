@@ -81,6 +81,25 @@ var heightUpdateConditions = {
 window.Asc.plugin.init = function() {
 	window.Asc.plugin.sendToPlugin("onInit");
 
+	// DEBUG v2.7.2：诊断信息（v2.7.3 已关闭 UI 显示）
+	/*
+	setTimeout(function() {
+		var providerCounts = {};
+		(aiModelsList || []).forEach(function(m){
+			var p = m.provider || 'unknown';
+			providerCounts[p] = (providerCounts[p] || 0) + 1;
+		});
+		var modelsList = (aiModelsList || []).map(function(m){return m.id;}).join(', ');
+		var debugInfo = '[MiaotongDoc Debug 1秒后]\n' +
+			'aiModelsList.length = ' + aiModelsList.length + '\n' +
+			'provider 分布: ' + JSON.stringify(providerCounts) + '\n' +
+			'aiModelsList ids: ' + (modelsList.substring(0, 400));
+		console.log(debugInfo);
+		var debugEl = document.getElementById('mtdoc-debug-info');
+		if (debugEl) debugEl.textContent = debugInfo;
+	}, 1000);
+	*/
+
 	// select2:select 事件委托（updatedComboBoxes 会重建 select2 丢失事件，这里用委托保证）
 	$('#actions-list').on('select2:select', '.ai-model-select', function (e) {
 		window.Asc.plugin.sendToPlugin("onChangeAction", {
@@ -101,12 +120,32 @@ window.Asc.plugin.init = function() {
 		aiModelsList = list;
 		updatedComboBoxes();
 		heightUpdateConditions.updateModelsReady();
+		// MiaotongDoc v2.7.2：兜底——如果 actionsList 还没填充（command 时序问题），延迟重试
+		if (actionsList.length === 0) {
+			setTimeout(function() {
+				if (actionsList.length > 0) {
+					updatedComboBoxes();
+				}
+			}, 200);
+		}
+		// DEBUG v2.7.3：onUpdateModels 诊断信息（已注释：不再渲染到 UI）
+		/*
+		var ids = (list || []).map(function(m){return m.id;}).join(', ');
+		var updateDebug = '[onUpdateModels 收到 ' + (list ? list.length : 'null') + ' 个]\n' +
+			'ids: ' + ids.substring(0, 400) + '\n';
+		var debugEl = document.getElementById('mtdoc-debug-info');
+		if (debugEl) debugEl.textContent = updateDebug + '\n' + debugEl.textContent;
+		*/
 	});
 	window.Asc.plugin.attachEvent("onThemeChanged", onThemeChanged);
 
 	$('#edit-ai-models label').click(function(e) {
 		window.Asc.plugin.sendToPlugin("onOpenAiModelsModal");
 	});
+
+	// MiaotongDoc v2.7.2：settings 窗口 init 时主动让主 frame 重新拉配置
+	// 因为本地 localStorage 的旧 actions/model 可能干扰显示
+	window.Asc.plugin.sendToPlugin("onSettingsReady");
 }
 window.Asc.plugin.onThemeChanged = onThemeChanged;
 

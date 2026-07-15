@@ -344,35 +344,55 @@ function fetchExternal(url, options, isStreaming) {
 // 如需实时生效，建议改用 WebSocket 推送
 let _latestLlmConfig = null;
 let _latestLlmConfigTime = 0;
-const CONFIG_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
+// v2.7.3：禁用 TTL 缓存。管理后台改完模型必须立即生效，否则用户看不到自己的改动
+// 副作用：每次初始化会增加 1 次后端调用（可接受）。如未来需要限流，再加 ETag/version
+const CONFIG_CACHE_TTL = 0;
 
-async function fetchLatestLlmConfig() {
-	if (_latestLlmConfig && (Date.now() - _latestLlmConfigTime) < CONFIG_CACHE_TTL) {
+async function fetchLatestLlmConfig(force) {
+	if (!force && CONFIG_CACHE_TTL > 0 && _latestLlmConfig && (Date.now() - _latestLlmConfigTime) < CONFIG_CACHE_TTL) {
 		return _latestLlmConfig;
 	}
 	try {
 		const response = await fetch("/api/ai/config");
 		if (!response.ok) return null;
 		const data = await response.json();
-		if (data && data.providers && data.providers.OpenAI) {
+		// v2.7.2：遍历 data.providers 的所有键（不再是硬编码 OpenAI）
+		if (data && data.providers && typeof data.providers === "object") {
+			const providerKeys = Object.keys(data.providers);
+			if (providerKeys.length === 0) return null;
 			_latestLlmConfig = data;
 			_latestLlmConfigTime = Date.now();
 
-			const remoteProvider = data.providers.OpenAI;
 			const remoteModels = Array.isArray(data.models) ? data.models : [];
 
-			// 1) 更新 URL
-			if (AI.Providers && AI.Providers.OpenAI) {
-				if (remoteProvider.url) AI.Providers.OpenAI.url = remoteProvider.url;
-				if (Array.isArray(remoteProvider.models)) {
-					AI.Providers.OpenAI.models = remoteProvider.models;
+			// 1) 更新 AI.Providers（遍历所有 provider）
+			if (AI.Providers) {
+				for (let i = 0, len = providerKeys.length; i < len; i++) {
+					const name = providerKeys[i];
+					const p = data.providers[name];
+					if (!p) continue;
+					if (!AI.Providers[name]) AI.Providers[name] = {};
+					if (p.url) AI.Providers[name].url = p.url;
+					if (p.key) AI.Providers[name].key = p.key;
+					if (Array.isArray(p.models)) AI.Providers[name].models = p.models;
+					// 兼容性：保证有一个名为 "OpenAI" 的 provider（取第一个作为默认）
+					if (!AI.Providers.OpenAI && i === 0) {
+						AI.Providers.OpenAI = Object.assign({}, AI.Providers[name]);
+						AI.Providers.OpenAI.name = "OpenAI";
+					}
 				}
 			}
 
-			// 2) 更新 serverSettings（settings.js / code.js 读取的依据）
+			// 2) 更新 serverSettings（遍历所有 provider）
 			if (AI.serverSettings) {
-				if (AI.serverSettings.providers) {
-					AI.serverSettings.providers.OpenAI = remoteProvider;
+				if (!AI.serverSettings.providers) AI.serverSettings.providers = {};
+				for (let i = 0, len = providerKeys.length; i < len; i++) {
+					const name = providerKeys[i];
+					AI.serverSettings.providers[name] = data.providers[name];
+				}
+				// 兼容性：保证 OpenAI 键存在
+				if (!AI.serverSettings.providers.OpenAI && providerKeys.length > 0) {
+					AI.serverSettings.providers.OpenAI = data.providers[providerKeys[0]];
 				}
 				if (remoteModels.length > 0) {
 					AI.serverSettings.models = remoteModels;
@@ -380,20 +400,10 @@ async function fetchLatestLlmConfig() {
 			}
 
 			// 3) 同步 AI.Models（settings.js 显示用 + chat.js 模型选择用）
-			//    AI.Models 格式: {id, name, provider, capabilities}
-			//    后端 data.models 已是这个格式，可直接替换
 			if (remoteModels.length > 0 && Array.isArray(AI.Models)) {
-				const existingIds = new Set();
-				for (let i = 0, len = AI.Models.length; i < len; i++) {
-					if (AI.Models[i] && AI.Models[i].id) existingIds.add(AI.Models[i].id);
-				}
-				for (let i = 0, len = remoteModels.length; i < len; i++) {
-					const m = remoteModels[i];
-					if (!m || !m.id) continue;
-					if (!existingIds.has(m.id)) {
-						AI.Models.push(m);
-					}
-				}
+				// 直接替换（不要去重追加，否则旧模型永远清不掉）
+				// v2.7.3：UI 调试已关闭，控制台 log 也关掉
+				AI.Models = remoteModels.slice();
 			}
 
 			// 4) 触发 settings.js 窗口刷新（如已打开）
@@ -404,13 +414,13 @@ async function fetchLatestLlmConfig() {
 			return data;
 		}
 	} catch (e) {
-		console.warn("[MiaotongDoc] fetchLatestLlmConfig failed:", e);
+		// v2.7.3：不再喷控制台（如需排查再放开）
 	}
 	return null;
 }
 
-// AI 插件加载时主动拉一次（解决 ai-config.json 修改后下拉列表不更新的问题）
-fetchLatestLlmConfig();
+// v2.7.3：always force reload（缓存已禁用），保证管理后台改动立即生效
+fetchLatestLlmConfig(true);
 
 AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 		let provider = _provider.createInstance ? _provider : AI.Storage.getProvider(_provider.name);
@@ -420,14 +430,25 @@ AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 			provider.key = _provider.key;
 
 		// 关键修复：使用缓存的最新 URL（fetchLatestLlmConfig 会持续更新）
+		// v2.7.2：按 provider name 匹配，不再硬编码 OpenAI
 		let url = "";
-		if (_latestLlmConfig && _latestLlmConfig.providers && _latestLlmConfig.providers.OpenAI && _latestLlmConfig.providers.OpenAI.url) {
-			url = _latestLlmConfig.providers.OpenAI.url;
-		} else if (_provider.url) {
+		if (_latestLlmConfig && _latestLlmConfig.providers) {
+			// 1) 优先按当前 provider name 查找
+			let remoteProvider = _latestLlmConfig.providers[_provider.name];
+			// 2) 兼容：硬编码 OpenAI 键（兼容老版本后端或后端 fallback）
+			if (!remoteProvider) remoteProvider = _latestLlmConfig.providers.OpenAI;
+			if (remoteProvider && remoteProvider.url) {
+				url = remoteProvider.url;
+			}
+		}
+		if (!url && _provider.url) {
 			url = _provider.url;
-		} else if (AI.serverSettings && AI.serverSettings.providers && AI.serverSettings.providers.OpenAI && AI.serverSettings.providers.OpenAI.url) {
-			url = AI.serverSettings.providers.OpenAI.url;
-		} else {
+		}
+		if (!url && AI.serverSettings && AI.serverSettings.providers) {
+			let ssp = AI.serverSettings.providers[_provider.name] || AI.serverSettings.providers.OpenAI;
+			if (ssp && ssp.url) url = ssp.url;
+		}
+		if (!url) {
 			url = provider.url;
 		}
 
@@ -558,19 +579,32 @@ AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 				modelId = AI.Models[0].id;
 			}
 			if (modelId) {
+				// v2.7.2：fallback model 必须带正确的 provider，否则 settings.js 会误判
+				// 先在 AI.Models 里查找真实 provider，如果找不到再 fallback 到 OpenAI
+				let providerName = "OpenAI";
+				if (AI.Models) {
+					let found = AI.Models.find(function(m){return m.id === modelId;});
+					if (found && found.provider) providerName = found.provider;
+				}
+				// 优先用 serverSettings 里查（多 Provider 模式下更准确）
+				if (AI.serverSettings && AI.serverSettings.models) {
+					let found = AI.serverSettings.models.find(function(m){return m.id === modelId;});
+					if (found && found.provider) providerName = found.provider;
+				}
 				model = {
 					id: modelId,
 					name: modelId,
-					provider: "OpenAI",
+					provider: providerName,
 					capabilities: 511,
 					models: [],
 					endpoints: [1],
 					options: {}
 				};
-				if (!AI.Models) AI.Models = [];
-				if (!AI.Models.some(function(m){return m.id === modelId;})) {
-					AI.Models.push(model);
-				}
+				// 不再 push 到 AI.Models，避免污染真实模型列表
+				// if (!AI.Models) AI.Models = [];
+				// if (!AI.Models.some(function(m){return m.id === modelId;})) {
+				//     AI.Models.push(model);
+				// }
 				// 持久化到 AI.Actions，避免下次还走这个分支
 				AI.Actions[action].model = modelId;
 				if (AI.ActionsSave) AI.ActionsSave();
@@ -750,10 +784,20 @@ AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 
 				objRequest.body = provider.getChatCompletions(requestBody, this.model);
 
+				// v2.7.3：把 provider name 一并带进 body，后端 /api/ai/proxy 才能正确选 key+baseUrl
+				// 否则多 Provider 时选了"日日新"模型却用 Minimax 的 key 转发，必然 401
+				if (this.modelUI && this.modelUI.provider) {
+					objRequest.body.provider = this.modelUI.provider;
+				}
+
 				if (isStreaming && options.streamingBody !== false)
 					objRequest.body.stream = true;
 			} else {
 				objRequest.body = provider.getCompletions({ text : messages[0] }, model);
+				// v2.7.3：completions 也要带 provider
+				if (this.modelUI && this.modelUI.provider) {
+					objRequest.body.provider = this.modelUI.provider;
+				}
 			}
 
 			objRequest.isUseProxy = AI._extendBody(provider, objRequest.body);
@@ -868,12 +912,16 @@ AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 
 			let resultText = "";
 			for (let i = 0, len = messages.length; i < len; i++) {
-				
+
 				let message = getHeader(i + 1, len) + messages[i] + getFooter(i + 1, len);
 				if (!isUseCompletionsInsteadChat) {
 					objRequest.body = provider.getChatCompletions({ messages : [{role:"user",content:message}] }, model);
 				} else {
 					objRequest.body = provider.getCompletions( { text : message }, model);
+				}
+				// v2.7.3：带 provider 给后端转发
+				if (this.modelUI && this.modelUI.provider) {
+					objRequest.body.provider = this.modelUI.provider;
 				}
 
 				objRequest.isUseProxy = AI._extendBody(provider, objRequest.body);
@@ -918,6 +966,10 @@ AI._getEndpointUrl = function(_provider, endpoint, model, options) {
 
 		objRequest.url = AI._getEndpointUrl(provider, AI.Endpoints.Types.v1.Chat_Completions, this.model, options);
 		objRequest.body = provider.getChatCompletions({ messages : content.messages }, this.model);
+		// v2.7.3：带 provider 给后端转发
+		if (this.modelUI && this.modelUI.provider) {
+			objRequest.body.provider = this.modelUI.provider;
+		}
 
 		if (content.tools) {
 			provider.addTools(objRequest.body, content.tools);

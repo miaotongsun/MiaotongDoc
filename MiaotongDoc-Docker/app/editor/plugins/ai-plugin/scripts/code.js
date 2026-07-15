@@ -729,6 +729,14 @@ window.Asc.plugin.init = async function() {
 			if (data && Array.isArray(data.models) && data.models.length > 0 && AI.serverSettings) {
 				AI.serverSettings.models = data.models;
 			}
+			// v2.7.3：直接把 data.models 写到 AI.Models（不再依赖 engine.js 的步骤 3）
+			// 因为 engine.js 步骤 3 的条件 Array.isArray(AI.Models) 在 storage.load 之后可能为 false
+			if (data && Array.isArray(data.models) && data.models.length > 0) {
+				if (!Array.isArray(AI.Models)) AI.Models = [];
+				AI.Models = data.models.slice();
+				// v2.7.3：禁止控制台输出调试（保留代码以便恢复）
+			// console.log('[MiaotongDoc] _onLlmConfigUpdated: AI.Models now has', AI.Models.length, 'models');
+			}
 			if (data && data.providers && data.providers.OpenAI && AI.Providers) {
 				AI.Providers.OpenAI = Object.assign(AI.Providers.OpenAI || {}, data.providers.OpenAI);
 			}
@@ -743,7 +751,7 @@ window.Asc.plugin.init = async function() {
 	// 此举解决了"管理后台更新模型后 AI 插件下拉列表不更新"的问题
 	try {
 		if (typeof fetchLatestLlmConfig === "function") {
-			await fetchLatestLlmConfig();
+			await fetchLatestLlmConfig(true); // v2.7.3 force=true，绕开任何缓存
 		}
 	} catch (e) {
 		console.warn("[MiaotongDoc] init fetchLatestLlmConfig error:", e);
@@ -860,6 +868,7 @@ function updateModels() {
 	}
 
 	let models = AI.Storage.serializeModels();
+	// v2.7.3：UI 调试已关闭，控制台 log 也关掉
 	if (settingsWindow)
 		settingsWindow.command('onUpdateModels', models);
 	if (aiModelsListWindow)
@@ -901,6 +910,11 @@ function onOpenSettingsModal() {
 		settingsWindow.attachEvent('onOpenAiModelsModal', onOpenAiModelsModal);
 		settingsWindow.attachEvent('onOpenAddModal', function () {
 			onOpenEditModal({ type: 'add' })
+		});
+		// MiaotongDoc v2.7.2：settings 子窗口就绪后主动推一次最新模型/动作
+		settingsWindow.attachEvent('onSettingsReady', function() {
+			updateActions();
+			updateModels();
 		});
 
 		settingsWindow.attachEvent('onClose', function(){

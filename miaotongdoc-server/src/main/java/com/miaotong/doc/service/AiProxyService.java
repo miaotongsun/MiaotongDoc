@@ -38,15 +38,47 @@ public class AiProxyService {
     private String apiKey;
     private String defaultModel;
 
+    /**
+     * v2.7：可选依赖 AiConfigService，DB 优先于文件
+     * 用 Optional + @Autowired(required=false) 防止循环依赖
+     */
+    private final java.util.Optional<AiConfigService> aiConfigService;
+
+    public AiProxyService(@org.springframework.beans.factory.annotation.Autowired(required = false)
+                          AiConfigService aiConfigService) {
+        this.aiConfigService = java.util.Optional.ofNullable(aiConfigService);
+    }
+
     public String getDefaultModel() {
+        // v2.7：DB 当前默认 LLM 优先
+        if (aiConfigService.isPresent()) {
+            AiConfigService.AiConfig dbCfg = aiConfigService.get().getActive("LLM");
+            if (dbCfg != null && dbCfg.defaultModel != null && !dbCfg.defaultModel.isEmpty()) {
+                return dbCfg.defaultModel;
+            }
+        }
         return (defaultModel != null && !defaultModel.isEmpty()) ? defaultModel : "gpt-4o-mini";
     }
 
     public String getTargetUrl() {
+        // v2.7：DB 当前默认 LLM 优先
+        if (aiConfigService.isPresent()) {
+            AiConfigService.AiConfig dbCfg = aiConfigService.get().getActive("LLM");
+            if (dbCfg != null && dbCfg.baseUrl != null && !dbCfg.baseUrl.isEmpty()) {
+                return dbCfg.baseUrl;
+            }
+        }
         return targetUrl;
     }
 
     public String getApiKey() {
+        // v2.7：DB 当前默认 LLM 优先（自动解密）
+        if (aiConfigService.isPresent()) {
+            AiConfigService.AiConfig dbCfg = aiConfigService.get().getActive("LLM");
+            if (dbCfg != null && dbCfg.apiKey != null && !dbCfg.apiKey.isEmpty()) {
+                return dbCfg.apiKey;
+            }
+        }
         return apiKey;
     }
 
@@ -190,32 +222,112 @@ public class AiProxyService {
     }
 
     /**
-     * 返回完整 AI 配置（供插件初始化使用）
+     * 从指定 URL + Key 拉取模型列表（v2.7.2 多 Provider 场景使用）
+     */
+    private Object fetchModelsFromUrl(String url, String key) {
+        if (url == null || url.isEmpty()) {
+            return Map.of("data", java.util.List.of());
+        }
+        String modelsUrl = url.endsWith("/v1")
+                ? url + "/models"
+                : url + (url.endsWith("/") ? "v1/models" : "/v1/models");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (key != null && !key.isEmpty()) {
+            headers.set("Authorization", "Bearer " + key);
+        }
+
+        try {
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+            ResponseEntity<String> response = restTemplate.exchange(modelsUrl, HttpMethod.GET, entity, String.class);
+            return response.getBody();
+        } catch (Exception e) {
+            log.warn("从 {} 拉模型失败: {}", url, e.getMessage());
+            return Map.of("data", java.util.List.of(), "error", e.getMessage());
+        }
+    }
+
+    /**
+     * 返回完整 AI 配置（供 Office AI 插件初始化使用）
+     * v2.7.2：从 AiConfigService（DB）读取所有 LLM Provider
+     *          同时为默认 Provider 提供 "OpenAI" 别名（兼容 Office 插件前端的硬编码）
      */
     public Object getConfig() {
         Map<String, Object> config = new java.util.LinkedHashMap<>();
         config.put("proxy", "/api/ai/proxy");
 
-        java.util.List<Map<String, Object>> models = parseModels(getModels());
-        Map<String, Object> provider = buildProvider();
+        // v2.7.2：从 DB 读取所有 LLM Provider
+        java.util.List<AiConfigService.AiConfig> llmProviders = aiConfigService
+                .map(s -> s.listAll("LLM"))
+                .orElse(java.util.List.of());
 
-        config.put("providers", Map.of("OpenAI", provider));
+        // 找出默认 Provider（指向它作为 OpenAI 别名）
+        AiConfigService.AiConfig defaultProvider = aiConfigService
+                .map(s -> s.getActive("LLM"))
+                .orElse(null);
 
-        // 全局模型列表 (capabilities = 511 = 所有能力)
+        Map<String, Map<String, Object>> providersMap = new java.util.LinkedHashMap<>();
         java.util.List<Map<String, Object>> globalModels = new java.util.ArrayList<>();
-        for (Map<String, Object> m : models) {
-            Map<String, Object> gm = new java.util.LinkedHashMap<>();
-            gm.put("id", m.get("id"));
-            gm.put("name", m.get("name"));
-            gm.put("provider", "OpenAI");
-            gm.put("capabilities", 511);
-            globalModels.add(gm);
+
+        // 列出所有真实 Provider（按 DB 名字）
+        for (AiConfigService.AiConfig llm : llmProviders) {
+            java.util.List<Map<String, Object>> models = parseModels(
+                    fetchModelsFromUrl(llm.baseUrl, llm.apiKey));
+
+            Map<String, Object> provider = new java.util.LinkedHashMap<>();
+            provider.put("name", llm.name);
+            provider.put("url", llm.baseUrl != null ? llm.baseUrl : "");
+            provider.put("key", "***");
+            provider.put("models", models);
+            providersMap.put(llm.name, provider);
+
+            for (Map<String, Object> m : models) {
+                Map<String, Object> gm = new java.util.LinkedHashMap<>();
+                gm.put("id", m.get("id"));
+                gm.put("name", m.get("name"));
+                gm.put("provider", llm.name);
+                gm.put("capabilities", 511);
+                globalModels.add(gm);
+            }
         }
+
+        // 兼容层："OpenAI" 别名指向默认 Provider（Office 插件前端硬编码 data.providers.OpenAI）
+        if (defaultProvider != null && providersMap.containsKey(defaultProvider.name)) {
+            Map<String, Object> defaultMap = providersMap.get(defaultProvider.name);
+            Map<String, Object> openaiAlias = new java.util.LinkedHashMap<>(defaultMap);
+            openaiAlias.put("name", "OpenAI");
+            providersMap.put("OpenAI", openaiAlias);
+        }
+
+        // 兜底：DB 没有任何 LLM → 走文件（兼容老 ai-config.json）
+        if (providersMap.isEmpty()) {
+            java.util.List<Map<String, Object>> models = parseModels(getModels());
+            Map<String, Object> provider = buildProvider();
+            providersMap.put("OpenAI", provider);
+            for (Map<String, Object> m : models) {
+                Map<String, Object> gm = new java.util.LinkedHashMap<>();
+                gm.put("id", m.get("id"));
+                gm.put("name", m.get("name"));
+                gm.put("provider", "OpenAI");
+                gm.put("capabilities", 511);
+                globalModels.add(gm);
+            }
+        }
+
+        config.put("providers", providersMap);
         config.put("models", globalModels);
 
-        String effectiveModel = (this.defaultModel != null && !this.defaultModel.isEmpty())
-                ? this.defaultModel
-                : (models.isEmpty() ? "" : (String) models.get(0).get("id"));
+        // 默认模型：DB 当前默认 LLM 的 defaultModel > 第一个 > 空
+        String effectiveModel = "";
+        if (defaultProvider != null && defaultProvider.defaultModel != null && !defaultProvider.defaultModel.isEmpty()) {
+            effectiveModel = defaultProvider.defaultModel;
+        } else if (!globalModels.isEmpty()) {
+            effectiveModel = (String) globalModels.get(0).get("id");
+        } else if (defaultModel != null && !defaultModel.isEmpty()) {
+            effectiveModel = defaultModel;
+        }
+
         Map<String, Object> actions = new java.util.LinkedHashMap<>();
         for (String action : java.util.List.of("Chat", "Summarization", "Translation", "TextAnalyze",
                 "ImageGeneration", "OCR", "Vision")) {
@@ -254,20 +366,29 @@ public class AiProxyService {
     }
 
     /**
-     * 刷新模型列表（AI 插件刷新按钮调用）
+     * 刷新模型列表（Office AI 插件刷新按钮调用）
+     * v2.7.2：从 DB 当前默认 LLM 拉取，不再覆盖 DB 配置
+     * 同时返回 OpenAI 别名（兼容前端硬编码）
      */
     public Object refreshModels() {
-        loadConfigFromFile();
+        // 不再 loadConfigFromFile() —— DB 是真相源，文件只是兜底
+
+        // 优先从 DB 当前默认 LLM 拿
+        AiConfigService.AiConfig active = aiConfigService
+                .map(s -> s.getActive("LLM"))
+                .orElse(null);
+        String url = active != null ? active.baseUrl : targetUrl;
+        String key = active != null ? active.apiKey : apiKey;
 
         Map<String, Object> result = new java.util.LinkedHashMap<>();
-        if (targetUrl == null || targetUrl.isEmpty()) {
+        if (url == null || url.isEmpty()) {
             result.put("success", false);
             result.put("message", "LLM URL 未配置");
             result.put("models", java.util.List.of());
             return result;
         }
 
-        java.util.List<Map<String, Object>> models = parseModels(getModels());
+        java.util.List<Map<String, Object>> models = parseModels(fetchModelsFromUrl(url, key));
         if (models.isEmpty()) {
             result.put("success", false);
             result.put("message", "未获取到任何模型");
@@ -278,12 +399,19 @@ public class AiProxyService {
         result.put("success", true);
         result.put("message", "已刷新 " + models.size() + " 个模型");
         result.put("models", models);
-        result.put("providers", Map.of("OpenAI", Map.of(
-                "name", "OpenAI",
-                "url", targetUrl,
-                "key", "***",
-                "models", models
-        )));
+        // 兼容层：返回真实 provider 名 + OpenAI 别名（前端硬编码兼容）
+        String providerName = active != null ? active.name : "OpenAI";
+        Map<String, Object> defaultProvider = new java.util.LinkedHashMap<>();
+        defaultProvider.put("name", providerName);
+        defaultProvider.put("url", url);
+        defaultProvider.put("key", "***");
+        defaultProvider.put("models", models);
+        Map<String, Object> providers = new java.util.LinkedHashMap<>();
+        providers.put(providerName, defaultProvider);
+        Map<String, Object> openaiAlias = new java.util.LinkedHashMap<>(defaultProvider);
+        openaiAlias.put("name", "OpenAI");
+        providers.put("OpenAI", openaiAlias);
+        result.put("providers", providers);
         return result;
     }
 
@@ -293,14 +421,17 @@ public class AiProxyService {
         Map<String, String> headers = (Map<String, String>) body.getOrDefault("headers", Map.of());
         String data = (String) body.getOrDefault("data", "");
 
-        String forwardUrl = buildForwardUrl(target);
+        // v2.7.3：根据请求 body 中的 model + provider 字段，精确选择对应的 LLM Provider
+        // 之前只根据 model+defaultModel 匹配，会导致选了"日日新"模型却用 Minimax 的 key 转发，401
+        String forwardUrl = buildForwardUrl(target, data);
+        String forwardKey = pickProviderKey(data);
         log.info("AI Proxy: {} {} -> {}", method, target, forwardUrl);
 
         try {
             boolean isStream = data.contains("\"stream\":true") || data.contains("\"stream\": true");
             return isStream
-                    ? streamForward(forwardUrl, method, headers, data)
-                    : bufferForward(forwardUrl, method, headers, data);
+                    ? streamForward(forwardUrl, method, headers, data, forwardKey)
+                    : bufferForward(forwardUrl, method, headers, data, forwardKey);
         } catch (Exception e) {
             log.error("AI Proxy error: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
@@ -308,18 +439,127 @@ public class AiProxyService {
         }
     }
 
-    private String buildForwardUrl(String target) {
-        if (targetUrl == null || targetUrl.isEmpty()) return target;
-        // 完整 URL 直接返回（避免与 base 重复拼接）
+    /**
+     * 从 body 里提取模型和 provider 信息（v2.7.3 支持精确 provider 匹配）
+     */
+    private String[] parseModelAndProvider(String data) {
+        String model = null;
+        String provider = null;
+        try {
+            // 简单 JSON 解析：找 "model":"xxx" 和 "provider":"xxx"
+            int modelIdx = data.indexOf("\"model\"");
+            if (modelIdx >= 0) {
+                int colon = data.indexOf(':', modelIdx);
+                int q1 = data.indexOf('"', colon + 1);
+                int q2 = data.indexOf('"', q1 + 1);
+                if (q1 > 0 && q2 > q1) {
+                    model = data.substring(q1 + 1, q2);
+                }
+            }
+            int provIdx = data.indexOf("\"provider\"");
+            if (provIdx >= 0) {
+                int colon = data.indexOf(':', provIdx);
+                int q1 = data.indexOf('"', colon + 1);
+                int q2 = data.indexOf('"', q1 + 1);
+                if (q1 > 0 && q2 > q1) {
+                    provider = data.substring(q1 + 1, q2);
+                }
+            }
+        } catch (Exception ignore) {}
+        return new String[]{model, provider};
+    }
+
+    /**
+     * 从请求 body 解析 provider 名字，匹配 DB 中对应 Provider，返回该 Provider 的 apiKey
+     * 匹配优先级：1) provider 字段  2) model+defaultModel 兼容旧请求  3) fallback 默认 Provider
+     */
+    private String pickProviderKey(String data) {
+        String[] mp = parseModelAndProvider(data);
+        String model = mp[0];
+        String providerName = mp[1];
+
+        if (aiConfigService.isPresent()) {
+            java.util.List<AiConfigService.AiConfig> providers = aiConfigService.get().listAll("LLM");
+
+            // 1) 优先按 provider 名字精确匹配（v2.7.3 新增）
+            if (providerName != null && !providerName.isEmpty()) {
+                for (AiConfigService.AiConfig cfg : providers) {
+                    if (providerName.equals(cfg.name)) {
+                        return cfg.apiKey;
+                    }
+                }
+                // provider 没匹配上但名字匹配 OpenAI 别名 → fall through
+                if ("OpenAI".equals(providerName)) {
+                    for (AiConfigService.AiConfig cfg : providers) {
+                        if (cfg.isDefault) return cfg.apiKey;
+                    }
+                }
+            }
+
+            // 2) 兼容：用 model 匹配 defaultModel
+            if (model != null) {
+                for (AiConfigService.AiConfig cfg : providers) {
+                    if (cfg.defaultModel != null && cfg.defaultModel.equals(model)) {
+                        return cfg.apiKey;
+                    }
+                }
+            }
+        }
+
+        // fallback：默认 Provider 的 key（getter 已优先 DB）
+        return getApiKey();
+    }
+
+    private String buildForwardUrl(String target, String data) {
+        // v2.7.3：根据 provider 名字直接定位 baseUrl（不再只匹配 defaultModel）
+        String[] mp = parseModelAndProvider(data);
+        String model = mp[0];
+        String providerName = mp[1];
+
+        String base = null;
+        if (aiConfigService.isPresent()) {
+            java.util.List<AiConfigService.AiConfig> providers = aiConfigService.get().listAll("LLM");
+
+            // 1) 按 provider 名字精确匹配
+            if (providerName != null && !providerName.isEmpty()) {
+                for (AiConfigService.AiConfig cfg : providers) {
+                    if (providerName.equals(cfg.name) && cfg.baseUrl != null) {
+                        base = cfg.baseUrl;
+                        break;
+                    }
+                }
+                if (base == null && "OpenAI".equals(providerName)) {
+                    for (AiConfigService.AiConfig cfg : providers) {
+                        if (cfg.isDefault && cfg.baseUrl != null) {
+                            base = cfg.baseUrl;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 2) 兼容：用 model 匹配 defaultModel
+            if (base == null && model != null) {
+                for (AiConfigService.AiConfig cfg : providers) {
+                    if (cfg.defaultModel != null && cfg.defaultModel.equals(model) && cfg.baseUrl != null) {
+                        base = cfg.baseUrl;
+                        break;
+                    }
+                }
+            }
+        }
+        if (base == null) base = getTargetUrl();  // fallback
+
+        if (base == null || base.isEmpty()) return target;
         if (target.startsWith("http://") || target.startsWith("https://")) {
             return target;
         }
-        String base = targetUrl.endsWith("/") ? targetUrl.substring(0, targetUrl.length() - 1) : targetUrl;
+        String baseTrim = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
         String path = target.startsWith("/") ? target : "/" + target;
-        return base + path;
+        return baseTrim + path;
     }
 
-    private ResponseEntity<String> bufferForward(String url, String method, Map<String, String> headers, String data) {
+    private ResponseEntity<String> bufferForward(String url, String method, Map<String, String> headers, String data, String apiKeyOverride) {
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.setContentType(MediaType.APPLICATION_JSON);
         for (Map.Entry<String, String> entry : headers.entrySet()) {
@@ -327,8 +567,9 @@ public class AiProxyService {
                 httpHeaders.set(entry.getKey(), entry.getValue());
             }
         }
-        if (apiKey != null && !apiKey.isEmpty()) {
-            httpHeaders.set("Authorization", "Bearer " + apiKey);
+        String effectiveKey = apiKeyOverride != null ? apiKeyOverride : getApiKey();
+        if (effectiveKey != null && !effectiveKey.isEmpty()) {
+            httpHeaders.set("Authorization", "Bearer " + effectiveKey);
         }
 
         HttpEntity<String> entity = new HttpEntity<>(data, httpHeaders);
@@ -340,7 +581,7 @@ public class AiProxyService {
         return new ResponseEntity<>(response.getBody(), respHeaders, response.getStatusCode());
     }
 
-    private SseEmitter streamForward(String url, String method, Map<String, String> headers, String data) {
+    private SseEmitter streamForward(String url, String method, Map<String, String> headers, String data, String apiKeyOverride) {
         SseEmitter emitter = new SseEmitter((long) timeout * 1000);
 
         new Thread(() -> {
@@ -357,8 +598,9 @@ public class AiProxyService {
                         conn.setRequestProperty(entry.getKey(), entry.getValue());
                     }
                 }
-                if (apiKey != null && !apiKey.isEmpty()) {
-                    conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                String effectiveKey = apiKeyOverride != null ? apiKeyOverride : getApiKey();
+                if (effectiveKey != null && !effectiveKey.isEmpty()) {
+                    conn.setRequestProperty("Authorization", "Bearer " + effectiveKey);
                 }
 
                 try (OutputStream os = conn.getOutputStream()) {

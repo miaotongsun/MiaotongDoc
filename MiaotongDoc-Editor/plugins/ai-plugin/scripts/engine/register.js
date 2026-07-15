@@ -1090,24 +1090,28 @@ async function registerButtons(window, undefined)
 		let obj = null;
 		try
 		{
-			// Check localStorage first for user overrides
+			// v2.7.3：优先 localStorage（用户的真实选择）
+			// 不再用 serverSettings.actions，因为它被后端 getConfig 强制设置成 effectiveModel（默认 model）
+			// 导致用户在 settings 里选的 model 被覆盖回默认
 			let localObj = JSON.parse(window.localStorage.getItem(actions_key));
 			if (localObj && typeof localObj === 'object' && Object.keys(localObj).length > 0) {
 				obj = localObj;
-			} else if (AI.serverSettings) {
-				obj = AI.serverSettings.actions;
 			}
 		}
 		catch (e)
 		{
-			obj = (AI.DEFAULT_SERVER_SETTINGS && AI.DEFAULT_SERVER_SETTINGS.actions) ? AI.DEFAULT_SERVER_SETTINGS.actions : null;
+		}
+
+		// fallback：第一次启动，没有任何 user 选择 → 用后端给的默认（DB default model）
+		if (!obj && AI.serverSettings && AI.serverSettings.actions) {
+			obj = AI.serverSettings.actions;
 		}
 
 		if (obj)
 		{
 			for (let i in obj)
 			{
-				if (AI.Actions[i] && obj[i].model)
+				if (AI.Actions[i] && obj[i] && obj[i].model)
 					AI.Actions[i].model = obj[i].model;
 			}
 			return true;

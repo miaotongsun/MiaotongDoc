@@ -20,7 +20,11 @@ export interface AiProvider {
   type: ProviderType
   name: string
   baseUrl: string
-  apiKey: string  // 后端脱敏返回，前端只读；编辑时才发送真实 key
+  /** v2.7.3：列表/详情不再返回明文 key；后端返 apiKeyMask + apiKeyCipher；编辑保存时再发送 apiKey 明文 */
+  apiKey?: string
+  apiKeyMask?: string
+  apiKeyCipher?: string
+  hasKey?: boolean
   defaultModel?: string
   timeout?: number
   enabled: boolean
@@ -54,8 +58,14 @@ export const aiProvidersApi = {
   list: (type?: ProviderType) =>
     http.get<any, AiProvider[]>(`/admin/ai/providers${type ? `?type=${type}` : ''}`),
 
-  /** 获取单个 */
+  /** 获取单个（v2.7.3 起不含明文 key） */
   get: (id: number) => http.get<any, AiProvider>(`/admin/ai/providers/${id}`),
+
+  /**
+   * v2.7.3 临时展示明文 API Key（点眼睛才调用，后端有 WARN 审计日志）
+   * 仅 admin 可调；前端展示完毕应尽快丢弃明文
+   */
+  revealKey: (id: number) => http.get<any, { id: number; apiKey: string }>(`/admin/ai/providers/${id}/reveal-key`),
 
   /** 创建 */
   create: (data: AiProvider) => http.post<any, AiProvider>('/admin/ai/providers', data),

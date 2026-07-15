@@ -121,6 +121,11 @@
 		try {
 			if (AI.serverSettings) {
 				obj = AI.serverSettings;
+				// MiaotongDoc v2.7.2：清掉旧 localStorage（避免残留旧 model 污染 AI.Models）
+				// 用户之前在插件里选过的 model 可能已经不存在后端了
+				try {
+					window.localStorage.removeItem(localStorageKey);
+				} catch (e) {}
 			} else {
 				obj = JSON.parse(window.localStorage.getItem(localStorageKey));
 			}
