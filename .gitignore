@@ -53,5 +53,10 @@ MiaotongDoc-Editor/plugins/*/deploy/
 # 会话导出/日志（不进仓库）
 conv_*.txt
 session_*.log
+
+# Python 字节码缓存（skill 脚本运行时自动生成）
+__pycache__/
+*.pyc
+*.pyo
 </content>
 </invoke>
