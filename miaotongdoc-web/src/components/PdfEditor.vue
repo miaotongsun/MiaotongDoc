@@ -363,6 +363,7 @@ const pendingCommentRect = ref<PendingRect | null>(null)
 
 // ========== Markdown ==========
 const pdfMarkdown = ref<Record<string, string>>({})
+const ocrData = ref<Record<string, any>>({})
 const currentMarkdown = ref('')
 const isSaving = ref(false)
 const hasUnsavedChanges = ref(false)
@@ -452,6 +453,12 @@ async function renderPage(pageNum: number) {
         viewport,
       })
       await textLayer.render()
+    } else {
+      // 扫描件 PDF：无原生文本层，用 OCR 坐标数据叠加
+      const pageOcrData = ocrData.value?.[String(pageNum)]
+      if (pageOcrData) {
+        renderOcrTextLayer(textDiv, viewport, pageOcrData)
+      }
     }
   }
   cleanupHiddenCanvases()
@@ -479,8 +486,10 @@ async function loadMarkdown() {
     const resp = await pdfApi.getMarkdown(props.docId)
     if (resp.recognized && resp.markdown) {
       pdfMarkdown.value = resp.markdown
+      ocrData.value = resp.ocrData || {}
     } else if (Object.keys(resp.markdown || {}).length > 0) {
       pdfMarkdown.value = resp.markdown
+      ocrData.value = resp.ocrData || {}
     } else {
       // 未识别，触发识别
       recognizing.value = true
@@ -489,6 +498,7 @@ async function loadMarkdown() {
         const retryResp = await pdfApi.getMarkdown(props.docId)
         if (retryResp.markdown) {
           pdfMarkdown.value = retryResp.markdown
+          ocrData.value = retryResp.ocrData || {}
         }
       } catch (e) {
         console.error('识别失败:', e)
@@ -500,6 +510,65 @@ async function loadMarkdown() {
   } catch (e) {
     console.error('加载 Markdown 失败:', e)
     recognizing.value = false
+  }
+}
+
+/**
+ * 把 OCR 坐标文字叠加到 text-layer 上（用于扫描件 PDF 框选复制）
+ * @param textDiv 目标 DOM 容器
+ * @param viewport PDF.js viewport（用于坐标换算）
+ * @param pageData 当前页的 OCR 数据 { regions: [{text, bbox: [x,y,w,h], confidence}], dpi }
+ */
+function renderOcrTextLayer(
+  textDiv: HTMLDivElement,
+  viewport: any,
+  pageData: any,
+): void {
+  textDiv.innerHTML = ''
+  textDiv.classList.add('ocr-text-layer')
+  if (!pageData || !Array.isArray(pageData.regions)) return
+
+  const regions = pageData.regions
+  if (regions.length === 0) return
+
+  // OCR 在 DPI 200 渲染的图片上识别；PDF.js viewport 是基于 72 DPI（PDF 默认）
+  // 比例 = viewport.width / ocrImageWidth
+  // 通常 OCR 用 pdf2image 渲染 DPI 200，PDF.js 用 viewport.scale * 72
+  // 由于 PDF.js render 用的 scale（user zoom），最稳妥：先获取 PDF 原始尺寸，然后换算
+  // 这里用 dpi / 72 简化计算
+  const ocrDpi = pageData.dpi || 200
+  // viewport 的实际缩放系数
+  // PDF 原生 1 单位 = 1/72 inch；OCR 在 DPI 200 上；scale = pdfDpi / 72
+  const scale = ocrDpi / 72
+
+  for (const region of regions) {
+    const text = region.text || ''
+    const bbox = region.bbox
+    if (!text || !bbox || !Array.isArray(bbox) || bbox.length < 4) continue
+
+    const [ox, oy, ow, oh] = bbox
+    // 坐标转换：OCR 坐标基于 DPI 200，PDF.js viewport 基于 scale (基于 PDF 单位)
+    const x = ox / scale
+    const y = oy / scale
+    const w = ow / scale
+    const h = oh / scale
+
+    const span = document.createElement('span')
+    span.textContent = text
+    span.style.position = 'absolute'
+    span.style.left = x + 'px'
+    span.style.top = y + 'px'
+    span.style.width = w + 'px'
+    span.style.height = h + 'px'
+    span.style.fontSize = Math.max(10, h * 0.85) + 'px'
+    span.style.lineHeight = h + 'px'
+    span.style.color = 'transparent'
+    span.style.whiteSpace = 'nowrap'
+    span.style.overflow = 'hidden'
+    span.style.cursor = 'text'
+    span.style.userSelect = 'text'
+    span.dataset.ocrText = text
+    textDiv.appendChild(span)
   }
 }
 
@@ -995,6 +1064,16 @@ function scrollChat() {
 .text-layer.active {
   pointer-events: auto;
   z-index: 10;
+}
+
+/* OCR 叠加文字层默认允许框选复制（无需切到 select 工具） */
+.text-layer.ocr-text-layer {
+  pointer-events: none; /* 让批注图标等上层元素仍可点击 */
+  z-index: 5;
+}
+.text-layer.ocr-text-layer :deep(span) {
+  pointer-events: auto; /* 但文字 span 本身可被选中 */
+  cursor: text;
 }
 
 .text-layer :deep(span) {

@@ -49,6 +49,8 @@ public class DocumentController {
     private final EditorJwtUtil editorJwtUtil;
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
+    /** v2.7.2：注入 AI 插件配置 */
+    private final com.miaotong.doc.service.AiProxyService aiProxyService;
 
     @Value("${editor.server-url}")
     private String editorServerUrl;
@@ -464,6 +466,32 @@ public class DocumentController {
 
         // 启用文件刷新请求，确保版本变更时能重新加载最新文档
         editorConfigData.setCanRequestRefreshFile(true);
+
+        // MiaotongDoc v2.7.2：注入 AI 插件配置（aiPluginSettings）
+        // 让 OnlyOffice 启动 AI 插件时 window.Asc.plugin.info.aiPluginSettings 有值
+        // 插件会用它初始化 AI.serverSettings，覆盖 localStorage 旧配置
+        try {
+            Object aiConfig = aiProxyService.getConfig();
+            // 包一层（加上 version=4 匹配 AI.Storage.Version + customProviders 字段）
+            // 否则 AI.Storage.load() 会因 version 不匹配把 serverSettings 当 null
+            java.util.Map<String, Object> wrapped = new java.util.LinkedHashMap<>();
+            wrapped.put("version", 4);
+            wrapped.put("providers", ((java.util.Map<?, ?>) aiConfig).get("providers"));
+            wrapped.put("models", ((java.util.Map<?, ?>) aiConfig).get("models"));
+            wrapped.put("actions", ((java.util.Map<?, ?>) aiConfig).get("actions"));
+            wrapped.put("customProviders", new java.util.HashMap<>());
+
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            String aiConfigJson = om.writeValueAsString(wrapped);
+            EditorConfig.Plugins aiPlugin = new EditorConfig.Plugins();
+            aiPlugin.setAiPluginSettings(aiConfigJson);
+            java.util.Map<String, EditorConfig.Plugins> plugins = new java.util.LinkedHashMap<>();
+            plugins.put("ai", aiPlugin);
+            editorConfigData.setPlugins(plugins);
+            log.debug("AI Plugin 注入成功: providers={}", ((java.util.Map<?, ?>) ((java.util.Map<?, ?>) aiConfig).get("providers")).keySet());
+        } catch (Exception e) {
+            log.warn("AI Plugin 配置注入失败: {}", e.getMessage());
+        }
 
         config.setEditorConfig(editorConfigData);
 

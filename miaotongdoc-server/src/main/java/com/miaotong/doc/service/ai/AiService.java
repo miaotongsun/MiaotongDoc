@@ -61,6 +61,20 @@ public class AiService {
     }
 
     /**
+     * v2.7 监听 AiConfigRefreshedEvent（管理后台修改 Provider 后触发）
+     * 调用 rebuildClient() 让 ChatClient 立即使用最新配置
+     */
+    @org.springframework.context.event.EventListener
+    public void onAiConfigRefreshed(com.miaotong.doc.event.AiConfigRefreshedEvent event) {
+        log.info("收到 AiConfigRefreshedEvent（来源: {}），重建 ChatClient", event.getTriggerSource());
+        try {
+            rebuildClient();
+        } catch (Exception e) {
+            log.warn("重建 ChatClient 失败: {}", e.getMessage());
+        }
+    }
+
+    /**
      * 重建 ChatClient（使用 AiProxyService 中的最新配置）
      */
     public void rebuildClient() {

@@ -510,7 +510,8 @@ public class PdfController {
         return ResponseEntity.ok(Map.of(
             "recognized", doc.getPdfRecognized() != null && doc.getPdfRecognized(),
             "markdown", doc.getPdfMarkdown() != null ? doc.getPdfMarkdown() : Map.of(),
-            "recognizedAt", doc.getPdfRecognizedAt() != null ? doc.getPdfRecognizedAt().toString() : null
+            "ocrData", doc.getPdfOcrData() != null ? doc.getPdfOcrData() : Map.of(),
+            "recognizedAt", doc.getPdfRecognizedAt() != null ? doc.getPdfRecognizedAt().toString() : ""
         ));
     }
 
@@ -540,6 +541,14 @@ public class PdfController {
             @SuppressWarnings("unchecked")
             Map<String, String> markdown = (Map<String, String>) result.get("markdown");
             documentService.savePdfMarkdown(id, markdown);
+
+            // 提取并保存 OCR 坐标数据（用于在 PDF 原图位置叠加文字层，支持框选复制）
+            Map<String, Object> ocrData = pdfRecognizeService.extractOcrData(result);
+            if (!ocrData.isEmpty()) {
+                documentService.savePdfOcrData(id, ocrData);
+                log.info("已保存 OCR 坐标数据: docId={}, pages={}", id, ocrData.size());
+            }
+
             documentService.markPdfRecognized(id);
         }
 

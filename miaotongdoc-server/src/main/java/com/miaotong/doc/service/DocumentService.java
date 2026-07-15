@@ -701,4 +701,24 @@ public class DocumentService {
         Document doc = getDocument(docId);
         return doc.getPdfMarkdown() != null ? doc.getPdfMarkdown() : Map.of();
     }
+
+    /**
+     * 保存 PDF OCR 坐标数据（用于在 PDF 原图位置叠加文字层）
+     * @param ocrData 按页分组的 OCR 数据：{ "1": {"dpi": 200, "width": 1728, "height": 2400, "regions": [...]}, ... }
+     */
+    @Transactional
+    public void savePdfOcrData(Long docId, Map<String, Object> ocrData) {
+        Document doc = getDocument(docId);
+        doc.setPdfOcrData(ocrData);
+        documentRepository.save(doc);
+        log.info("保存 PDF OCR 坐标: docId={}, pages={}", docId, ocrData.size());
+    }
+
+    /**
+     * 获取 PDF OCR 坐标数据
+     */
+    public Map<String, Object> getPdfOcrData(Long docId) {
+        Document doc = getDocument(docId);
+        return doc.getPdfOcrData() != null ? doc.getPdfOcrData() : Map.of();
+    }
 }

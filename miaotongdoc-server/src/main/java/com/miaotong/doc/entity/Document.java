@@ -81,6 +81,11 @@ public class Document {
     @Column(name = "pdf_markdown", columnDefinition = "jsonb")
     private Map<String, String> pdfMarkdown = new HashMap<>();
 
+    // PDF OCR 坐标数据（按页存 regions：[{text, bbox, confidence}]）
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "pdf_ocr_data", columnDefinition = "jsonb")
+    private Map<String, Object> pdfOcrData = new HashMap<>();
+
     // PDF 是否已完成识别
     @Column(name = "pdf_recognized")
     private Boolean pdfRecognized = false;

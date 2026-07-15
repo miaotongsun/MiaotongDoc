@@ -47,6 +47,21 @@ public class EditorConfig {
         private Customization customization;
         private CoEditing coEditing;
         private Boolean canRequestRefreshFile;
+        /**
+         * MiaotongDoc v2.7.2：注入插件配置（key 是插件的 GUID 或 config.json 里的 name）
+         * 注入 aiPluginSettings 字符串后，OnlyOffice 启动插件时
+         *   window.Asc.plugin.info.aiPluginSettings 就有值了
+         * 插件 JS 用它来初始化 AI.serverSettings（覆盖 localStorage 旧配置）
+         */
+        private java.util.Map<String, Plugins> plugins;
+    }
+
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
+    public static class Plugins {
+        /** 插件初始化参数（字符串，由插件自己 JSON.parse） */
+        private String aiPluginSettings;
     }
 
     @Data

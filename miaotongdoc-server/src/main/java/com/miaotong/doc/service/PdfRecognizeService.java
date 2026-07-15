@@ -87,6 +87,33 @@ public class PdfRecognizeService {
     }
 
     /**
+     * 从识别结果中提取 OCR 坐标数据（按页分组）
+     * 用于在 PDF 原图位置叠加文字层（用户可框选复制）
+     */
+    public Map<String, Object> extractOcrData(Map<String, Object> result) {
+        Map<String, Object> ocrData = new LinkedHashMap<>();
+        Object pagesObj = result.get("pages");
+        if (!(pagesObj instanceof List)) {
+            return ocrData;
+        }
+        List<?> pagesList = (List<?>) pagesObj;
+        for (Object pageObj : pagesList) {
+            if (!(pageObj instanceof Map)) continue;
+            Map<?, ?> page = (Map<?, ?>) pageObj;
+            Object pageNum = page.get("pageNum");
+            Object regions = page.get("regions");
+            if (pageNum == null || !(regions instanceof List)) continue;
+
+            Map<String, Object> pageData = new LinkedHashMap<>();
+            pageData.put("regions", regions);
+            // 标注 DPI（用于前端坐标换算）
+            pageData.put("dpi", 200);
+            ocrData.put(String.valueOf(pageNum), pageData);
+        }
+        return ocrData;
+    }
+
+    /**
      * Docling 解析
      */
     private Map<String, Object> recognizeWithDocling(Document doc) throws Exception {

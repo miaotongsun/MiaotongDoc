@@ -194,7 +194,12 @@ export const pdfApi = {
 
   /** 获取 Markdown 内容 */
   getMarkdown(docId: number) {
-    return api.get<any, { recognized: boolean; markdown: Record<string, string>; recognizedAt: string | null }>(`/pdf/${docId}/markdown`)
+    return api.get<any, {
+      recognized: boolean
+      markdown: Record<string, string>
+      ocrData: Record<string, { dpi?: number; regions?: Array<{ text: string; bbox: number[]; confidence?: number }> }>
+      recognizedAt: string
+    }>(`/pdf/${docId}/markdown`)
   },
 
   /** 保存 Markdown 内容 */
