@@ -663,11 +663,7 @@ chmod +x update-deploy.sh
 
 ### 热更新 vs 冷更新
 
-| 方式 | 适用场景 | 停机时间 | 命令 |
-|------|----------|----------|------|
-| 热更新（挂载） | 前端静态资源 | 无 | `cp` + `docker compose restart nginx` |
-| 滚动重启 | 后端 API | 秒级 | `docker compose restart web-server` |
-| 冷更新（重建） | 编辑器、数据库迁移 | 分钟级 | `docker compose up -d --force-recreate` |
+详见 [开发规范 - 容器热更新 vs 冷更新](#容器热更新-vs-冷更新)
 
 ### 数据库迁移
 
@@ -703,6 +699,44 @@ docker compose restart nginx web-server
 ---
 
 ## 开发规范
+
+### 源码目录规范（重要！）
+
+**OnlyOffice 编辑器相关文件存在两个镜像位置，必须同步**：
+
+| 路径 | 用途 |
+|------|------|
+| `MiaotongDoc-Editor/` | **源码主目录**（git 跟踪、CI/CD 构建源）|
+| `MiaotongDoc-Docker/app/editor/` | Docker 构建 context（被 docker-compose 的 `build.context: ./app/editor` 使用）|
+
+**两个目录的插件文件必须保持完全一致**（MD5 相同）。
+
+**修改顺序（不能错！）**：
+
+1. **先**修改 `MiaotongDoc-Editor/...`（源码主目录）
+2. **再**同步到 `MiaotongDoc-Docker/app/editor/...`（Docker 构建目录）
+3. （可选）`docker cp` 到运行中的容器做热更新（不重建镜像）
+
+**同步验证**：
+
+```bash
+# 验证两个目录 MD5 一致
+md5sum MiaotongDoc-Editor/plugins/ai-plugin/scripts/engine/engine.js \
+       MiaotongDoc-Docker/app/editor/plugins/ai-plugin/scripts/engine/engine.js
+# 两个 MD5 必须相同
+```
+
+**常见错误**：只改一处 → 重建镜像时用旧版 → 行为倒退。
+
+### 容器热更新 vs 冷更新
+
+| 方式 | 命令 | 停机 | 适用场景 |
+|------|------|------|---------|
+| **热更新** | `docker cp` + `nginx -s reload` | 无 | 修改 JS/HTML/CSS 等静态文件 |
+| **热更新** | `mvn package` + `docker cp *.jar` + `docker restart` | 秒级 | 修改 Java 后端 |
+| **冷更新** | `docker compose build editor` + `up -d` | 5-10 分钟 | 改 Dockerfile、改 docservice 二进制、升级 OnlyOffice |
+
+**优先用热更新**，只在必须重建时才冷更新。
 
 ### 命名约定
 
