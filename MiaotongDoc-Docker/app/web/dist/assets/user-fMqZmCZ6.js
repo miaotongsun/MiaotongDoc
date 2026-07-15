@@ -1,2 +1,0 @@
-import{a as r}from"./_plugin-vue_export-helper-CZwdVwQ-.js";const u={getAll(){return r.get("/auth/users")},search(e){return r.get("/auth/users/search",{params:{keyword:e}})},create(e){return r.post("/admin/users",e)},update(e,t){return r.put(`/admin/users/${e}`,t)},deactivate(e){return r.delete(`/admin/users/${e}`)},resetPassword(e){return r.put(`/admin/users/${e}/reset-password`)},updateRole(e,t){return r.put(`/admin/users/${e}/role`,{role:t})},updateStatus(e){return r.put(`/admin/users/${e}/status`)}};export{u};
-//# sourceMappingURL=user-fMqZmCZ6.js.map
