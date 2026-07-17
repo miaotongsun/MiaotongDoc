@@ -1387,3 +1387,115 @@ renderer.setScale(Math.max(0.3, Math.min(scaleW, scaleH, 4)))
 2. **pdfjs worker 不要依赖 CDN**:内网环境必死,本地 public 是最稳的
 3. **nginx MIME 默认 octet-stream**:.mjs 必须显式映射为 application/javascript,否则浏览器拒绝 module 加载
 4. **IntersectionObserver 时序**:onMounted 创建 observer 时,子组件 ref bind 可能更早调用,需 nextTick 补 observe
+
+---
+
+## 三十一、Phase 12 - 表单/签署/安全(2026-07-17)
+
+> **状态**:✅ 全部 4 个子任务完成
+
+### 12.1 表单字段检测
+
+**后端** `GET /api/pdf/{id}/form-fields`:
+- 用 PDFBox 3.x `PDAcroForm` 遍历 `getFieldTree()`
+- 区分 `PDTextField` / `PDCheckBox` / `PDRadioButton` / `PDComboBox` / `PDListBox` / `PDSignatureField`
+- 取第一个 widget 的 page + rect(左下原点 PDF 坐标)
+- 跳过 `PDNonTerminalField`(非终结分组字段)
+- combobox/listbox/radio 提取 `getOptions()`
+
+**前端**:
+- PdfRightPanel 新增"表单" tab(第 4 个)
+- 类型筛选(全部/文本/复选/单选/下拉/签名)
+- 字段列表 + 类型徽章(蓝/绿/橙/红/紫/灰)+ 必填/只读标记
+- 点击字段 emit `focus-field` -> 跳转 + 画布 4 秒高亮矩形(PDF 坐标转 SVG 坐标)
+- 空状态:"该 PDF 无表单字段 / AcroForm 表单字段会自动识别"
+
+### 12.2 表单填充
+
+**后端** `POST /api/pdf/{id}/form-fields/fill`:
+- 接收 `{ values: { fieldName: value, ... } }`
+- 遍历字段根据类型调用 `setValue` / `check` / `unCheck`
+- 跳过只读字段(只读名记入 failed 列表)
+- 设 `acroForm.setNeedAppearances(true)` 重渲染字段外观
+- 返回新 PDF 字节
+
+**前端**:
+- 表单 tab 顶部"应用填充" + "重置"按钮
+- 字段内联编辑控件:
+  - text: input
+  - checkbox: input type=checkbox
+  - radio/combobox/listbox: select
+  - signature: 提示"请在画布上签署"
+  - 只读字段不可编辑,显示"只读: 值"
+- 修改过的字段高亮(蓝色边框 + 浅蓝背景)
+- 必填字段缺失时警告
+- 提交后下载填充后的 PDF
+
+### 12.3 签名
+
+**后端** `POST /api/pdf/{id}/signature`:
+- 接收 `{ image: base64, page, x, y, width, height }`(PDF 坐标 pt)
+- 校验位置在页面范围内
+- `PDImageXObject.createFromByteArray` 创建图片对象
+- `PDPageContentStream.AppendMode.APPEND` 在指定位置绘制图片
+- 返回签名后 PDF
+
+**前端** 新组件 `PdfSignatureDialog.vue`:
+- 3 个创建方式 tab:键入 / 绘制 / 上传
+- 键入:输入姓名,4 种书法字体(楷体/行楷/宝丽/隶变)
+- 绘制:canvas 手写板 + 颜色/粗细/清空
+- 上传:PNG/JPG(2MB 限制)
+- 创建后进入"放置模式",鼠标点击画布 -> 计算 PDF 坐标(屏幕 pt 转 PDF pt,Y 翻转) -> 调用后端 API -> 下载签名 PDF
+
+**集成**: Ribbon "分享"组新增"签名"按钮(独立于"发送签署")
+
+### 12.4 密码加密 + 密文
+
+**后端**:
+- `POST /api/pdf/{id}/encrypt` (已有 Phase 11) - 128 位 AES 加密
+- `POST /api/pdf/{id}/decrypt` (已有 Phase 11) - `setAllSecurityToBeRemoved`
+- `POST /api/pdf/{id}/redact` (新增) - 接收 `regions: [{page, x, y, width, height}]`,在指定区域绘制黑色矩形覆盖
+
+**前端** 新组件 `PdfSecurityDialog.vue`:
+- 2 个 tab:加密 / 解密
+- 加密:输入密码(>=4 位) + 确认密码
+- 解密:输入原密码
+- 完成后下载处理后的 PDF
+
+**集成**: Ribbon "分享"组新增"保护"按钮
+
+### API 验证
+
+```
+GET  /form-fields doc 161: 200 []  (扫描件无 AcroForm)
+POST /signature: 200 size=97163 type=application/pdf
+POST /redact:    200 size=96783 type=application/pdf
+```
+
+### UI 验证
+
+- "保护" dialog:打开成功,tabs [加密, 解密],2 inputs ✓
+- "签名" dialog:打开成功,tabs [键入, 绘制, 上传],type canvas + 4 字体 ✓
+- "表单" tab:打开成功(无字段时显示空状态) ✓
+
+### Critical Files
+
+**后端**:
+- `miaotongdoc-server/.../service/PdfToolService.java` - getFormFields/fillFormFields/embedSignature/applyRedaction
+- `miaotongdoc-server/.../controller/PdfController.java` - 4 个新 endpoint
+
+**前端**:
+- `miaotongdoc-web/src/api/pdf.ts` - PdfFormField / PdfSignatureRequest 类型 + 4 个 API 封装
+- `miaotongdoc-web/src/components/PdfRightPanel.vue` - 表单 tab + 内联编辑 + 状态管理
+- `miaotongdoc-web/src/components/PdfSignatureDialog.vue` (新) - 签名创建对话框
+- `miaotongdoc-web/src/components/PdfSecurityDialog.vue` (新) - 保护对话框
+- `miaotongdoc-web/src/components/PdfIcon.vue` - 新增 panelForm 图标
+- `miaotongdoc-web/src/components/PdfEditor.vue` - onFocusFormField / placeSignature / onOpenSecurityDialog
+- `miaotongdoc-web/src/components/PdfCanvas.vue` - formHighlight 矩形渲染 + 4 秒闪烁动画
+- `miaotongdoc-web/src/components/PdfRibbon.vue` - 分享组新增"签名" + "保护" 按钮
+
+### 待优化
+
+- 12.4 密文 UI:目前只有后端 API,前端缺交互工具(画黑色矩形触发)
+- 签名图片精确尺寸:目前简单 0.5 倍缩小,可改为可拖拽调整大小
+- 12.2 必填校验:可改为逐字段提示具体哪个字段缺失
