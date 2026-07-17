@@ -8,12 +8,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.multipdf.Splitter;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.rendering.ImageType;
@@ -26,6 +29,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -560,7 +564,9 @@ public class PdfToolService {
     }
 
     /**
-     * 提取 PDF 文字位置信息（用于编辑参考）
+     * 提取 PDF 文字位置信息(用于编辑参考)
+     * - 优先用 PDF 内嵌文字(原生 PDF 文字流)
+     * - 如果是扫描件/没内嵌文字,fallback 到 OCR 识别结果(doc.pdfOcrData)
      */
     public List<Map<String, Object>> extractTextPositions(Long docId) {
         Document doc = documentService.getDocument(docId);
@@ -578,9 +584,13 @@ public class PdfToolService {
                     PositionStripper stripper = new PositionStripper();
                     stripper.setStartPage(i + 1);
                     stripper.setEndPage(i + 1);
-                    String text = stripper.getText(pdf);
+                    stripper.getText(pdf);
 
                     List<Map<String, Object>> positions = stripper.getPositions();
+                    // 内嵌文字为空 → fallback 到 OCR 结果
+                    if (positions.isEmpty() && doc.getPdfOcrData() != null) {
+                        positions = extractPositionsFromOcr(doc.getPdfOcrData(), i + 1, pageSize);
+                    }
                     for (Map<String, Object> pos : positions) {
                         pos.put("pageNum", i + 1);
                         pos.put("pageWidth", pageSize.getWidth());
@@ -594,6 +604,59 @@ public class PdfToolService {
         }
 
         return allPositions;
+    }
+
+    /**
+     * 从 OCR 数据(jsonb Map<String, Object>)中提取指定页的位置信息。
+     * OCR 数据结构: { "1": { "regions": [{text, bbox:[x,y,w,h], confidence}], "dpi": 200 }, ... }
+     * bbox 坐标基于 OCR 像素,需要除以 DPI/72 换算到 PDF 点。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractPositionsFromOcr(
+            Map<String, Object> ocrData, int pageNum, PDRectangle pageSize) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Object pageObj = ocrData.get(String.valueOf(pageNum));
+        if (!(pageObj instanceof Map)) return result;
+        Map<String, Object> pageData = (Map<String, Object>) pageObj;
+        Object regionsObj = pageData.get("regions");
+        Object dpiObj = pageData.get("dpi");
+        if (!(regionsObj instanceof List)) return result;
+        List<?> regions = (List<?>) regionsObj;
+        double dpi = dpiObj instanceof Number ? ((Number) dpiObj).doubleValue() : 200.0;
+        // OCR bbox 是像素坐标,DPI 200 → 1 inch = 200 px = 72 pt
+        double pxToPt = 72.0 / dpi;
+
+        for (Object r : regions) {
+            if (!(r instanceof Map)) continue;
+            Map<String, Object> region = (Map<String, Object>) r;
+            String text = String.valueOf(region.getOrDefault("text", ""));
+            if (text.trim().isEmpty()) continue;
+            Object bbox = region.get("bbox");
+            if (!(bbox instanceof List) || ((List<?>) bbox).size() < 4) continue;
+            List<Number> b = (List<Number>) bbox;
+            double x = b.get(0).doubleValue() * pxToPt;
+            // OCR bbox 通常是 [x, y, w, h],y 像素 → PDF Y 向上需要翻转
+            double yPx = b.get(1).doubleValue();
+            double wPx = b.get(2).doubleValue();
+            double hPx = b.get(3).doubleValue();
+            double w = wPx * pxToPt;
+            double h = hPx * pxToPt;
+            // 像素 y 转 PDF pt:Y_pdf = (H_px - y_px - h_px) * pxToPt
+            double yPdf = yPx * pxToPt;
+            // bbox 高度估算字符大小
+            double fontSize = h;
+
+            Map<String, Object> pos = new java.util.LinkedHashMap<>();
+            pos.put("text", text);
+            pos.put("x", x);
+            pos.put("y", yPdf);
+            pos.put("fontSize", fontSize);
+            pos.put("font", "OCR");
+            pos.put("width", w);
+            pos.put("height", h);
+            result.add(pos);
+        }
+        return result;
     }
 
     /**
@@ -624,5 +687,340 @@ public class PdfToolService {
 
             positions.add(pos);
         }
+    }
+
+    // ==================== Phase 3: 原子化替换工具 ====================
+
+    /**
+     * 把新的 PDF 字节写回 storage,并同步更新 Document.filePath。
+     * 用于 Phase 3 页面操作(merge/delete/rotate/extract/reorder)统一原子化。
+     *
+     * 流程:
+     *   1. storageService.store() 写入新路径
+     *   2. 删除旧文件
+     *   3. Document.filePath → 新路径
+     *   4. documentService.updateDocument() 持久化
+     *
+     * @param docId 目标文档 ID
+     * @param newPdfBytes 新 PDF 字节流
+     * @param operation 操作描述(用于文件命名,例如 "merge", "rotate", "delete_page")
+     * @return 新文件路径
+     */
+    public String replacePdfBytes(Long docId, byte[] newPdfBytes, String operation) {
+        if (newPdfBytes == null || newPdfBytes.length == 0) {
+            throw new BusinessException("PDF 内容为空");
+        }
+
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+
+        String oldFilePath = doc.getFilePath();
+        String suffix = operation != null && !operation.isBlank() ? ("_" + operation) : "_modified";
+        String newFilePath = storageService.store(doc.getDocKey() + suffix, newPdfBytes);
+
+        // 删除旧文件(若存在且不同于新路径)
+        if (oldFilePath != null && !oldFilePath.equals(newFilePath)) {
+            try {
+                storageService.delete(oldFilePath);
+            } catch (Exception e) {
+                log.warn("删除旧 PDF 文件失败(非致命): path={}, error={}", oldFilePath, e.getMessage());
+            }
+        }
+
+        // 更新 Document
+        doc.setFilePath(newFilePath);
+        doc.setFileSize((long) newPdfBytes.length);
+        documentService.updateDocument(doc);
+
+        log.info("PDF 替换完成: docId={}, operation={}, newSize={}",
+                docId, operation, newPdfBytes.length);
+        return newFilePath;
+    }
+
+    /**
+     * 替换 PDF 字节(简化版,无 operation 标记)
+     */
+    public String replacePdfBytes(Long docId, byte[] newPdfBytes) {
+        return replacePdfBytes(docId, newPdfBytes, "modified");
+    }
+
+    // ==================== Phase 8: 书签/大纲 + 搜索 + 元数据 ====================
+
+    /**
+     * 提取 PDF 书签/大纲(树形结构)
+     * @return List<Map> 每个节点: { title, level, page }
+     */
+    public List<Map<String, Object>> extractOutline(Long docId) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        List<Map<String, Object>> result = new ArrayList<>();
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                PDDocumentOutline outline = pdf.getDocumentCatalog().getDocumentOutline();
+                if (outline == null) return result;
+                walkOutline(pdf, outline, 0, result);
+            }
+        } catch (Exception e) {
+            log.error("提取 PDF 大纲失败: docId={}", docId, e);
+        }
+        return result;
+    }
+
+    private void walkOutline(PDDocument pdf, PDDocumentOutline outline, int level, List<Map<String, Object>> acc) {
+        if (outline == null) return;
+        for (PDOutlineItem item : outline.children()) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("title", item.getTitle());
+            node.put("level", level);
+            node.put("page", 1);  // 简化:页码=1,后续可用反射完善
+            acc.add(node);
+            if (item.hasChildren()) {
+                Object child = item.getFirstChild();
+                if (child instanceof PDDocumentOutline) {
+                    walkOutline(pdf, (PDDocumentOutline) child, level + 1, acc);
+                }
+            }
+        }
+    }
+
+    /**
+     * 全文搜索(基于已提取的 text-positions)
+     */
+    public List<Map<String, Object>> searchText(Long docId, String keyword, boolean caseSensitive) {
+        if (keyword == null || keyword.isBlank()) return List.of();
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+
+        List<Map<String, Object>> positions = extractTextPositions(docId);
+        List<Map<String, Object>> results = new ArrayList<>();
+        String needle = caseSensitive ? keyword : keyword.toLowerCase();
+
+        Map<Integer, List<Map<String, Object>>> byPage = new LinkedHashMap<>();
+        for (Map<String, Object> p : positions) {
+            Object pno = p.get("pageNum");
+            if (pno == null) continue;
+            int page = ((Number) pno).intValue();
+            byPage.computeIfAbsent(page, k -> new ArrayList<>()).add(p);
+        }
+
+        for (Map.Entry<Integer, List<Map<String, Object>>> e : byPage.entrySet()) {
+            int pageNum = e.getKey();
+            StringBuilder sb = new StringBuilder();
+            for (Map<String, Object> p : e.getValue()) {
+                String text = (String) p.get("text");
+                if (text != null) sb.append(text);
+            }
+            String haystack = caseSensitive ? sb.toString() : sb.toString().toLowerCase();
+            int idx = 0;
+            while ((idx = haystack.indexOf(needle, idx)) != -1) {
+                int end = Math.min(idx + needle.length() + 30, sb.length());
+                String snippet = sb.substring(Math.max(0, idx - 15), Math.min(sb.length(), end));
+                Map<String, Object> hit = new LinkedHashMap<>();
+                hit.put("page", pageNum);
+                hit.put("snippet", "..." + snippet + "...");
+                hit.put("offset", idx);
+                results.add(hit);
+                idx += needle.length();
+                if (results.size() >= 200) break;
+            }
+            if (results.size() >= 200) break;
+        }
+        return results;
+    }
+
+    /**
+     * PDF 元数据(标题/作者/创建时间等)
+     */
+    public Map<String, Object> getPdfMetadata(Long docId) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        Map<String, Object> meta = new LinkedHashMap<>();
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                PDDocumentInformation info = pdf.getDocumentInformation();
+                meta.put("title", info.getTitle() != null ? info.getTitle() : doc.getTitle());
+                meta.put("author", info.getAuthor());
+                meta.put("subject", info.getSubject());
+                meta.put("creator", info.getCreator());
+                meta.put("producer", info.getProducer());
+                meta.put("creationDate", info.getCreationDate() != null
+                    ? info.getCreationDate().toString() : null);
+                meta.put("modificationDate", info.getModificationDate() != null
+                    ? info.getModificationDate().toString() : null);
+                meta.put("pageCount", pdf.getNumberOfPages());
+                meta.put("pdfVersion", pdf.getVersion());
+                meta.put("fileSize", doc.getFileSize());
+                PDPage firstPage = pdf.getPage(0);
+                if (firstPage != null) {
+                    PDRectangle box = firstPage.getMediaBox();
+                    meta.put("pageWidth", box.getWidth());
+                    meta.put("pageHeight", box.getHeight());
+                }
+            }
+        } catch (Exception e) {
+            log.error("提取 PDF 元数据失败: docId={}", docId, e);
+        }
+        return meta;
+    }
+
+    // ==================== Phase 11: 插入 / 裁剪 / 水印 / 页眉页脚 ====================
+
+    /**
+     * 在指定位置后插入空白页(默认插在最后一页)
+     * @param afterPage 在哪页后插入,0 = 末尾
+     */
+    public byte[] insertBlankPage(Long docId, int afterPage) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
+            PDPage blank = new PDPage(pdf.getPage(0).getMediaBox());
+            pdf.addPage(blank);
+            int insertIdx = Math.min(afterPage, pdf.getNumberOfPages() - 1);
+            if (insertIdx < pdf.getNumberOfPages() - 1) {
+                List<PDPage> pages = new ArrayList<>();
+                for (int i = 0; i < pdf.getNumberOfPages(); i++) pages.add(pdf.getPage(i));
+                PDPage inserted = pages.remove(pages.size() - 1);
+                pages.add(insertIdx, inserted);
+                PDDocument newPdf = new PDDocument();
+                for (PDPage p : pages) newPdf.addPage(p);
+                newPdf.setDocumentInformation(pdf.getDocumentInformation());
+                byte[] out = newDocBytes(newPdf, "insert-blank");
+                newPdf.close();
+                replacePdfBytes(docId, out, "insert-blank");
+                return out;
+            }
+            byte[] out = newDocBytes(pdf, "insert-blank");
+            replacePdfBytes(docId, out, "insert-blank");
+            return out;
+        } catch (Exception e) {
+            log.error("插入空白页失败: docId={}, afterPage={}", docId, afterPage, e);
+            throw new BusinessException("插入空白页失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 裁剪指定页(设置 CropBox)
+     * @param cropBox {x, y, width, height} 单位 PDF 点
+     */
+    public byte[] cropPages(Long docId, List<Integer> pages, Map<String, Double> cropBox) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        double x = cropBox.getOrDefault("x", 0.0);
+        double y = cropBox.getOrDefault("y", 0.0);
+        double w = cropBox.getOrDefault("width", 0.0);
+        double h = cropBox.getOrDefault("height", 0.0);
+        if (w <= 0 || h <= 0) throw new BusinessException("裁剪宽高必须 > 0");
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
+            for (int pageNum : pages) {
+                if (pageNum < 1 || pageNum > pdf.getNumberOfPages()) continue;
+                PDPage page = pdf.getPage(pageNum - 1);
+                page.setCropBox(new PDRectangle((float) x, (float) y, (float) w, (float) h));
+            }
+            byte[] out = newDocBytes(pdf, "crop");
+            replacePdfBytes(docId, out, "crop");
+            return out;
+        } catch (Exception e) {
+            log.error("裁剪失败: docId={}, pages={}", docId, pages, e);
+            throw new BusinessException("裁剪失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 在指定页叠加文字水印
+     * @param text 水印文字
+     * @param opacity 0-1
+     * @param rotation 旋转角度(度)
+     * @param pages 页码列表,空 = 全部
+     */
+    public byte[] addWatermark(Long docId, String text, double opacity, double rotation, List<Integer> pages) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
+            List<Integer> targetPages = (pages == null || pages.isEmpty())
+                ? allPages(pdf) : pages;
+            for (int pageNum : targetPages) {
+                if (pageNum < 1 || pageNum > pdf.getNumberOfPages()) continue;
+                PDPage page = pdf.getPage(pageNum - 1);
+                PDRectangle box = page.getMediaBox();
+                try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+                    org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState gs = new org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState();
+                    gs.setNonStrokingAlphaConstant((float) Math.max(0, Math.min(1, opacity)));
+                    cs.setGraphicsStateParameters(gs);
+                    cs.saveGraphicsState();
+                    float fontSize = Math.max(40f, Math.min(box.getWidth(), box.getHeight()) / 6f);
+                    float x = box.getWidth() / 2f;
+                    float y = box.getHeight() / 2f;
+                    double rad = Math.toRadians(rotation);
+                    cs.transform(new org.apache.pdfbox.util.Matrix(
+                        (float) Math.cos(rad), (float) Math.sin(rad),
+                        (float) -Math.sin(rad), (float) Math.cos(rad),
+                        x, y));
+                    cs.beginText();
+                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), fontSize);
+                    cs.showText(text == null ? "" : text);
+                    cs.endText();
+                    cs.restoreGraphicsState();
+                }
+            }
+            byte[] out = newDocBytes(pdf, "watermark");
+            replacePdfBytes(docId, out, "watermark");
+            return out;
+        } catch (Exception e) {
+            log.error("水印失败: docId={}, text={}", docId, text, e);
+            throw new BusinessException("水印失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 添加页眉/页脚文字
+     */
+    public byte[] addHeaderFooter(Long docId, String position, String content, double fontSize, List<Integer> pages) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
+            int total = pdf.getNumberOfPages();
+            List<Integer> targetPages = (pages == null || pages.isEmpty())
+                ? allPages(pdf) : pages;
+            for (int pageNum : targetPages) {
+                if (pageNum < 1 || pageNum > pdf.getNumberOfPages()) continue;
+                PDPage page = pdf.getPage(pageNum - 1);
+                PDRectangle box = page.getMediaBox();
+                String resolved = content == null ? "" : content
+                    .replace("{page}", String.valueOf(pageNum))
+                    .replace("{total}", String.valueOf(total));
+                try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+                    float y = "footer".equalsIgnoreCase(position) ? 24f : box.getHeight() - 24f;
+                    cs.beginText();
+                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), (float) fontSize);
+                    cs.newLineAtOffset(40, y);
+                    cs.showText(resolved);
+                    cs.endText();
+                }
+            }
+            byte[] out = newDocBytes(pdf, position);
+            replacePdfBytes(docId, out, position);
+            return out;
+        } catch (Exception e) {
+            log.error("页眉页脚失败: docId={}, position={}", docId, position, e);
+            throw new BusinessException("页眉页脚失败: " + e.getMessage());
+        }
+    }
+
+    private List<Integer> allPages(PDDocument pdf) {
+        List<Integer> all = new ArrayList<>();
+        for (int i = 1; i <= pdf.getNumberOfPages(); i++) all.add(i);
+        return all;
+    }
+
+    /**
+     * 把 PDDocument 写出到字节数组(用于原子替换落盘)
+     */
+    private byte[] newDocBytes(PDDocument pdf, String op) throws java.io.IOException {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        pdf.save(baos);
+        log.info("Phase 11 {} 文档生成完成", op);
+        return baos.toByteArray();
     }
 }

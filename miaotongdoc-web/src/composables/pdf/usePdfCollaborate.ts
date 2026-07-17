@@ -19,7 +19,19 @@ import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 import { ref, onUnmounted } from 'vue'
 
-export type AnnotationType = 'highlight' | 'comment' | 'draw'
+export type AnnotationType =
+  | 'highlight'
+  | 'comment'
+  | 'draw'
+  // Phase 10: 形状工具
+  | 'rectangle'
+  | 'ellipse'
+  | 'arrow'
+  | 'line'
+  | 'underline'
+  | 'strikethrough'
+  // Phase 10: 图章(用 SVG 文本图章)
+  | 'stamp'
 
 export interface PdfAnnotation {
   id: string
@@ -29,6 +41,10 @@ export interface PdfAnnotation {
   color: string
   content?: string
   points?: number[]
+  /** 形状宽度(stroke width,用于 rectangle/ellipse/arrow/line) */
+  strokeWidth?: number
+  /** 图章文本(仅 stamp 类型) */
+  stampText?: string
   userId: number
   userName: string
   createdAt: string

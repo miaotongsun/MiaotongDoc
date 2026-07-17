@@ -90,6 +90,20 @@ router.beforeEach((to, _from, next) => {
     sessionStorage.removeItem('token')
   }
 
+  // 动态标题(改善 UX,用户能在浏览器标签看到当前页)
+  const routeTitleMap: Record<string, string> = {
+    Login: '登录',
+    Home: '我的文档',
+    DocEditor: '文档编辑器',
+    ContractDetail: '合同详情',
+    SigningTask: '签署任务',
+    ActivityFeed: '动态',
+    Admin: '管理后台',
+  }
+  const baseName = 'MiaotongDoc - 妙同文档'
+  const subTitle = routeTitleMap[to.name as string] || ''
+  document.title = subTitle ? `${subTitle} · ${baseName}` : baseName
+
   next()
 })
 

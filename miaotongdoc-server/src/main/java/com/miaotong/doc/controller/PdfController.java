@@ -13,6 +13,8 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -184,10 +186,10 @@ public class PdfController {
     // ==================== 页面操作 ====================
 
     /**
-     * 合并多个 PDF
+     * 合并多个 PDF(Phase 3:原子化覆盖当前文档)
      */
     @PostMapping("/merge")
-    public ResponseEntity<byte[]> merge(
+    public ResponseEntity<Map<String, Object>> merge(
             @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
         @SuppressWarnings("unchecked")
@@ -197,12 +199,17 @@ public class PdfController {
         }
 
         List<Long> ids = docIds.stream().map(Number::longValue).toList();
+        // 第一个文档为"目标文档"(操作后 filePath 指向新 PDF)
+        Long targetDocId = ids.get(0);
         byte[] result = pdfToolService.merge(ids);
+        String newFilePath = pdfToolService.replacePdfBytes(targetDocId, result, "merge");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("merged.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已合并 " + ids.size() + " 个 PDF",
+            "filePath", newFilePath,
+            "targetDocId", targetDocId
+        ));
     }
 
     /**
@@ -220,10 +227,10 @@ public class PdfController {
     }
 
     /**
-     * 旋转页面
+     * 旋转页面(Phase 3:原子化)
      */
     @PostMapping("/{id}/pages/rotate")
-    public ResponseEntity<byte[]> rotatePages(
+    public ResponseEntity<Map<String, Object>> rotatePages(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
@@ -237,34 +244,40 @@ public class PdfController {
 
         List<Integer> pageList = pages.stream().map(Number::intValue).toList();
         byte[] result = pdfToolService.rotatePages(id, pageList, degrees);
+        String newFilePath = pdfToolService.replacePdfBytes(id, result, "rotate");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("rotated.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已旋转 " + pageList.size() + " 页 (" + degrees + "°)",
+            "filePath", newFilePath,
+            "rotatedPages", pageList
+        ));
     }
 
     /**
-     * 删除页面
+     * 删除页面(Phase 3:原子化)
      */
     @DeleteMapping("/{id}/pages/{pageNum}")
-    public ResponseEntity<byte[]> deletePage(
+    public ResponseEntity<Map<String, Object>> deletePage(
             @PathVariable Long id,
             @PathVariable int pageNum,
             HttpServletRequest httpRequest) {
         byte[] result = pdfToolService.deletePages(id, List.of(pageNum));
+        String newFilePath = pdfToolService.replacePdfBytes(id, result, "delete_page");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("modified.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已删除第 " + pageNum + " 页",
+            "filePath", newFilePath,
+            "deletedPage", pageNum
+        ));
     }
 
     /**
-     * 提取页面
+     * 提取页面(Phase 3:原子化)
      */
     @PostMapping("/{id}/pages/extract")
-    public ResponseEntity<byte[]> extractPages(
+    public ResponseEntity<Map<String, Object>> extractPages(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
@@ -276,18 +289,21 @@ public class PdfController {
 
         List<Integer> pageList = pages.stream().map(Number::intValue).toList();
         byte[] result = pdfToolService.extractPages(id, pageList);
+        String newFilePath = pdfToolService.replacePdfBytes(id, result, "extract");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("extracted.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已提取 " + pageList.size() + " 页",
+            "filePath", newFilePath,
+            "extractedPages", pageList
+        ));
     }
 
     /**
-     * 重排页面
+     * 重排页面(Phase 3:原子化)
      */
     @PostMapping("/{id}/pages/reorder")
-    public ResponseEntity<byte[]> reorderPages(
+    public ResponseEntity<Map<String, Object>> reorderPages(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
@@ -299,11 +315,111 @@ public class PdfController {
 
         List<Integer> order = newOrder.stream().map(Number::intValue).toList();
         byte[] result = pdfToolService.reorderPages(id, order);
+        String newFilePath = pdfToolService.replacePdfBytes(id, result, "reorder");
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("reordered.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已重排页面",
+            "filePath", newFilePath,
+            "newOrder", order
+        ));
+    }
+
+    // ==================== Phase 11: 页面操作(插入/裁剪/水印/页眉页脚) ====================
+
+    /**
+     * 插入空白页
+     * body: { "afterPage": int } 0 = 末尾
+     */
+    @PostMapping("/{id}/pages/insert-blank")
+    public ResponseEntity<Map<String, Object>> insertBlankPage(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        int afterPage = 0;
+        if (body != null && body.get("afterPage") instanceof Number) {
+            afterPage = ((Number) body.get("afterPage")).intValue();
+        }
+        byte[] newBytes = pdfToolService.insertBlankPage(id, afterPage);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已插入空白页",
+            "bustUrl", newBytes != null ? System.currentTimeMillis() : null
+        ));
+    }
+
+    /**
+     * 裁剪页面
+     * body: { "pages": [1,2], "cropBox": {x, y, width, height} }
+     */
+    @PostMapping("/{id}/pages/crop")
+    public ResponseEntity<Map<String, Object>> cropPages(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        @SuppressWarnings("unchecked")
+        List<Number> rawPages = (List<Number>) body.get("pages");
+        @SuppressWarnings("unchecked")
+        Map<String, Number> rawBox = (Map<String, Number>) body.get("cropBox");
+        if (rawPages == null || rawBox == null) throw new BusinessException("pages 和 cropBox 必填");
+        List<Integer> pages = new ArrayList<>();
+        for (Number n : rawPages) pages.add(n.intValue());
+        Map<String, Double> cropBox = new HashMap<>();
+        for (Map.Entry<String, Number> e : rawBox.entrySet()) cropBox.put(e.getKey(), e.getValue().doubleValue());
+        byte[] newBytes = pdfToolService.cropPages(id, pages, cropBox);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已裁剪 " + pages.size() + " 页",
+            "bustUrl", newBytes != null ? System.currentTimeMillis() : null
+        ));
+    }
+
+    /**
+     * 添加水印
+     * body: { "text": str, "opacity": 0-1, "rotation": degrees, "pages": [int] }
+     */
+    @PostMapping("/{id}/watermark")
+    public ResponseEntity<Map<String, Object>> addWatermark(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        String text = (String) body.getOrDefault("text", "CONFIDENTIAL");
+        double opacity = body.get("opacity") instanceof Number ? ((Number) body.get("opacity")).doubleValue() : 0.3;
+        double rotation = body.get("rotation") instanceof Number ? ((Number) body.get("rotation")).doubleValue() : 45;
+        @SuppressWarnings("unchecked")
+        List<Number> rawPages = (List<Number>) body.get("pages");
+        List<Integer> pages = new ArrayList<>();
+        if (rawPages != null) for (Number n : rawPages) pages.add(n.intValue());
+        byte[] newBytes = pdfToolService.addWatermark(id, text, opacity, rotation, pages);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已添加水印",
+            "bustUrl", newBytes != null ? System.currentTimeMillis() : null
+        ));
+    }
+
+    /**
+     * 添加页眉/页脚
+     * body: { "position": "header"|"footer", "content": str, "fontSize": num, "pages": [int] }
+     */
+    @PostMapping("/{id}/header-footer")
+    public ResponseEntity<Map<String, Object>> addHeaderFooter(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        String position = (String) body.getOrDefault("position", "footer");
+        String content = (String) body.getOrDefault("content", "Page {page} of {total}");
+        double fontSize = body.get("fontSize") instanceof Number ? ((Number) body.get("fontSize")).doubleValue() : 10;
+        @SuppressWarnings("unchecked")
+        List<Number> rawPages = (List<Number>) body.get("pages");
+        List<Integer> pages = new ArrayList<>();
+        if (rawPages != null) for (Number n : rawPages) pages.add(n.intValue());
+        byte[] newBytes = pdfToolService.addHeaderFooter(id, position, content, fontSize, pages);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已添加页眉页脚",
+            "bustUrl", newBytes != null ? System.currentTimeMillis() : null
+        ));
     }
 
     // ==================== 优化 ====================
@@ -538,8 +654,9 @@ public class PdfController {
 
         // 保存识别结果到文档
         if (result.containsKey("markdown")) {
-            @SuppressWarnings("unchecked")
-            Map<String, String> markdown = (Map<String, String>) result.get("markdown");
+            String markdownStr = String.valueOf(result.get("markdown"));
+            // 把整篇 markdown 包装成 Map<pageNum, content>
+            Map<String, String> markdown = splitMarkdownByPage(markdownStr);
             documentService.savePdfMarkdown(id, markdown);
 
             // 提取并保存 OCR 坐标数据（用于在 PDF 原图位置叠加文字层，支持框选复制）
@@ -553,6 +670,123 @@ public class PdfController {
         }
 
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Phase 11.4: 强制走 PaddleOCR(中文扫描件带 bbox 坐标)
+     * 跳过 Docling 路径,直接用 PaddleOCR 拿到完整坐标数据
+     */
+    @PostMapping("/{id}/recognize-paddle")
+    public ResponseEntity<Map<String, Object>> recognizePaddle(@PathVariable Long id) {
+        Map<String, Object> result = pdfRecognizeService.recognizeWithPaddle(id);
+        if ("success".equals(result.get("status"))) {
+            Object mdObj = result.get("markdown");
+            if (mdObj != null) {
+                Map<String, String> markdown = splitMarkdownByPage(String.valueOf(mdObj));
+                documentService.savePdfMarkdown(id, markdown);
+            }
+            Map<String, Object> ocrData = pdfRecognizeService.extractOcrData(result);
+            if (!ocrData.isEmpty()) {
+                documentService.savePdfOcrData(id, ocrData);
+                log.info("Phase 11.4 PaddleOCR 坐标数据已保存: docId={}, pages={}", id, ocrData.size());
+            }
+            documentService.markPdfRecognized(id);
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 把单字符串 markdown 切成 Map<pageNum, content>。
+     * 策略:遇到水平线 "===" 或 "# Page N" 标记就分页,否则整体存为 "1"。
+     */
+    private Map<String, String> splitMarkdownByPage(String markdown) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (markdown == null || markdown.isBlank()) return result;
+        String[] parts = markdown.split("(?m)^={3,}\\s*$|\\n# Page\\s+\\d+");
+        if (parts.length <= 1) {
+            result.put("1", markdown);
+        } else {
+            for (int i = 0; i < parts.length; i++) {
+                String trimmed = parts[i].trim();
+                if (!trimmed.isEmpty()) result.put(String.valueOf(i + 1), trimmed);
+            }
+        }
+        return result;
+    }
+
+    // ==================== Phase 8: 书签/大纲 + 搜索 + 元数据 ====================
+
+    /**
+     * 获取 PDF 书签/大纲(树形结构,平铺数组带 level 字段)
+     * GET /api/pdf/{id}/outline
+     */
+    @GetMapping("/{id}/outline")
+    public ResponseEntity<Map<String, Object>> getOutline(@PathVariable Long id) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        try {
+            List<Map<String, Object>> outline = pdfToolService.extractOutline(id);
+            return ResponseEntity.ok(Map.of(
+                "outline", outline,
+                "count", outline.size()
+            ));
+        } catch (Exception e) {
+            log.error("获取 PDF 大纲失败: docId={}", id, e);
+            return ResponseEntity.ok(Map.of("outline", List.of(), "count", 0));
+        }
+    }
+
+    /**
+     * 全文搜索
+     * GET /api/pdf/{id}/search?q=keyword&caseSensitive=false
+     */
+    @GetMapping("/{id}/search")
+    public ResponseEntity<Map<String, Object>> search(
+            @PathVariable Long id,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "caseSensitive", required = false, defaultValue = "false") boolean caseSensitive) {
+        return doSearch(id, q, caseSensitive);
+    }
+
+    /**
+     * POST 版本搜索(支持中文 query,绕过 Tomcat 严格 URL 解析)
+     * body: { "q": "搜索词", "caseSensitive": false }
+     */
+    @PostMapping("/{id}/search")
+    public ResponseEntity<Map<String, Object>> searchPost(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+        String q = body != null ? (String) body.get("q") : null;
+        boolean caseSensitive = body != null && Boolean.TRUE.equals(body.get("caseSensitive"));
+        return doSearch(id, q, caseSensitive);
+    }
+
+    private ResponseEntity<Map<String, Object>> doSearch(Long id, String q, boolean caseSensitive) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        try {
+            List<Map<String, Object>> hits = pdfToolService.searchText(id, q, caseSensitive);
+            return ResponseEntity.ok(Map.of(
+                "results", hits,
+                "count", hits.size(),
+                "query", q != null ? q : ""
+            ));
+        } catch (Exception e) {
+            log.error("搜索失败: docId={}, q={}", id, q, e);
+            return ResponseEntity.ok(Map.of("results", List.of(), "count", 0, "query", ""));
+        }
+    }
+
+    /**
+     * PDF 元数据
+     * GET /api/pdf/{id}/metadata
+     */
+    @GetMapping("/{id}/metadata")
+    public ResponseEntity<Map<String, Object>> getMetadata(@PathVariable Long id) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        Map<String, Object> meta = pdfToolService.getPdfMetadata(id);
+        return ResponseEntity.ok(meta);
     }
 
     /**

@@ -276,7 +276,7 @@ draft (草稿)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/login` | 用户登录 |
+| POST | `/login` | 用户登录 推荐命令 curl -s -X POST "http://localhost:9004/api/auth/login" -H "Content-Type: application/json" -d '{"username":"10000000","password":"123456"}' 2>&1 |
 | POST | `/register` | 用户注册 |
 | GET | `/me` | 获取当前用户信息 |
 | PUT | `/password` | 修改密码 |

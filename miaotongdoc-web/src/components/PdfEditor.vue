@@ -1,321 +1,481 @@
+<!--
+  PdfEditor.vue V3 —— Adobe 风格主壳
+
+  5 段式布局:
+    [Ribbon 多标签顶栏]
+    [缩略图侧栏] [中央画布 + 间隙] [右侧任务面板(可选)]
+    [状态条]
+
+  V2 → V3 关键修复:
+    - 缩略图栏 z-index + flex-shrink:0,不再遮挡工具栏
+    - 真正 5 段布局(Ribbon / Thumb / Canvas / RightPanel / Status)
+    - 状态条简洁(页码 + 缩放 + 工具 + 标注数 + 保存状态)
+    - 保留 V2 的所有功能(文本编辑 / 页面操作 / AI 浮窗 / 协同)
+-->
 <template>
-  <div class="pdf-editor-container">
-    <!-- 工具栏 -->
-    <div class="toolbar">
-      <!-- 左侧：翻页 -->
-      <div class="toolbar-group">
-        <el-button-group>
-          <el-tooltip content="上一页" placement="bottom">
-            <el-button size="small" :disabled="currentPage <= 1" @click="prevPage">
-              <el-icon><ArrowLeft /></el-icon>
-            </el-button>
-          </el-tooltip>
-          <el-tooltip content="下一页" placement="bottom">
-            <el-button size="small" :disabled="currentPage >= totalPages" @click="nextPage">
-              <el-icon><ArrowRight /></el-icon>
-            </el-button>
-          </el-tooltip>
-        </el-button-group>
-        <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
-      </div>
+  <div class="pdf-editor-v3" :data-active-tool="activeTool" :data-view-mode="viewMode">
+    <!-- 1. Ribbon 多标签顶栏 -->
+    <PdfRibbon
+      :active-tab="activeRibbonTab"
+      :active-tool="activeTool"
+      :active-color="activeColor"
+      :view-mode="viewMode"
+      :right-panel="rightPanelOpen"
+      :stamp-text="stampText"
+      :stamp-presets="stampPresets"
+      @change-tab="onChangeRibbonTab"
+      @select-tool="selectTool"
+      @select-color="selectColor"
+      @update:stamp-text="onStampTextChange"
+      @set-view-mode="setViewMode"
+      @cycle-view-mode="cycleViewMode"
+      @toggle-panel="toggleRightPanel"
+      @zoom-in="onZoomIn"
+      @zoom-out="onZoomOut"
+      @fit-width="onFitWidth"
+      @fit-page="onFitPage"
+      @actual-size="onActualSize"
+      @zoom-menu="onZoomMenu"
+      @save="onSave"
+      @print="onPrint"
+      @share="onShare"
+      @send-sign="onSendSign"
+      @open-ai="onOpenAi"
+      @ocr-recognize="onOcrRecognize"
+      @page-merge="onOpenMerge"
+      @page-extract="onExtractCurrent"
+      @page-rotate-all="onRotateAll"
+      @page-insert="onInsertBlank"
+      @page-insert-from-file="onInsertFromFile"
+      @watermark="onWatermark"
+      @header-footer="onHeaderFooter"
+      @export-menu="onOpenExport" />
+    />
 
-      <el-divider direction="vertical" />
+    <!-- 2. 主体三栏 -->
+    <div class="pdf-editor-body">
+      <!-- 左侧:缩略图 -->
+      <PdfThumbPanel
+        :total-pages="totalPages"
+        :current-page="currentPage"
+        :collapsed="thumbCollapsed"
+        @goto="goToPage"
+        @rotate="onRotatePage"
+        @reorder="onReorderPages"
+        @context-menu="onThumbContextMenu"
+        @thumb-ready="onThumbReady"
+        @toggle-collapse="thumbCollapsed = !thumbCollapsed"
+      />
 
-      <!-- 中间：缩放 -->
-      <div class="toolbar-group">
-        <el-tooltip content="缩小" placement="bottom">
-          <el-button size="small" @click="zoomOut" :disabled="scale <= 0.3">
-            <el-icon><ZoomOut /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <span class="scale-indicator">{{ Math.round(scale * 100) }}%</span>
-        <el-tooltip content="放大" placement="bottom">
-          <el-button size="small" @click="zoomIn" :disabled="scale >= 4">
-            <el-icon><ZoomIn /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="适应宽度" placement="bottom">
-          <el-button size="small" @click="fitWidth">
-            <el-icon><FullScreen /></el-icon>
-          </el-button>
-        </el-tooltip>
-      </div>
-
-      <el-divider direction="vertical" />
-
-      <!-- 标注工具 -->
-      <div class="toolbar-group">
-        <el-tooltip content="选择（文本选择）" placement="bottom">
-          <el-button size="small" :type="activeTool === 'select' ? 'primary' : 'default'" @click="activeTool = 'select'">
-            <el-icon><Pointer /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="高亮" placement="bottom">
-          <el-button size="small" :type="activeTool === 'highlight' ? 'primary' : 'default'" @click="activeTool = 'highlight'">
-            <el-icon><Edit /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="批注" placement="bottom">
-          <el-button size="small" :type="activeTool === 'comment' ? 'primary' : 'default'" @click="activeTool = 'comment'">
-            <el-icon><ChatLineSquare /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="画笔" placement="bottom">
-          <el-button size="small" :type="activeTool === 'draw' ? 'primary' : 'default'" @click="activeTool = 'draw'">
-            <el-icon><EditPen /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip content="橡皮擦" placement="bottom">
-          <el-button size="small" :type="activeTool === 'eraser' ? 'primary' : 'default'" @click="activeTool = 'eraser'">
-            <el-icon><Brush /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-color-picker v-model="activeColor" size="small" :predefine="predefineColors" />
-      </div>
-
-      <el-divider direction="vertical" />
-
-      <!-- 右侧：导出和侧边 -->
-      <div class="toolbar-group toolbar-right">
-        <el-tooltip content="导出" placement="bottom">
-          <el-dropdown trigger="click" @command="handleConvert">
-            <el-button size="small" :loading="converting">
-              <el-icon><Download /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="md">Markdown</el-dropdown-item>
-                <el-dropdown-item command="txt">纯文本</el-dropdown-item>
-                <el-dropdown-item command="docx">Word</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </el-tooltip>
-
-        <el-tooltip :content="showThumbnails ? '隐藏缩略图' : '显示缩略图'" placement="bottom">
-          <el-button size="small" @click="showThumbnails = !showThumbnails">
-            <el-icon><Grid /></el-icon>
-          </el-button>
-        </el-tooltip>
-
-        <el-tooltip content="AI 助手" placement="bottom">
-          <el-button size="small" @click="openAiChat">
-            <el-icon><MagicStick /></el-icon>
-          </el-button>
-        </el-tooltip>
-      </div>
-    </div>
-
-    <!-- 主体区域 -->
-    <div class="main-layout">
-      <!-- 左侧缩略图 -->
-      <transition name="slide-left">
-        <div class="thumbnails-panel" v-if="showThumbnails">
-          <div
-            v-for="page in totalPages"
-            :key="page"
-            class="thumb-item"
-            :class="{ active: currentPage === page }"
-            @click="goToPage(page)"
-          >
-            <canvas :ref="el => setThumbRef(page, el)" class="thumb-canvas" />
-            <span class="thumb-num">{{ page }}</span>
+      <!-- 中央:画布 + 多页 + 间隙 -->
+      <main class="pdf-canvas-area" ref="canvasAreaRef">
+        <div v-if="loading" class="pdf-state pdf-state-loading">
+          <div class="pdf-state-spinner"></div>
+          <span>正在加载 PDF...</span>
+        </div>
+        <div v-else-if="error" class="pdf-state pdf-state-error">
+          <span>⚠ {{ error }}</span>
+        </div>
+        <!-- Phase 11.8: PDF 加载完但 pageRawHeight 还没就绪时显示骨架占位,模拟真实文档布局 -->
+        <div v-else-if="pageRawHeight === 0" class="pdf-canvas-skeleton">
+          <div class="pdf-canvas-skeleton-card">
+            <div class="pdf-canvas-skeleton-head">
+              <div class="pdf-canvas-skeleton-line w-30 h-20"></div>
+              <div class="pdf-canvas-skeleton-line w-50 h-12"></div>
+            </div>
+            <div class="pdf-canvas-skeleton-body">
+              <div class="pdf-canvas-skeleton-line w-90"></div>
+              <div class="pdf-canvas-skeleton-line w-75"></div>
+              <div class="pdf-canvas-skeleton-line w-95"></div>
+              <div class="pdf-canvas-skeleton-line w-60"></div>
+              <div class="pdf-canvas-skeleton-line w-88"></div>
+              <div class="pdf-canvas-skeleton-line w-70"></div>
+              <div class="pdf-canvas-skeleton-chart"></div>
+              <div class="pdf-canvas-skeleton-line w-92"></div>
+              <div class="pdf-canvas-skeleton-line w-65"></div>
+              <div class="pdf-canvas-skeleton-line w-80"></div>
+              <div class="pdf-canvas-skeleton-line w-50"></div>
+            </div>
+            <div class="pdf-canvas-skeleton-footer">
+              <span class="pdf-canvas-skeleton-text">正在准备画布...</span>
+              <div class="pdf-canvas-skeleton-line w-15 h-8"></div>
+            </div>
           </div>
         </div>
-      </transition>
-
-      <!-- PDF 预览区 -->
-      <div class="pdf-viewer" ref="containerRef" @scroll="onScroll">
-        <div
-          v-for="page in totalPages"
-          :key="page"
-          class="page-wrapper"
-          :ref="el => setPageRef(page, el)"
-        >
-          <div class="page-container" :style="{ width: pageWidth + 'px', height: pageHeight + 'px' }">
-            <!-- PDF Canvas -->
-            <canvas :ref="el => setCanvasRef(page, el)" class="page-canvas" />
-
-            <!-- 文字层（用于选择复制） -->
-            <div
-              class="text-layer"
-              :class="{ active: activeTool === 'select' }"
-              :ref="el => setTextLayerRef(page, el)"
-            />
-
-            <!-- 标注层 -->
-            <div
-              class="annotation-layer"
-              :class="{ editing: activeTool !== 'select' }"
-              :ref="el => setAnnotationRef(page, el)"
-              @mousedown="onMouseDown($event, page)"
-              @mousemove="onMouseMove($event, page)"
-              @mouseup="onMouseUp($event, page)"
-              @mouseleave="onMouseLeave($event, page)"
+        <template v-else>
+          <!-- V3: 单页 / 连续 / 双页 三种视图 -->
+          <template v-if="viewMode === 'single'">
+            <PdfCanvas
+              :key="currentPage"
+              :page-num="currentPage"
+              :total-pages="totalPages"
+              :scale="scale"
+              :page-raw-width="pageRawWidth"
+              :page-raw-height="pageRawHeight"
+              :active-tool="activeTool"
+              :active-color="activeColor"
+              :annotations="annotations"
+              :pending-rect="pendingRect"
+              :drawing-path="drawingPath"
+              :recognized="recognizedPages.has(currentPage)"
+              @ready="onPageReady"
+              @mouse-down="onCanvasMouseDown"
+              @mouse-move="onCanvasMouseMove"
+              @mouse-up="onCanvasMouseUp"
+              @mouse-leave="onCanvasMouseLeave"
             >
-              <!-- 高亮 -->
-              <div
-                v-for="ann in getPageAnnotations(page, 'highlight')"
-                :key="ann.id"
-                class="ann-highlight"
-                :style="getHighlightStyle(ann)"
+              <template #text-edit="{ pageNum: pn, scale: sc }">
+                <PdfTextEditorLayer
+                  v-if="activeTool === 'textEdit'"
+                  :page-num="pn"
+                  :scale="sc"
+                  :page-raw-height="pageRawHeight"
+                  :can-edit="canEdit"
+                  :editor="textEditor"
+                />
+              </template>
+              <template #ocr="{ pageNum: pn, scale: sc }">
+                <PdfOcrLayer
+                  v-if="recognizedPages.has(pn)"
+                  :page-num="pn"
+                  :scale="sc"
+                  :page-raw-height="pageRawHeight"
+                  :tokens="ocrTokensForPage(pn)"
+                />
+              </template>
+            </PdfCanvas>
+          </template>
+
+          <!-- 双页对照(facing) -->
+          <template v-else-if="viewMode === 'facing'">
+            <div class="pdf-facing-pair">
+              <PdfCanvas
+                v-if="currentPage <= totalPages"
+                :key="`L-${currentPage}`"
+                :page-num="currentPage"
+                :total-pages="totalPages"
+                :scale="scale"
+                :page-raw-width="pageRawWidth"
+                :page-raw-height="pageRawHeight"
+                :active-tool="activeTool"
+                :active-color="activeColor"
+                :annotations="annotations"
+                :pending-rect="pendingRect"
+                :drawing-path="drawingPath"
+                :recognized="recognizedPages.has(currentPage)"
+                @ready="onPageReady"
+                @mouse-down="onCanvasMouseDown"
+                @mouse-move="onCanvasMouseMove"
+                @mouse-up="onCanvasMouseUp"
+                @mouse-leave="onCanvasMouseLeave"
               />
-
-              <!-- 批注 -->
-              <div
-                v-for="ann in getPageAnnotations(page, 'comment')"
-                :key="ann.id"
-                class="ann-comment"
-                :style="getAnnotationStyle(ann)"
-                @click.stop="openComment(ann)"
-              >
-                💬
-                <div class="ann-tooltip">{{ ann.content }}</div>
-              </div>
-
-              <!-- 画笔 SVG -->
-              <svg class="draw-svg" :width="pageWidth" :height="pageHeight">
-                <path
-                  v-for="ann in getPageAnnotations(page, 'draw')"
-                  :key="ann.id"
-                  :d="getDrawPath(ann)"
-                  :stroke="ann.color"
-                  stroke-width="2"
-                  fill="none"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path
-                  v-if="isDrawing && currentPageDraw === page && drawPoints.length > 0"
-                  :d="getCurrentDrawPath()"
-                  :stroke="activeColor"
-                  stroke-width="2"
-                  fill="none"
-                  stroke-linecap="round"
-                />
-              </svg>
-
-              <!-- 矩形预览 -->
-              <div
-                v-if="pendingRect && pendingRect.pageNumber === page"
-                class="rect-preview"
-                :style="getRectPreviewStyle()"
+              <PdfCanvas
+                v-if="currentPage + 1 <= totalPages"
+                :key="`R-${currentPage + 1}`"
+                :page-num="currentPage + 1"
+                :total-pages="totalPages"
+                :scale="scale"
+                :page-raw-width="pageRawWidth"
+                :page-raw-height="pageRawHeight"
+                :active-tool="activeTool"
+                :active-color="activeColor"
+                :annotations="annotations"
+                :pending-rect="pendingRect"
+                :drawing-path="drawingPath"
+                :recognized="recognizedPages.has(currentPage + 1)"
+                @ready="onPageReady"
               />
             </div>
-          </div>
-        </div>
+          </template>
 
-        <!-- 识别状态提示 -->
-        <div v-if="recognizing" class="recognizing-overlay">
-          <el-icon class="is-loading" :size="24" />
-          <span>正在识别 PDF...</span>
-        </div>
-      </div>
+          <!-- 默认:连续 -->
+          <template v-else>
+            <PdfCanvas
+              v-for="i in totalPages"
+              :key="i"
+              :page-num="i"
+              :total-pages="totalPages"
+              :scale="scale"
+              :page-raw-width="pageRawWidth"
+              :page-raw-height="pageRawHeight"
+              :active-tool="activeTool"
+              :active-color="activeColor"
+              :annotations="annotations"
+              :pending-rect="pendingRect"
+              :drawing-path="drawingPath"
+              :recognized="recognizedPages.has(i)"
+              @ready="onPageReady"
+              @mouse-down="onCanvasMouseDown"
+              @mouse-move="onCanvasMouseMove"
+              @mouse-up="onCanvasMouseUp"
+              @mouse-leave="onCanvasMouseLeave"
+            >
+              <template #text-edit="{ pageNum: pn, scale: sc }">
+                <PdfTextEditorLayer
+                  v-if="activeTool === 'textEdit'"
+                  :page-num="pn"
+                  :scale="sc"
+                  :page-raw-height="pageRawHeight"
+                  :can-edit="canEdit"
+                  :editor="textEditor"
+                />
+              </template>
+              <template #ocr="{ pageNum: pn, scale: sc }">
+                <PdfOcrLayer
+                  v-if="recognizedPages.has(pn)"
+                  :page-num="pn"
+                  :scale="sc"
+                  :page-raw-height="pageRawHeight"
+                  :tokens="ocrTokensForPage(pn)"
+                />
+              </template>
+            </PdfCanvas>
+          </template>
+        </template>
+      </main>
 
-      <!-- 右侧 Markdown 编辑器 -->
-      <div class="markdown-panel">
-        <div class="markdown-header">
-          <span class="markdown-title">第 {{ currentPage }} 页内容</span>
-          <span class="save-status" :class="{ saving: isSaving }">
-            {{ isSaving ? '保存中...' : (hasUnsavedChanges ? '未保存' : '已保存') }}
-          </span>
-        </div>
-        <div class="markdown-body">
-          <textarea
-            v-model="currentMarkdown"
-            class="markdown-textarea"
-            placeholder="正在加载识别内容..."
-            @input="onMarkdownChange"
-            spellcheck="false"
-          />
-        </div>
-        <div class="markdown-footer">
-          <span class="char-count">{{ currentMarkdown.length }} 字符</span>
-          <el-button size="small" type="primary" @click="saveMarkdown" :loading="isSaving">
-            保存
-          </el-button>
-        </div>
-      </div>
+      <!-- 右侧:任务面板(可选,Phase 8 完整实现) -->
+      <Transition name="pdf-panel-fade">
+        <PdfRightPanel
+          v-if="rightPanelOpen"
+          :doc-id="docId"
+          :initial-tab="rightPanelOpen"
+          :annotations="annotations"
+          :current-user-id="userId"
+          @jump="goToPage"
+          @collapse="rightPanelOpen = null"
+          @remove-annotation="onRemoveAnnotation"
+        />
+      </Transition>
+
+      <!-- Phase 11.5 Q4: 右侧快捷工具栏(借鉴 Adobe Acrobat DC Tools 面板) -->
+      <PdfToolsRail
+        :active-tool="activeTool"
+        :right-panel="rightPanelOpen"
+        :ai-visible="aiVisible"
+        :collapsed="toolsRailCollapsed"
+        @select-tool="selectTool"
+        @export="onOpenExport"
+        @print="onPrint"
+        @share="onShare"
+        @send-sign="onSendSign"
+        @open-ai="onOpenAi"
+        @toggle-panel="toggleRightPanel"
+        @toggle-collapse="toolsRailCollapsed = !toolsRailCollapsed"
+      />
+
+      <!-- Phase 9: 浮动文本格式工具栏(选区出现时浮现) -->
+      <PdfFloatingToolbar @format="onFloatingFormat" />
     </div>
 
-    <!-- 批注对话框 -->
-    <el-dialog v-model="showCommentDialog" title="添加批注" width="400px">
-      <el-input v-model="editingComment" type="textarea" :rows="3" placeholder="输入批注内容..." />
-      <template #footer>
-        <el-button @click="showCommentDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveComment">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- AI 对话抽屉 -->
-    <el-drawer v-model="showAiDrawer" title="AI 助手" size="400px" direction="rtl">
-      <div class="ai-chat-container">
-        <div class="chat-messages" ref="chatMessagesRef">
-          <div v-if="chatMessages.length === 0 && !chatLoading" class="empty-state">
-            <div class="empty-icon">🤖</div>
-            <div class="empty-text">基于文档内容提问</div>
-            <div class="quick-btns">
-              <el-button size="small" @click="quickAsk('这篇文章的主要内容是什么？')">主要内容</el-button>
-              <el-button size="small" @click="quickAsk('有哪些关键信息？')">关键信息</el-button>
-            </div>
-          </div>
-          <div
-            v-for="(msg, i) in chatMessages"
-            :key="i"
-            class="chat-msg"
-            :class="msg.role"
-          >
-            <div class="msg-avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
-            <div class="msg-bubble">{{ msg.content }}</div>
-          </div>
-        </div>
-        <div class="chat-input">
-          <el-input
-            v-model="chatInput"
-            placeholder="输入问题..."
-            @keyup.enter="sendChat"
-            :disabled="chatLoading"
-          />
-          <el-button type="primary" @click="sendChat" :loading="chatLoading">发送</el-button>
-        </div>
+    <!-- 3. 状态条(Adobe 风格 V3.2) -->
+    <footer class="pdf-statusbar">
+      <!-- 左:页码导航 -->
+      <div class="pdf-sb-group pdf-sb-left">
+        <span class="pdf-sb-filename" :title="filename">
+          <svg class="ico" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h5"/>
+          </svg>
+          {{ filename || 'document.pdf' }}
+        </span>
+        <span class="pdf-sb-divider"></span>
+        <button class="pdf-sb-page-nav" :disabled="currentPage <= 1" @click="goPrev" aria-label="上一页">‹</button>
+        <span class="pdf-sb-page-info">
+          <span class="pdf-sb-page-current">{{ currentPage }}</span>
+          <span class="pdf-sb-page-sep">/</span>
+          <span>{{ totalPages }}</span>
+        </span>
+        <button class="pdf-sb-page-nav" :disabled="currentPage >= totalPages" @click="goNext" aria-label="下一页">›</button>
       </div>
-    </el-drawer>
+
+      <!-- 中:工具 / 状态 -->
+      <div class="pdf-sb-group pdf-sb-center">
+        <span class="pdf-sb-chip">
+          <svg class="ico" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M3 3l7 17 2-8 8-2L3 3z"/>
+          </svg>
+          {{ toolLabel }}
+        </span>
+        <span class="pdf-sb-divider"></span>
+        <span class="pdf-sb-chip">
+          <svg class="ico" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z M8 9h8 M8 13h6"/>
+          </svg>
+          {{ annotations.length }} 标注
+        </span>
+        <span v-if="onlineUsers.length > 0" class="pdf-sb-divider"></span>
+        <span v-if="onlineUsers.length > 0" class="pdf-sb-chip pdf-sb-online">
+          <span class="pdf-sb-online-dot"></span>
+          {{ onlineUsers.length }} 在线
+        </span>
+        <span v-if="recognizeStatus" class="pdf-sb-divider"></span>
+        <span v-if="recognizeStatus" class="pdf-sb-chip" :class="`pdf-sb-ocr-${recognizeStatus}`">
+          <svg class="ico" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7zM12 9v6 M9 12h6"/>
+          </svg>
+          {{ recognizeStatusLabel }}
+        </span>
+      </div>
+
+      <!-- 右:缩放 + 保存状态 -->
+      <div class="pdf-sb-group pdf-sb-right">
+        <span v-if="saveStatus === 'saving'" class="pdf-sb-save pdf-sb-saving">
+          <span class="pdf-sb-save-spinner"></span>
+          保存中...
+        </span>
+        <span v-else-if="saveStatus === 'saved'" class="pdf-sb-save pdf-sb-saved">
+          <span class="pdf-sb-dot"></span>
+          已保存 · {{ saveTime }}
+        </span>
+        <span v-else-if="saveStatus === 'error'" class="pdf-sb-save pdf-sb-error">⚠ 保存失败</span>
+
+        <span v-if="saveStatus === 'saved' || saveStatus === 'error'" class="pdf-sb-divider"></span>
+
+        <button class="pdf-sb-zoom-btn" @click="onZoomOut" aria-label="缩小" title="缩小 (-)">−</button>
+        <input
+          class="pdf-sb-zoom-slider"
+          type="range"
+          min="25" max="400" step="5"
+          :value="zoomPercent"
+          @input="onZoomSliderChange"
+          title="缩放(拖动滑块或输入数字)"
+          aria-label="缩放"
+        />
+        <span class="pdf-sb-zoom-display" :title="`${zoomPercent}%`" @click="onFitWidth">{{ zoomPercent }}%</span>
+        <button class="pdf-sb-zoom-btn" @click="onZoomIn" aria-label="放大" title="放大 (+)">+</button>
+        <button class="pdf-sb-zoom-btn pdf-sb-zoom-fit" @click="onFitWidth" title="适合宽度 (W)" aria-label="适合宽度">⊡</button>
+        <button class="pdf-sb-zoom-btn pdf-sb-zoom-fit" @click="onFitPage" title="适合页面" aria-label="适合页面">⊒</button>
+        <button class="pdf-sb-zoom-btn pdf-sb-zoom-fit" @click="onActualSize" title="实际大小" aria-label="实际大小">1:1</button>
+      </div>
+    </footer>
+
+    <!-- V2 保留组件(PdfPageOpsMenu / MergeDialog 等,Phase 3 已实现) -->
+    <PdfPageOpsMenu
+      :open="pageMenuOpen"
+      :anchor="pageMenuAnchor"
+      :doc-id="docId"
+      :file-url="fileUrl"
+      :current-page="currentPage"
+      :total-pages="totalPages"
+      :flush-text-edits="flushTextEdits"
+      :on-saved="onPageOpSaved"
+      @close="pageMenuOpen = false"
+    />
+    <PdfExportMenu
+      :open="exportMenuOpen"
+      :anchor="exportMenuAnchor"
+      :doc-id="docId"
+      :current-page="currentPage"
+      :filename="filename"
+      @close="exportMenuOpen = false"
+    />
+    <PdfThumbnailContextMenu
+      :open="ctxMenuOpen"
+      :anchor="ctxMenuAnchor"
+      :page-num="ctxMenuPageNum"
+      :total-pages="totalPages"
+      :busy="pageOps.busy.value"
+      @close="ctxMenuOpen = false"
+      @goto="onCtxGoto"
+      @rotate="onCtxRotate"
+      @extract="onCtxExtract"
+      @delete="onCtxDelete"
+    />
+    <MergeDialog
+      v-if="mergeDialogOpen"
+      v-model="mergeDialogOpen"
+      :exclude-doc-id="docId"
+      :exclude-doc-title="filename"
+      @confirm="onMergeConfirmed"
+    />
+    <!-- Phase 11: 页面操作(插入空白/裁剪/水印/页眉页脚) -->
+    <PdfPageOpsDialog
+      v-if="pageOpsDialogOpen"
+      v-model="pageOpsDialogOpen"
+      :doc-id="docId"
+      :current-page="currentPage"
+      :total-pages="totalPages"
+      :initial-tab="pageOpsInitialTab"
+      @success="onPageOpSuccess"
+    />
+    <PdfAiMenu
+      :open="aiMenuOpen"
+      :anchor="aiMenuAnchor"
+      :doc-id="docId"
+      :recognized-markdown="recognizedMarkdown"
+      @close="aiMenuOpen = false"
+      @open-chat="onOpenAiChatFromMenu"
+      @open-terms="onOpenTermsFromMenu"
+    />
+    <Transition name="pdf-drawer-fade">
+      <aside v-if="termsPanelOpen" class="pdf-terms-drawer" role="complementary">
+        <header class="pdf-terms-drawer-header">
+          <h3>合同条款抽取</h3>
+          <button class="pdf-terms-drawer-close" @click="termsPanelOpen = false">
+            <svg class="ico" viewBox="0 0 24 24" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </header>
+        <div class="pdf-terms-drawer-body">
+          <PdfTermsPanel :doc-id="docId" />
+        </div>
+      </aside>
+    </Transition>
+
+    <!-- Phase 11.8: AI 浮窗(始终挂载,通过 visible 双向绑定,合并重复 FAB) -->
+    <PdfAiFloatPanel
+      :doc-id="docId"
+      :visible="aiVisible"
+      :vqa-image="vqaImage"
+      :vqa-context="vqaContext"
+      @update:visible="aiVisible = $event"
+      @clear-vqa="clearVqa"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
-import * as Y from 'yjs'
-import { WebsocketProvider } from 'y-websocket'
-import { pdfApi } from '@/api/pdf'
+/**
+ * PdfEditor V3 —— 主壳
+ *
+ * V2 → V3 关键变化:
+ *   - 引入 PdfRibbon 多标签顶栏(替代单一工具栏)
+ *   - 引入 PdfThumbPanel V3(z-index 修复 + 2x 缩略图 + 懒加载)
+ *   - 引入右侧任务面板(PdfRightPanel,Phase 8 完整实现,本 Phase 仅占位)
+ *   - 引入视图模式(usePdfViewMode: single/continuous/facing)
+ *   - 状态条精简 + V3 设计
+ *   - 保留 V2 所有功能(AI/页面操作/文本编辑/协同)
+ */
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import {
-  ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Pointer, Edit, EditPen,
-  ChatLineSquare, Delete, Download, FullScreen, Grid, Brush, MagicStick
-} from '@element-plus/icons-vue'
+import '@/styles/pdf-tokens.css'
 
-interface PdfAnnotation {
-  id: string
-  type: 'highlight' | 'comment' | 'draw'
-  pageNumber: number
-  rect?: { x: number; y: number; width: number; height: number }
-  color: string
-  content?: string
-  points?: number[]
-  userId: number
-  userName: string
-  createdAt: string
-}
+import PdfRibbon from './PdfRibbon.vue'
+import PdfThumbPanel from './PdfThumbPanel.vue'
+import PdfCanvas from './PdfCanvas.vue'
+import PdfAiFloatPanel from './PdfAiFloatPanel.vue'
+import PdfTextEditorLayer from './PdfTextEditorLayer.vue'
+import PdfOcrLayer from './PdfOcrLayer.vue'
+import PdfRightPanel from './PdfRightPanel.vue'
+import PdfToolsRail from './PdfToolsRail.vue'
+import PdfFloatingToolbar from './PdfFloatingToolbar.vue'
+import PdfPageOpsMenu from './PdfPageOpsMenu.vue'
+import PdfExportMenu from './PdfExportMenu.vue'
+import PdfThumbnailContextMenu from './PdfThumbnailContextMenu.vue'
+import PdfAiMenu from './PdfAiMenu.vue'
+import MergeDialog from './MergeDialog.vue'
+import PdfPageOpsDialog from './PdfPageOpsDialog.vue'
+import PdfTermsPanel from './PdfTermsPanel.vue'
 
-interface PendingRect {
-  pageNumber: number
-  startX: number
-  startY: number
-  x: number
-  y: number
-  width: number
-  height: number
-}
+import { usePdfRenderer } from '@/composables/pdf/usePdfRenderer'
+import { usePdfCollaborate } from '@/composables/pdf/usePdfCollaborate'
+import { usePdfAnnotation, type AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
+import { usePdfTextEditor } from '@/composables/pdf/usePdfTextEditor'
+import { usePdfPageOps } from '@/composables/pdf/usePdfPageOps'
+import { usePdfAiFloat } from '@/composables/pdf/usePdfAiFloat'
+import { usePdfViewMode, type ViewMode } from '@/composables/pdf/usePdfViewMode'
+import type { PageOpResult } from '@/api/pdf'
+import { pdfApi } from '@/api/pdf'
 
 const props = defineProps<{
   docId: number
@@ -324,1010 +484,1300 @@ const props = defineProps<{
   canEdit: boolean
   userName: string
   userId: number
+  filename?: string
 }>()
 
-const emit = defineEmits(['ready', 'stateChange'])
+const emit = defineEmits<{
+  (e: 'ready'): void
+  (e: 'stateChange', state: string): void
+  (e: 'fileUrlChanged', newUrl: string): void
+}>()
 
-// ========== 状态 ==========
-const currentPage = ref(1)
-const totalPages = ref(0)
-const scale = ref(1.2)
-const pageWidth = ref(0)
-const pageHeight = ref(0)
-const activeTool = ref<'select' | 'highlight' | 'comment' | 'draw' | 'eraser'>('select')
-const activeColor = ref('#FFEB3B')
-const predefineColors = ['#FFEB3B', '#FF9800', '#F44336', '#E91E63', '#9C27B0', '#3F51B5', '#2196F3', '#4CAF50']
+const router = useRouter()
 
-const showThumbnails = ref(true)
-const loading = ref(false)
-const converting = ref(false)
+// ========== 渲染层 ==========
+const token = sessionStorage.getItem('token')
+const renderer = usePdfRenderer({
+  fileUrl: props.fileUrl,
+  token,
+  thumbScale: 0.4,
+  initialScale: 1.2,
+})
 
-// ========== Refs ==========
-const containerRef = ref<HTMLDivElement | null>(null)
-const chatMessagesRef = ref<HTMLDivElement | null>(null)
-const canvasRefs = reactive<Map<number, HTMLCanvasElement>>(new Map())
-const thumbRefs = reactive<Map<number, HTMLCanvasElement>>(new Map())
-const textLayerRefs = reactive<Map<number, HTMLDivElement>>(new Map())
-const annotationRefs = reactive<Map<number, HTMLDivElement>>(new Map())
-const pageRefs = reactive<Map<number, HTMLDivElement>>(new Map())
+const totalPages = computed(() => renderer.totalPages.value)
+const scale = computed(() => renderer.scale.value)
+const loading = computed(() => renderer.loading.value)
+const error = computed(() => {
+  const e = renderer.error.value
+  return e ? (e.message || 'PDF 加载失败') : null
+})
 
-// ========== 标注 ==========
-const annotations = ref<PdfAnnotation[]>([])
-const showCommentDialog = ref(false)
-const editingComment = ref('')
-const pendingRect = ref<PendingRect | null>(null)
-const isDrawing = ref(false)
-const currentPageDraw = ref(0)
-const drawPoints = ref<number[]>([])
-const pendingCommentRect = ref<PendingRect | null>(null)
+const pageRawWidth = ref(595)
+const pageRawHeight = ref(842)
 
-// ========== Markdown ==========
-const pdfMarkdown = ref<Record<string, string>>({})
-const ocrData = ref<Record<string, any>>({})
-const currentMarkdown = ref('')
-const isSaving = ref(false)
-const hasUnsavedChanges = ref(false)
-const recognizing = ref(false)
+// ========== 视图模式 ==========
+const viewModeLogic = usePdfViewMode()
+const viewMode = computed(() => viewModeLogic.viewMode.value)
+const setViewMode = (m: ViewMode) => viewModeLogic.setViewMode(m)
+const cycleViewMode = () => viewModeLogic.cycleViewMode()
+
+// ========== 协同层 ==========
+const collab = usePdfCollaborate({
+  docKey: props.docKey,
+  userId: props.userId,
+  userName: props.userName,
+})
+
+// ========== 标注层 ==========
+const annot = usePdfAnnotation({
+  yAnnotations: collab.yAnnotations,
+  userId: props.userId,
+  userName: props.userName,
+  canEdit: props.canEdit,
+})
+
+const activeTool = computed(() => annot.activeTool.value)
+const activeColor = computed(() => annot.activeColor.value)
+const stampText = computed(() => (annot as any).stampText?.value ?? 'DRAFT')
+const stampPresets = computed(() => (annot as any).stampPresets?.value ?? [])
+const annotations = computed(() => annot.annotations.value)
+const pendingRect = computed(() => annot.pendingRect.value)
+const drawingPath = computed(() => (annot as any).drawPath ?? null)
+const onlineUsers = computed(() => collab.onlineUsers.value)
+
+const selectTool = (t: AnnotationTool) => (annot.activeTool.value = t)
+const selectColor = (c: string) => (annot.activeColor.value = c)
+
+// ========== 文本编辑 ==========
+const textEditor = usePdfTextEditor({
+  docId: props.docId,
+  onSaved: () => {
+    saveStatus.value = 'saved'
+    saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    void reloadAfterTextEdit()
+  },
+  onError: () => (saveStatus.value = 'error'),
+})
+
+async function reloadAfterTextEdit() {
+  try {
+    renderer.destroy()
+    textEditor.clearCache()
+    await renderer.load()
+    if (renderer.pdfDoc.value) {
+      const page = await renderer.pdfDoc.value.getPage(1)
+      const vp = page.getViewport({ scale: 1 })
+      pageRawWidth.value = vp.width
+      pageRawHeight.value = vp.height
+    }
+    if (thumbRefs.size > 0) {
+      await renderer.renderAllThumbs(thumbRefs)
+    }
+  } catch (e) {
+    console.error('[PdfEditor] reloadAfterTextEdit failed:', e)
+  }
+}
+
+// ========== 页面操作 ==========
+const pageOps = usePdfPageOps({
+  docId: props.docId,
+  fileUrl: props.fileUrl,
+  beforeOp: async () => {
+    if (textEditor.dirty.value) {
+      try {
+        await textEditor.flush()
+      } catch {
+        return false
+      }
+    }
+    return true
+  },
+  onSaved: () => {
+    saveStatus.value = 'saved'
+    saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  },
+  onError: () => (saveStatus.value = 'error'),
+})
+
+async function onPageOpSaved(result: PageOpResult, newFileUrl: string) {
+  await reloadAfterPageOp(newFileUrl)
+}
+
+async function reloadAfterPageOp(newFileUrl: string) {
+  try {
+    saveStatus.value = 'saving'
+    renderer.destroy()
+    textEditor.clearCache()
+    emit('fileUrlChanged', newFileUrl)
+    await renderer.load()
+    if (renderer.pdfDoc.value) {
+      const page = await renderer.pdfDoc.value.getPage(1)
+      const vp = page.getViewport({ scale: 1 })
+      pageRawWidth.value = vp.width
+      pageRawHeight.value = vp.height
+    }
+    currentPage.value = 1
+    canvasRefs.clear()
+    textLayerRefs.clear()
+    annotationRefs.clear()
+    thumbRefs.clear()
+    saveStatus.value = 'saved'
+    saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } catch (e) {
+    console.error('[PdfEditor] reloadAfterPageOp failed:', e)
+    saveStatus.value = 'error'
+  }
+}
+
+async function flushTextEdits(): Promise<void> {
+  if (textEditor.dirty.value) {
+    await textEditor.flush()
+  }
+}
+
+// ========== Phase 9: 浮动格式工具栏 ==========
+/**
+ * 浮动工具栏发来 format 事件:
+ * - fontSize: 改字号(对当前选中 token/段)
+ * - color: 改文字颜色
+ * - highlight: 高亮(走 document.execCommand 浏览器原生 hiliteColor)
+ * - bold / italic / underline: 走浏览器原生 execCommand(即时视觉),后端持久化下一阶段
+ */
+function onFloatingFormat(payload: { type: string; value?: string | number }): void {
+  // 先抓选区(mousedown.prevent 后 selection 还在,但 execCommand 后会丢)
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return
+  const range = sel.getRangeAt(0)
+  const container = (range.commonAncestorContainer as Element).closest?.(
+    '.pdf-text-edit-layer, .pdf-text-layer',
+  )
+  if (!container) return
+
+  // 高亮走浏览器原生实现(选中文本即时着色)
+  if (payload.type === 'highlight' && typeof payload.value === 'string') {
+    let ok = false
+    try {
+      ok = !!document.execCommand('hiliteColor', false, payload.value)
+    } catch { /* ignore */ }
+    if (!ok) {
+      // 退化:给选区内每个 span 加 inline 背景色
+      paintRangeInline(range, 'backgroundColor', payload.value)
+    }
+    // 重新选中(防止浏览器清空 selection 后浮动条消失)
+    requestAnimationFrame(() => restoreSelection(range))
+    return
+  }
+
+  // 粗/斜/下划线走浏览器原生 execCommand(即时视觉)
+  if (payload.type === 'bold') {
+    document.execCommand('bold')
+    requestAnimationFrame(() => restoreSelection(range))
+    return
+  }
+  if (payload.type === 'italic') {
+    document.execCommand('italic')
+    requestAnimationFrame(() => restoreSelection(range))
+    return
+  }
+  if (payload.type === 'underline') {
+    document.execCommand('underline')
+    requestAnimationFrame(() => restoreSelection(range))
+    return
+  }
+
+  // 字号/颜色:尝试找到对应 token 并走持久化
+  const focusedEl = (document.activeElement as HTMLElement | null)?.closest?.(
+    '.pdf-edit-token',
+  ) as HTMLElement | null
+  if (!focusedEl) {
+    // 没有可编辑 token 聚焦,只是文字层选区 → 仅做即时视觉反馈
+    if (payload.type === 'color' && typeof payload.value === 'string') {
+      try {
+        const ok = document.execCommand('foreColor', false, payload.value as string)
+        if (!ok) throw new Error('execCommand returned false')
+      } catch {
+        // 退化方案:直接给选区每个 span 加 inline color
+        paintRangeInline(range, 'color', payload.value as string)
+      }
+      requestAnimationFrame(() => restoreSelection(range))
+      return
+    }
+    ElMessage.info('请先用文本工具点击段落进入编辑,再使用浮动格式工具栏')
+    return
+  }
+
+  const tokenIdx = Number(focusedEl.dataset.tokenIdx)
+  const pageNum = Number(focusedEl.dataset.pageNum)
+  if (Number.isNaN(tokenIdx) || Number.isNaN(pageNum)) return
+  const positions = textEditor.positionsByPage.value.get(pageNum) || []
+  const token = positions[tokenIdx]
+  if (!token) return
+
+  const newEdit = {
+    position: token,
+    newText: focusedEl.textContent ?? token.text ?? '',
+    color:
+      payload.type === 'color' && typeof payload.value === 'string'
+        ? payload.value
+        : undefined,
+  }
+  textEditor.applyEdit(newEdit)
+}
+
+/**
+ * execCommand 后浏览器常常清空 selection,
+ * 这里克隆原 range 并重新设为当前 selection,
+ * 防止浮动工具栏的 selectionchange 监听触发 hide。
+ */
+function restoreSelection(range: Range): void {
+  try {
+    const sel = window.getSelection()
+    if (!sel) return
+    sel.removeAllRanges()
+    sel.addRange(range)
+  } catch { /* ignore */ }
+}
+
+/**
+ * 当 document.execCommand 在非 contenteditable 节点上失败时,
+ * 退化方案:遍历选区内的 span,给每个 span 加 inline style,
+ * 达到即时视觉反馈。
+ */
+function paintRangeInline(range: Range, prop: 'color' | 'backgroundColor', value: string): void {
+  try {
+    const container = range.commonAncestorContainer.nodeType === 1
+      ? (range.commonAncestorContainer as Element)
+      : (range.commonAncestorContainer.parentElement as Element | null)
+    if (!container) return
+
+    // 找选区所在的最近 .pdf-text-layer 作为搜索根
+    const root = container.closest('.pdf-text-layer') || container
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
+    const targets: HTMLElement[] = []
+    let node = walker.nextNode() as HTMLElement | null
+    while (node) {
+      if (node.tagName === 'SPAN' && range.intersectsNode(node)) {
+        targets.push(node)
+      }
+      node = walker.nextNode() as HTMLElement | null
+    }
+    targets.forEach((el) => {
+      el.style.setProperty(prop, value)
+    })
+  } catch (e) {
+    console.warn('[PdfEditor] paintRangeInline failed', e)
+  }
+}
 
 // ========== AI ==========
-const showAiDrawer = ref(false)
-const chatInput = ref('')
-const chatMessages = ref<Array<{ role: 'user' | 'assistant'; content: string }>>([])
-const chatLoading = ref(false)
+const aiFloat = usePdfAiFloat({ docId: props.docId })
+const aiVisible = ref(false)
+const aiStreaming = computed(() => aiFloat.isStreaming.value)
+const vqaImage = ref<string | undefined>(undefined)
+const vqaContext = ref('')
 
-// ========== PDF ==========
-let pdfjsLib: any = null
-let pdfDoc: any = null
-
-// Yjs
-const ydoc = new Y.Doc()
-let provider: WebsocketProvider | null = null
-const yAnnotations = ydoc.getArray<PdfAnnotation>('annotations')
-
-// ========== 生命周期 ==========
-onMounted(async () => {
-  pdfjsLib = await import('pdfjs-dist')
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
-  await loadPdf()
-  await loadMarkdown()
-  connectYjs()
-  emit('ready')
-})
-
-onBeforeUnmount(() => {
-  provider?.destroy()
-  ydoc.destroy()
-  pdfDoc?.destroy()
-})
-
-// ========== Ref 设置 ==========
-function setCanvasRef(page: number, el: any) { if (el) canvasRefs.set(page, el) }
-function setThumbRef(page: number, el: any) { if (el) thumbRefs.set(page, el) }
-function setTextLayerRef(page: number, el: any) { if (el) textLayerRefs.set(page, el) }
-function setAnnotationRef(page: number, el: any) { if (el) annotationRefs.set(page, el) }
-function setPageRef(page: number, el: any) { if (el) pageRefs.set(page, el) }
-
-// ========== PDF 加载 ==========
-async function loadPdf() {
-  const token = sessionStorage.getItem('token')
-  pdfDoc = await pdfjsLib.getDocument({
-    url: props.fileUrl,
-    httpHeaders: token ? { Authorization: `Bearer ${token}` } : {},
-  }).promise
-  totalPages.value = pdfDoc.numPages
-  await nextTick()
-  await renderAllThumbs()
-  await nextTick()
-  await fitWidth()
-  await renderPage(1)
-  cleanupHiddenCanvases()
-}
-
-function cleanupHiddenCanvases() {
-  document.querySelectorAll('.hiddenCanvasElement').forEach(el => el.remove())
-}
-
-async function renderPage(pageNum: number) {
-  if (!pdfDoc) return
-  const page = await pdfDoc.getPage(pageNum)
-  const viewport = page.getViewport({ scale: scale.value })
-  const canvas = canvasRefs.get(pageNum)
-  if (!canvas) return
-
-  canvas.width = viewport.width
-  canvas.height = viewport.height
-  pageWidth.value = viewport.width
-  pageHeight.value = viewport.height
-  await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
-
-  const textDiv = textLayerRefs.get(pageNum)
-  if (textDiv) {
-    textDiv.innerHTML = ''
-    textDiv.style.width = viewport.width + 'px'
-    textDiv.style.height = viewport.height + 'px'
-    const textContent = await page.getTextContent()
-    if (textContent.items.length > 0) {
-      const textLayer = new pdfjsLib.TextLayer({
-        textContentSource: textContent,
-        container: textDiv,
-        viewport,
-      })
-      await textLayer.render()
-    } else {
-      // 扫描件 PDF：无原生文本层，用 OCR 坐标数据叠加
-      const pageOcrData = ocrData.value?.[String(pageNum)]
-      if (pageOcrData) {
-        renderOcrTextLayer(textDiv, viewport, pageOcrData)
-      }
+const recognizedMarkdown = computed(() => {
+  const map = textEditor.positionsByPage.value as Map<number, any>
+  const parts: string[] = []
+  for (const [, arr] of map.entries()) {
+    if (Array.isArray(arr)) {
+      parts.push(arr.map((p: any) => p.text || '').join('\n'))
     }
   }
-  cleanupHiddenCanvases()
+  return parts.join('\n\n')
+})
+
+function onOpenAi() {
+  aiVisible.value = !aiVisible.value
+}
+function clearVqa() {
+  vqaImage.value = undefined
+  vqaContext.value = ''
 }
 
-async function renderAllThumbs() {
-  for (let i = 1; i <= totalPages.value; i++) {
-    const page = await pdfDoc.getPage(i)
-    const viewport = page.getViewport({ scale: 0.15 })
-    const canvas = thumbRefs.get(i)
-    if (!canvas) continue
-    canvas.width = viewport.width
-    canvas.height = viewport.height
-    await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
-  }
-}
-
-async function reRenderAll() {
-  for (let i = 1; i <= totalPages.value; i++) await renderPage(i)
-}
-
-// ========== Markdown 加载 ==========
-async function loadMarkdown() {
+/**
+ * Phase 11.4: OCR 识别(PaddleOCR 路径)
+ * 1) 状态:unrecognized → recognizing → recognized
+ * 2) 后端存 ocrData → text-positions
+ * 3) 重新加载 positions,渲染 bbox 框
+ */
+async function onOcrRecognize() {
+  if (recognizeStatus.value === 'recognizing') return
+  recognizeStatus.value = 'recognizing'
+  ElMessage.info('OCR 识别中(PaddleOCR)...')
   try {
-    const resp = await pdfApi.getMarkdown(props.docId)
-    if (resp.recognized && resp.markdown) {
-      pdfMarkdown.value = resp.markdown
-      ocrData.value = resp.ocrData || {}
-    } else if (Object.keys(resp.markdown || {}).length > 0) {
-      pdfMarkdown.value = resp.markdown
-      ocrData.value = resp.ocrData || {}
-    } else {
-      // 未识别，触发识别
-      recognizing.value = true
-      try {
-        await pdfApi.recognize(props.docId)
-        const retryResp = await pdfApi.getMarkdown(props.docId)
-        if (retryResp.markdown) {
-          pdfMarkdown.value = retryResp.markdown
-          ocrData.value = retryResp.ocrData || {}
-        }
-      } catch (e) {
-        console.error('识别失败:', e)
-      } finally {
-        recognizing.value = false
+    const r = await pdfApi.recognizePaddle(props.docId)
+    if (r.status !== 'success') {
+      recognizeStatus.value = 'error'
+      ElMessage.error(r.error || 'OCR 识别失败')
+      return
+    }
+    // 标记所有页已识别 + 重新加载 positions
+    const total = r.totalPages || 1
+    recognizedPages.value = new Set(Array.from({ length: total }, (_, i) => i + 1))
+    await textEditor.loadAllPositions()
+    // Phase 11.4: 重新触发所有挂载页面的渲染,让 PdfTextEditorLayer 显示 OCR bbox
+    for (const [pageNum, canvasEl] of canvasRefs.entries()) {
+      const textLayerEl = textLayerRefs.get(pageNum)
+      if (textLayerEl) {
+        try { await renderer.renderPage(pageNum, canvasEl, textLayerEl) } catch {}
       }
     }
-    updateCurrentMarkdown()
-  } catch (e) {
-    console.error('加载 Markdown 失败:', e)
-    recognizing.value = false
+    recognizeStatus.value = 'recognized'
+    ElMessage.success(`OCR 识别完成(共 ${(r.pages || []).reduce((s: number, p: any) => s + (p.regions?.length || 0), 0)} 个文字区域)`)
+  } catch (e: any) {
+    console.error('[PdfEditor] OCR failed:', e)
+    recognizeStatus.value = 'error'
+    ElMessage.error(e?.message || 'OCR 调用失败')
   }
 }
 
 /**
- * 把 OCR 坐标文字叠加到 text-layer 上（用于扫描件 PDF 框选复制）
- * @param textDiv 目标 DOM 容器
- * @param viewport PDF.js viewport（用于坐标换算）
- * @param pageData 当前页的 OCR 数据 { regions: [{text, bbox: [x,y,w,h], confidence}], dpi }
+ * Phase 11.4: 取指定页 OCR tokens(PdfTextEditorLayer 使用的同源数据)
  */
-function renderOcrTextLayer(
-  textDiv: HTMLDivElement,
-  viewport: any,
-  pageData: any,
-): void {
-  textDiv.innerHTML = ''
-  textDiv.classList.add('ocr-text-layer')
-  if (!pageData || !Array.isArray(pageData.regions)) return
+function ocrTokensForPage(pageNum: number) {
+  const arr = (textEditor as any).positionsByPage?.value?.get?.(pageNum) || []
+  return arr as Array<{ text: string; x: number; y: number; width: number; height: number; confidence?: number }>
+}
 
-  const regions = pageData.regions
-  if (regions.length === 0) return
+// ========== Ribbon 状态 ==========
+type RibbonTab = 'home' | 'edit' | 'page' | 'view'
+const activeRibbonTab = ref<RibbonTab>('edit')
 
-  // OCR 在 DPI 200 渲染的图片上识别；PDF.js viewport 是基于 72 DPI（PDF 默认）
-  // 比例 = viewport.width / ocrImageWidth
-  // 通常 OCR 用 pdf2image 渲染 DPI 200，PDF.js 用 viewport.scale * 72
-  // 由于 PDF.js render 用的 scale（user zoom），最稳妥：先获取 PDF 原始尺寸，然后换算
-  // 这里用 dpi / 72 简化计算
-  const ocrDpi = pageData.dpi || 200
-  // viewport 的实际缩放系数
-  // PDF 原生 1 单位 = 1/72 inch；OCR 在 DPI 200 上；scale = pdfDpi / 72
-  const scale = ocrDpi / 72
+function onChangeRibbonTab(tab: RibbonTab) {
+  activeRibbonTab.value = tab
+}
 
-  for (const region of regions) {
-    const text = region.text || ''
-    const bbox = region.bbox
-    if (!text || !bbox || !Array.isArray(bbox) || bbox.length < 4) continue
-
-    const [ox, oy, ow, oh] = bbox
-    // 坐标转换：OCR 坐标基于 DPI 200，PDF.js viewport 基于 scale (基于 PDF 单位)
-    const x = ox / scale
-    const y = oy / scale
-    const w = ow / scale
-    const h = oh / scale
-
-    const span = document.createElement('span')
-    span.textContent = text
-    span.style.position = 'absolute'
-    span.style.left = x + 'px'
-    span.style.top = y + 'px'
-    span.style.width = w + 'px'
-    span.style.height = h + 'px'
-    span.style.fontSize = Math.max(10, h * 0.85) + 'px'
-    span.style.lineHeight = h + 'px'
-    span.style.color = 'transparent'
-    span.style.whiteSpace = 'nowrap'
-    span.style.overflow = 'hidden'
-    span.style.cursor = 'text'
-    span.style.userSelect = 'text'
-    span.dataset.ocrText = text
-    textDiv.appendChild(span)
+function onRemoveAnnotation(id: string) {
+  // 仅删除当前用户的批注
+  const ann = annot.annotations.value.find(a => a.id === id)
+  if (!ann) return
+  if (ann.userId !== props.userId) {
+    ElMessage.warning('只能删除自己的批注')
+    return
   }
+  annot.remove(id)
+  ElMessage.success('已删除批注')
 }
 
-function updateCurrentMarkdown() {
-  currentMarkdown.value = pdfMarkdown.value[currentPage.value] || ''
-  hasUnsavedChanges.value = false
+function onStampTextChange(text: string) {
+  ;(annot as any).setStampText?.(text)
 }
 
-watch(currentPage, () => {
-  updateCurrentMarkdown()
+// ========== 右侧任务面板 ==========
+type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | null
+const rightPanelOpen = ref<RightPanel>(null)
+function toggleRightPanel(p: 'outline' | 'search' | 'info' | 'annotations') {
+  rightPanelOpen.value = rightPanelOpen.value === p ? null : p
+}
+
+// ========== 页面导航 ==========
+const currentPage = ref(1)
+const zoomPercent = computed(() => Math.round(scale.value * 100))
+
+const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+const saveTime = ref('')
+
+const toolLabel = computed(() => {
+  const map: Record<AnnotationTool, string> = {
+    select: '选择',
+    textEdit: '文本',
+    highlight: '高亮',
+    comment: '评论',
+    draw: '画笔',
+    eraser: '橡皮',
+    vqa: '识图',
+  }
+  return map[activeTool.value] ?? '选择'
 })
 
-function onMarkdownChange() {
-  hasUnsavedChanges.value = true
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value) return
+  currentPage.value = p
+  nextTickScroll()
 }
 
-async function saveMarkdown() {
-  isSaving.value = true
-  try {
-    pdfMarkdown.value[currentPage.value] = currentMarkdown.value
-    await pdfApi.saveMarkdown(props.docId, pdfMarkdown.value)
-    hasUnsavedChanges.value = false
-    ElMessage.success('已保存')
-  } catch (e) {
-    ElMessage.error('保存失败')
-  } finally {
-    isSaving.value = false
-  }
-}
-
-// ========== 导航 ==========
-function prevPage() { if (currentPage.value > 1) goToPage(currentPage.value - 1) }
-function nextPage() { if (currentPage.value < totalPages.value) goToPage(currentPage.value + 1) }
-function goToPage(page: number) {
-  if (page < 1 || page > totalPages.value) return
-  currentPage.value = page
-  renderPage(page)
-  const el = pageRefs.get(page)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-function onScroll() {}
-
-// ========== 缩放 ==========
-function zoomIn() { scale.value = Math.min(scale.value + 0.2, 4); reRenderAll() }
-function zoomOut() { scale.value = Math.max(scale.value - 0.2, 0.3); reRenderAll() }
-async function fitWidth() {
-  if (!containerRef.value || !pdfDoc) return
-  const page = await pdfDoc.getPage(1)
-  const vp = page.getViewport({ scale: 1 })
-  const availableWidth = containerRef.value.clientWidth - 16
-  scale.value = Math.max(0.3, availableWidth / vp.width)
-  await reRenderAll()
-}
-
-// ========== 标注 ==========
-function getPageAnnotations(page: number, type?: string) {
-  let list = annotations.value.filter(a => a.pageNumber === page)
-  if (type) list = list.filter(a => a.type === type)
-  return list
-}
-
-function getHighlightStyle(ann: PdfAnnotation) {
-  if (!ann.rect) return {}
-  return {
-    left: ann.rect.x + 'px',
-    top: ann.rect.y + 'px',
-    width: ann.rect.width + 'px',
-    height: ann.rect.height + 'px',
-    backgroundColor: ann.color,
-    opacity: '0.4',
-  }
-}
-
-function getAnnotationStyle(ann: PdfAnnotation) {
-  if (!ann.rect) return {}
-  return {
-    left: ann.rect.x + 'px',
-    top: ann.rect.y + 'px',
-    width: ann.rect.width + 'px',
-    height: ann.rect.height + 'px',
-    border: `2px solid ${ann.color}`,
-  }
-}
-
-function getDrawPath(ann: PdfAnnotation) {
-  if (!ann.points || ann.points.length < 4) return ''
-  let d = `M ${ann.points[0]} ${ann.points[1]}`
-  for (let i = 2; i < ann.points.length; i += 2) {
-    d += ` L ${ann.points[i]} ${ann.points[i + 1]}`
-  }
-  return d
-}
-
-function getCurrentDrawPath() {
-  if (drawPoints.value.length < 4) return ''
-  let d = `M ${drawPoints.value[0]} ${drawPoints.value[1]}`
-  for (let i = 2; i < drawPoints.value.length; i += 2) {
-    d += ` L ${drawPoints.value[i]} ${drawPoints.value[i + 1]}`
-  }
-  return d
-}
-
-function getRectPreviewStyle() {
-  if (!pendingRect.value) return {}
-  const r = pendingRect.value
-  return {
-    left: Math.min(r.startX, r.x) + 'px',
-    top: Math.min(r.startY, r.y) + 'px',
-    width: Math.abs(r.width) + 'px',
-    height: Math.abs(r.height) + 'px',
-    backgroundColor: activeColor.value,
-    opacity: '0.4',
-    border: `2px solid ${activeColor.value}`,
-  }
-}
-
-function getRelPos(e: MouseEvent, page: number) {
-  const layer = annotationRefs.get(page)
-  if (!layer) return { x: 0, y: 0 }
-  const rect = layer.getBoundingClientRect()
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top }
-}
-
-function onMouseDown(e: MouseEvent, page: number) {
-  if (!props.canEdit || activeTool.value === 'select') return
-  const pos = getRelPos(e, page)
-  if (activeTool.value === 'eraser') {
-    eraseAt(pos.x, pos.y, page)
-    return
-  }
-  if (activeTool.value === 'highlight' || activeTool.value === 'comment') {
-    pendingRect.value = { pageNumber: page, startX: pos.x, startY: pos.y, x: pos.x, y: pos.y, width: 0, height: 0 }
-  } else if (activeTool.value === 'draw') {
-    isDrawing.value = true
-    currentPageDraw.value = page
-    drawPoints.value = [pos.x, pos.y]
-  }
-}
-
-function onMouseMove(e: MouseEvent, page: number) {
-  if (!props.canEdit) return
-  const pos = getRelPos(e, page)
-  if (activeTool.value === 'eraser' && e.buttons === 1) {
-    eraseAt(pos.x, pos.y, page)
-    return
-  }
-  if ((activeTool.value === 'highlight' || activeTool.value === 'comment') && pendingRect.value) {
-    pendingRect.value.x = pos.x
-    pendingRect.value.y = pos.y
-    pendingRect.value.width = pos.x - pendingRect.value.startX
-    pendingRect.value.height = pos.y - pendingRect.value.startY
-  } else if (activeTool.value === 'draw' && isDrawing.value) {
-    drawPoints.value.push(pos.x, pos.y)
-  }
-}
-
-function onMouseUp(e: MouseEvent, page: number) {
-  if (!props.canEdit) return
-  if ((activeTool.value === 'highlight' || activeTool.value === 'comment') && pendingRect.value) {
-    const r = pendingRect.value
-    const width = Math.abs(r.width)
-    const height = Math.abs(r.height)
-    if (width > 10 && height > 10) {
-      const rect = { x: Math.min(r.startX, r.x), y: Math.min(r.startY, r.y), width, height }
-      if (activeTool.value === 'comment') {
-        pendingCommentRect.value = { ...r, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-        editingComment.value = ''
-        showCommentDialog.value = true
-      } else {
-        addAnnotation({ type: 'highlight', pageNumber: page, rect, color: activeColor.value })
-      }
-    }
-    pendingRect.value = null
-  } else if (activeTool.value === 'draw' && isDrawing.value) {
-    isDrawing.value = false
-    if (drawPoints.value.length >= 4) {
-      addAnnotation({ type: 'draw', pageNumber: page, color: activeColor.value, points: [...drawPoints.value] })
-    }
-    drawPoints.value = []
-  }
-}
-
-function onMouseLeave(_e: MouseEvent, _page: number) {
-  if (isDrawing.value && drawPoints.value.length >= 4) {
-    addAnnotation({ type: 'draw', pageNumber: currentPageDraw.value, color: activeColor.value, points: [...drawPoints.value] })
-  }
-  isDrawing.value = false
-  drawPoints.value = []
-}
-
-function eraseAt(x: number, y: number, page: number) {
-  const toDelete: string[] = []
-  for (const ann of annotations.value) {
-    if (ann.pageNumber !== page || !ann.rect) continue
-    const r = ann.rect
-    if (x >= r.x - 5 && x <= r.x + r.width + 5 && y >= r.y - 5 && y <= r.y + r.height + 5) {
-      toDelete.push(ann.id)
-    }
-  }
-  for (const ann of annotations.value) {
-    if (ann.pageNumber !== page || !ann.points) continue
-    for (let i = 0; i < ann.points.length; i += 2) {
-      if (Math.abs(ann.points[i] - x) < 15 && Math.abs(ann.points[i + 1] - y) < 15) {
-        toDelete.push(ann.id)
-        break
-      }
-    }
-  }
-  for (const id of toDelete) deleteAnnotation(id)
-}
-
-function addAnnotation(data: Partial<PdfAnnotation>) {
-  yAnnotations.push([{
-    id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    type: data.type || 'highlight',
-    pageNumber: data.pageNumber || currentPage.value,
-    rect: data.rect,
-    color: data.color || activeColor.value,
-    content: data.content,
-    points: data.points,
-    userId: props.userId,
-    userName: props.userName,
-    createdAt: new Date().toISOString(),
-  }])
-  emit('stateChange', 'editing')
-}
-
-function saveComment() {
-  if (editingComment.value.trim() && pendingCommentRect.value) {
-    const r = pendingCommentRect.value
-    addAnnotation({
-      type: 'comment',
-      pageNumber: r.pageNumber,
-      rect: { x: r.x, y: r.y, width: r.width, height: r.height },
-      color: activeColor.value,
-      content: editingComment.value.trim(),
+function nextTickScroll() {
+  if (viewMode.value === 'continuous') {
+    nextTickSmooth(() => {
+      const card = canvasAreaRef.value?.querySelector(`.pdf-page-card:nth-of-type(${currentPage.value})`) as HTMLElement | null
+      card?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
   }
-  showCommentDialog.value = false
-  pendingCommentRect.value = null
-  editingComment.value = ''
 }
 
-function openComment(ann: PdfAnnotation) {
-  editingComment.value = ann.content || ''
-  pendingCommentRect.value = { ...ann.rect!, pageNumber: ann.pageNumber, startX: ann.rect!.x, startY: ann.rect!.y, x: ann.rect!.x, y: ann.rect!.y, width: ann.rect!.width, height: ann.rect!.height }
-  showCommentDialog.value = true
+function nextTickSmooth(fn: () => void) {
+  // 兼容 import 顺序:放到下面
+  ;(nextTick as any)(fn)
+}
+import { nextTick } from 'vue'
+
+function goPrev() { goToPage(currentPage.value - 1) }
+function goNext() {
+  if (viewMode.value === 'facing') {
+    goToPage(currentPage.value + 2)
+  } else {
+    goToPage(currentPage.value + 1)
+  }
 }
 
-function deleteAnnotation(id: string) {
-  const idx = yAnnotations.toArray().findIndex(a => a.id === id)
-  if (idx >= 0) yAnnotations.delete(idx, 1)
+// ========== 缩放 ==========
+async function onZoomIn() {
+  await renderer.zoomIn(canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('custom', renderer.scale.value)
+}
+async function onZoomOut() {
+  await renderer.zoomOut(canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('custom', renderer.scale.value)
+}
+async function onZoomSliderChange(e: Event) {
+  const v = parseInt((e.target as HTMLInputElement).value, 10)
+  if (!isNaN(v)) {
+    renderer.setScale(v / 100)
+    await renderer.reRenderAll(canvasRefs, textLayerRefs)
+    viewModeLogic.setZoom('custom', v / 100)
+  }
+}
+async function onFitWidth() {
+  const w = canvasAreaRef.value?.clientWidth ?? 720
+  await renderer.fitWidth(w, canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('fit-width')
+}
+async function onFitPage() {
+  // fit-page: 让整页(高度+宽度)在视口内可见,取宽高比中较小的缩放
+  const ca = canvasAreaRef.value
+  if (!ca || !renderer.pdfDoc.value) return
+  const page = await renderer.pdfDoc.value.getPage(1)
+  const vp = page.getViewport({ scale: 1 })
+  const availW = ca.clientWidth - 96   // 减 padding
+  const availH = ca.clientHeight - 96
+  const scaleW = availW / vp.width
+  const scaleH = availH / vp.height
+  renderer.setScale(Math.max(0.3, Math.min(scaleW, scaleH, 4)))
+  await renderer.reRenderAll(canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('fit-page')
+}
+async function onActualSize() {
+  renderer.setScale(1.0)
+  await renderer.reRenderAll(canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('actual')
 }
 
-function connectYjs() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  provider = new WebsocketProvider(`${protocol}//${window.location.host}/ws/yjs/`, `pdf-${props.docKey}`, ydoc)
-  yAnnotations.observe(() => {
-    annotations.value = yAnnotations.toArray().map(a => ({ ...a }))
+// ========== Ribbon 事件占位(Phase 8-12 完整实现) ==========
+function onSave() { ElMessage.success('已保存(占位)') }
+function onPrint() { ElMessage.info('打印功能开发中') }
+function onShare() { ElMessage.info('分享功能开发中') }
+function onSendSign() { ElMessage.info('发送签署开发中') }
+function onZoomMenu() { ElMessage.info('缩放菜单开发中') }
+function onOpenExport(_evt?: MouseEvent) {
+  const anchor = canvasAreaRef.value?.getBoundingClientRect()
+  exportMenuAnchor.value = { x: anchor?.left ?? 0, y: anchor?.top ?? 56 }
+  exportMenuOpen.value = true
+  pageMenuOpen.value = false
+}
+function onOpenMerge(_e?: MouseEvent) { mergeDialogOpen.value = true }
+function onExtractCurrent() {
+  pageOps.extractPages([currentPage.value]).then((r) => {
+    if (r) reloadAfterPageOp(pageOps.bustUrl(r))
+  })
+}
+function onRotateAll() {
+  const all = Array.from({ length: totalPages.value }, (_, i) => i + 1)
+  pageOps.rotatePages(all).then((r) => {
+    if (r) reloadAfterPageOp(pageOps.bustUrl(r))
+  })
+}
+function onInsertBlank() {
+  pageOpsInitialTab.value = 'insertBlank'
+  pageOpsDialogOpen.value = true
+}
+function onInsertFromFile() {
+  ElMessage.info('从文件插入开发中(Phase 11.1 后续)')
+}
+function onWatermark() {
+  pageOpsInitialTab.value = 'watermark'
+  pageOpsDialogOpen.value = true
+}
+function onHeaderFooter() {
+  pageOpsInitialTab.value = 'headerFooter'
+  pageOpsDialogOpen.value = true
+}
+
+async function onPageOpSuccess(_op: string) {
+  // 后端已替换 filePath,前端 bustUrl 触发 reload
+  try {
+    saveStatus.value = 'saving'
+    renderer.destroy()
+    textEditor.clearCache()
+    canvasRefs.clear()
+    textLayerRefs.clear()
+    annotationRefs.clear()
+    thumbRefs.clear()
+    await nextTick()
+    await renderer.load()
+    // 等待 pdfDoc + totalPages 真正加载完成
+    let waited = 0
+    while ((!renderer.pdfDoc.value || renderer.totalPages.value === 0) && waited < 10000) {
+      await new Promise(r => setTimeout(r, 100))
+      waited += 100
+    }
+    if (renderer.pdfDoc.value) {
+      const page = await renderer.pdfDoc.value.getPage(1)
+      const vp = page.getViewport({ scale: 1 })
+      pageRawWidth.value = vp.width
+      pageRawHeight.value = vp.height
+    }
+    currentPage.value = 1
+    saveStatus.value = 'saved'
+    saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } catch (e) {
+    console.error('[PdfEditor] reload after page op failed:', e)
+    saveStatus.value = 'error'
+  }
+}
+
+// ========== DOM refs ==========
+const canvasRefs = new Map<number, HTMLCanvasElement>()
+const textLayerRefs = new Map<number, HTMLDivElement>()
+const annotationRefs = new Map<number, SVGSVGElement>()
+const thumbRefs = new Map<number, HTMLCanvasElement>()
+const canvasAreaRef = ref<HTMLElement | null>(null)
+
+const recognizedPages = ref<Set<number>>(new Set())
+/** OCR 状态:'unrecognized' | 'recognizing' | 'recognized' | 'error' */
+const recognizeStatus = ref<'unrecognized' | 'recognizing' | 'recognized' | 'error'>('unrecognized')
+const recognizeStatusLabel = computed(() => {
+  return {
+    unrecognized: '未识别',
+    recognizing: '识别中...',
+    recognized: '已识别',
+    error: '识别失败',
+  }[recognizeStatus.value]
+})
+
+function onPageReady(
+  pageNum: number,
+  canvasEl: HTMLCanvasElement,
+  textLayerEl: HTMLDivElement,
+  annotationEl: SVGSVGElement,
+) {
+  canvasRefs.set(pageNum, canvasEl)
+  textLayerRefs.set(pageNum, textLayerEl)
+  annotationRefs.set(pageNum, annotationEl)
+  nextTick(() => renderPageIfReady(pageNum))
+}
+
+function onThumbReady(pageNum: number, canvasEl: HTMLCanvasElement) {
+  thumbRefs.set(pageNum, canvasEl)
+  nextTick(() => renderThumbIfReady(pageNum))
+}
+
+async function renderPageIfReady(pageNum: number) {
+  const canvasEl = canvasRefs.get(pageNum)
+  const textLayerEl = textLayerRefs.get(pageNum)
+  if (!canvasEl || !textLayerEl) return
+  try {
+    await renderer.renderPage(pageNum, canvasEl, textLayerEl)
+    pageRawWidth.value = renderer.pageWidth.value || pageRawWidth.value
+    pageRawHeight.value = renderer.pageHeight.value || pageRawHeight.value
+  } catch (e) {
+    console.error(`[PdfEditor] renderPage(${pageNum}) failed:`, e)
+  }
+}
+
+async function renderThumbIfReady(_pageNum: number) {
+  try {
+    if (renderer.pdfDoc.value && thumbRefs.size > 0) {
+      await renderer.renderAllThumbs(thumbRefs)
+    }
+  } catch (e) {
+    console.error('[PdfEditor] renderThumbs failed:', e)
+  }
+}
+
+// ========== 缩略图事件 ==========
+async function onRotatePage(pageNum: number, degrees: number) {
+  const result = await pageOps.rotatePage(pageNum, degrees)
+  if (result) await reloadAfterPageOp(pageOps.bustUrl(result))
+}
+async function onReorderPages(from: number, to: number) {
+  const newOrder = pageOps.computeReorder(from, to, totalPages.value)
+  const result = await pageOps.reorderPages(newOrder)
+  if (result) await reloadAfterPageOp(pageOps.bustUrl(result))
+}
+function onThumbContextMenu(pageNum: number, x: number, y: number) {
+  ctxMenuPageNum.value = pageNum
+  ctxMenuAnchor.value = { x, y }
+  ctxMenuOpen.value = true
+}
+
+function onCtxGoto(p: number) { goToPage(p) }
+function onCtxRotate(p: number, d: number) { void onRotatePage(p, d) }
+function onCtxExtract(p: number) {
+  pageOps.extractPages([p]).then((r) => { if (r) reloadAfterPageOp(pageOps.bustUrl(r)) })
+}
+function onCtxDelete(p: number) {
+  pageOps.deletePage(p).then((r) => { if (r) reloadAfterPageOp(pageOps.bustUrl(r)) })
+}
+
+// ========== 标注鼠标事件 ==========
+function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  ;(annot as any).onMouseDown?.(evt, pageNum, containerRect)
+}
+function onCanvasMouseMove(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  ;(annot as any).onMouseMove?.(evt, pageNum, containerRect)
+}
+function onCanvasMouseUp(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  ;(annot as any).onMouseUp?.(evt, pageNum, containerRect)
+}
+function onCanvasMouseLeave(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  ;(annot as any).onMouseLeave?.(evt, pageNum, containerRect)
+}
+
+// ========== Phase 3 菜单状态(保留 V2 菜单,Phase 3-4 功能) ==========
+const pageMenuOpen = ref(false)
+const pageMenuAnchor = ref<{ x: number; y: number } | null>(null)
+const exportMenuOpen = ref(false)
+const exportMenuAnchor = ref<{ x: number; y: number } | null>(null)
+const aiMenuOpen = ref(false)
+const aiMenuAnchor = ref<{ x: number; y: number } | null>(null)
+const mergeDialogOpen = ref(false)
+// Phase 11: 页面操作对话框(插入/裁剪/水印/页眉页脚)
+const pageOpsDialogOpen = ref(false)
+const pageOpsInitialTab = ref<'insertBlank' | 'crop' | 'watermark' | 'headerFooter'>('insertBlank')
+const termsPanelOpen = ref(false)
+// 默认折叠缩略图(V3.3 优化:让画布占据更多主空间)
+// 缩略图默认展示(V3.6 — user 反馈要默认展开)
+const thumbCollapsed = ref(false)
+// Phase 11.6: 右侧 ToolsRail 折叠状态(默认展开)
+const toolsRailCollapsed = ref(false)
+
+// 右键菜单
+const ctxMenuOpen = ref(false)
+const ctxMenuAnchor = ref<{ x: number; y: number } | null>(null)
+const ctxMenuPageNum = ref(1)
+
+function onMergeConfirmed(docIds: number[]) {
+  pageOps.merge(docIds).then((r) => {
+    if (r) reloadAfterPageOp(pageOps.bustUrl(r))
   })
 }
 
-// ========== 导出 ==========
-async function handleConvert(format: string) {
-  converting.value = true
+function onOpenAiChatFromMenu() { aiVisible.value = true }
+function onOpenTermsFromMenu() { termsPanelOpen.value = true }
+
+// ========== 生命周期 ==========
+onMounted(async () => {
   try {
-    // 合并所有页面的 Markdown
-    let content = ''
-    for (let i = 1; i <= totalPages.value; i++) {
-      const pageContent = pdfMarkdown.value[i] || ''
-      if (pageContent) {
-        content += `## 第 ${i} 页\n\n${pageContent}\n\n---\n\n`
+    await renderer.load()
+    if (renderer.pdfDoc.value) {
+      const page = await renderer.pdfDoc.value.getPage(1)
+      const vp = page.getViewport({ scale: 1 })
+      pageRawWidth.value = vp.width
+      pageRawHeight.value = vp.height
+    }
+    collab.connect()
+    void textEditor.loadAllPositions()
+    emit('ready')
+  } catch (e) {
+    console.error('[PdfEditor] 加载失败:', e)
+  }
+})
+
+onBeforeUnmount(() => {
+  collab.destroy()
+  renderer.destroy()
+})
+
+let currentFileUrl = props.fileUrl
+watch(() => props.fileUrl, async (newUrl) => {
+  if (!newUrl || newUrl === currentFileUrl) return
+  currentFileUrl = newUrl
+  console.log('[PdfEditor] fileUrl changed:', newUrl)
+  // 等当前正在进行的 render 完成,再切换
+  renderer.destroy()
+  await renderer.load()
+  canvasRefs.clear()
+  textLayerRefs.clear()
+  annotationRefs.clear()
+  // 重新触发已挂载页面的渲染
+  for (const [pageNum, canvasEl] of canvasRefs.entries()) {
+    const textLayerEl = textLayerRefs.get(pageNum)
+    if (textLayerEl) {
+      try {
+        await renderer.renderPage(pageNum, canvasEl, textLayerEl)
+      } catch (e) {
+        console.error('[PdfEditor] re-render failed:', e)
       }
     }
-    if (!content) {
-      ElMessage.warning('没有可导出的内容')
-      return
-    }
-    const blob = await pdfApi.exportEdited(props.docId, { content, format: format as any })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `document.${format}`
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('导出成功')
-  } catch (e) {
-    ElMessage.error('导出失败')
-  } finally {
-    converting.value = false
+  }
+})
+
+// 键盘快捷键
+function onKeydown(e: KeyboardEvent) {
+  // 只在没有焦点输入框时响应
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+  if (e.ctrlKey || e.metaKey) return
+
+  switch (e.key.toLowerCase()) {
+    case 'v': selectTool('select'); break
+    case 't': selectTool('textEdit'); break
+    case 'h': selectTool('highlight'); break
+    case 'c': selectTool('comment'); break
+    case 'p': selectTool('draw'); break
+    case 'e': selectTool('eraser'); break
+    case 'q': selectTool('vqa'); break
+    case 'u': selectTool('underline'); break
+    case 'c': selectTool('comment'); break
+    case 'p': selectTool('draw'); break
+    case 'e': selectTool('eraser'); break
+    case 'q': selectTool('vqa'); break
+    case 'arrowleft': if (e.shiftKey) { goPrev(); } break
+    case 'arrowright': if (e.shiftKey) { goNext(); } break
   }
 }
-
-// ========== AI 对话 ==========
-function openAiChat() {
-  showAiDrawer.value = true
-}
-
-function quickAsk(q: string) {
-  chatInput.value = q
-  sendChat()
-}
-
-async function sendChat() {
-  const q = chatInput.value.trim()
-  if (!q || chatLoading.value) return
-  chatMessages.value.push({ role: 'user', content: q })
-  chatMessages.value.push({ role: 'assistant', content: '' })
-  chatInput.value = ''
-  chatLoading.value = true
-  await nextTick()
-  scrollChat()
-
-  try {
-    const token = sessionStorage.getItem('token')
-    const resp = await fetch(`/api/documents/${props.docId}/ai/chat-stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ question: q, history: chatMessages.value.filter(m => m.role !== 'assistant').map(m => ({ role: m.role, content: m.content })) }),
-    })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    if (!resp.body) throw new Error('No response body')
-
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      const last = chatMessages.value[chatMessages.value.length - 1]
-      if (last?.role !== 'assistant') continue
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (trimmed.startsWith('data:')) {
-          const data = trimmed.slice(5).trim()
-          if (data && data !== '[DONE]') {
-            try {
-              const parsed = JSON.parse(data)
-              last.content += parsed.content || ''
-            } catch {
-              // 兼容纯文本
-              last.content += data
-            }
-          }
-        }
-      }
-    }
-    await nextTick()
-    scrollChat()
-  } catch (e) {
-    const last = chatMessages.value[chatMessages.value.length - 1]
-    if (last?.role === 'assistant') last.content = '请求失败，请重试'
-  } finally {
-    chatLoading.value = false
-  }
-}
-
-function scrollChat() {
-  if (chatMessagesRef.value) chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight
-}
+onMounted(() => document.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <style scoped>
-/* ========== 容器 ========== */
-.pdf-editor-container {
+/* ==================== V3 主壳布局 ==================== */
+.pdf-editor-v3 {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* Phase 11.5 修复:作为 DocEditor .editor-body 的 flex 子项,需要 flex:1 撑满宽度
+     原来没设 flex/width,默认 flex:0 1 auto 导致右侧大量空白 */
+  flex: 1 1 auto;
   width: 100%;
+  min-width: 0;
+  height: calc(100vh - 40px);
+  position: relative;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
   overflow: hidden;
-  background: #f5f5f5;
 }
 
-/* ========== 工具栏 ========== */
-.toolbar {
+.pdf-editor-body {
+  display: grid;
+  grid-template-columns: auto 1fr auto 56px;  /* Phase 11.5 Q4: 第 4 列固定 ToolsRail */
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+  position: relative;
+  /* 创建独立 stacking context,确保子项 z-index 生效 */
+  isolation: isolate;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* ==================== 中央画布 ==================== */
+.pdf-canvas-area {
+  background: linear-gradient(180deg, #E8EEF5 0%, #E2E8F0 100%);
+  overflow-y: auto;
+  overflow-x: auto;  /* Phase 11.5 Q2: 超宽画布水平滚动,不裁切 */
+  padding: var(--space-8) var(--space-12);  /* Q2: 上下对称 32px,去底部 64px 浪费 */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scroll-behavior: smooth;
+  position: relative;
+  /* Phase 11.5 Q2: 不用 contain:strict(会让子元素 canvas 尺寸为 0)
+     改用 overscroll-behavior 防滚动穿透即可 */
+  overscroll-behavior: contain;
+}
+
+/* 双页对照 */
+.pdf-facing-pair {
+  display: grid;
+  grid-template-columns: 1fr var(--space-6) 1fr;
+  gap: 0;
+  align-items: start;
+  justify-content: center;
+  width: 100%;
+}
+
+.pdf-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 100%;
+  color: var(--color-foreground-3);
+  font-size: var(--text-md);
+}
+.pdf-state-error { color: var(--color-destructive); }
+.pdf-state-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: pdf-spin 0.8s linear infinite;
+}
+@keyframes pdf-spin { to { transform: rotate(360deg); } }
+
+/* Phase 11.5 Q1: 画布骨架占位 */
+.pdf-canvas-skeleton {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  flex-shrink: 0;
+  justify-content: center;
+  background: linear-gradient(135deg, #E8EEF5 0%, #DCE3EC 100%);
+  padding: var(--space-6) var(--space-10);
 }
-
-.toolbar-group {
+.pdf-canvas-skeleton-card {
+  width: 620px;
+  max-width: 90%;
+  height: min(80vh, 820px);
+  max-height: 90%;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-8) var(--space-10);
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: relative;
+  overflow: hidden;
 }
-
-.toolbar-right {
-  margin-left: auto;
+.pdf-canvas-skeleton-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  margin-bottom: var(--space-2);
 }
-
-.page-indicator, .scale-indicator {
-  font-size: 12px;
-  color: #606266;
-  min-width: 50px;
-  text-align: center;
-}
-
-/* ========== 主体布局 ========== */
-.main-layout {
+.pdf-canvas-skeleton-body {
   flex: 1;
   display: flex;
-  overflow: hidden;
+  flex-direction: column;
+  gap: var(--space-3);
   min-height: 0;
 }
+.pdf-canvas-skeleton-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-divider);
+  margin-top: var(--space-2);
+}
+.pdf-canvas-skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(110deg, var(--color-surface-2) 8%, var(--color-surface-3) 18%, var(--color-surface-2) 33%);
+  background-size: 200% 100%;
+  animation: pdf-canvas-shimmer 1.6s ease-in-out infinite;
+}
+.pdf-canvas-skeleton-line.w-30 { width: 30%; }
+.pdf-canvas-skeleton-line.w-50 { width: 50%; }
+.pdf-canvas-skeleton-line.w-60 { width: 60%; }
+.pdf-canvas-skeleton-line.w-65 { width: 65%; }
+.pdf-canvas-skeleton-line.w-70 { width: 70%; }
+.pdf-canvas-skeleton-line.w-75 { width: 75%; }
+.pdf-canvas-skeleton-line.w-80 { width: 80%; }
+.pdf-canvas-skeleton-line.w-88 { width: 88%; }
+.pdf-canvas-skeleton-line.w-90 { width: 90%; }
+.pdf-canvas-skeleton-line.w-92 { width: 92%; }
+.pdf-canvas-skeleton-line.w-95 { width: 95%; }
+.pdf-canvas-skeleton-line.w-15 { width: 15%; }
+.pdf-canvas-skeleton-line.h-8 { height: 8px; }
+.pdf-canvas-skeleton-line.h-12 { height: 12px; }
+.pdf-canvas-skeleton-line.h-20 { height: 20px; }
+.pdf-canvas-skeleton-chart {
+  height: 80px;
+  margin: var(--space-2) var(--space-8);
+  border-radius: var(--radius-md);
+  background: linear-gradient(110deg, var(--color-surface-2) 8%, var(--color-surface-3) 18%, var(--color-surface-2) 33%);
+  background-size: 200% 100%;
+  animation: pdf-canvas-shimmer 1.6s ease-in-out infinite;
+}
+.pdf-canvas-skeleton-text {
+  color: var(--color-foreground-3);
+  font-size: var(--text-sm);
+}
+@keyframes pdf-canvas-shimmer {
+  to { background-position-x: -200%; }
+}
 
-/* ========== 缩略图 ========== */
-.thumbnails-panel {
-  width: 80px;
-  flex-shrink: 0;
-  background: #fafafa;
-  border-right: 1px solid #e4e7ed;
-  overflow-y: auto;
-  padding: 4px;
+/* ==================== 右侧任务面板 ==================== */
+.pdf-right-panel {
+  width: var(--right-panel-width);
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-4);
+  z-index: var(--z-right-panel);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  overflow: hidden;
 }
 
-.thumb-item {
-  cursor: pointer;
-  border: 2px solid transparent;
-  border-radius: 4px;
-  padding: 2px;
-  background: #fff;
-  transition: all 0.2s;
+.pdf-right-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  height: var(--topbar-height);
+  background: var(--color-surface-2);
+  flex-shrink: 0;
 }
 
-.thumb-item:hover {
-  border-color: #c0c4cc;
+.pdf-right-panel-header h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-semibold);
 }
 
-.thumb-item.active {
-  border-color: #409eff;
+.pdf-right-panel-close {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-foreground-3);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.pdf-right-panel-close:hover {
+  background: var(--color-surface);
+  color: var(--color-foreground);
 }
 
-.thumb-canvas {
-  width: 100%;
-  display: block;
-}
-
-.thumb-num {
-  display: block;
-  text-align: center;
-  font-size: 10px;
-  color: #909399;
-  margin-top: 2px;
-}
-
-/* ========== PDF 预览 ========== */
-.pdf-viewer {
+.pdf-right-panel-body {
   flex: 1;
-  overflow: auto;
-  background: #e8e8e8;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.pdf-panel-placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--color-foreground-3);
+  font-size: var(--text-sm);
+}
+
+.pdf-panel-hint {
+  font-size: var(--text-xs);
+  color: var(--color-foreground-4);
+}
+
+.pdf-search-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+}
+
+/* ==================== 状态条 V3.2(Adobe 风格 3 段) ==================== */
+.pdf-statusbar {
+  height: var(--statusbar-height, 30px);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 var(--space-3);
+  font-size: 11px;
+  color: var(--color-foreground-2);
+  font-feature-settings: 'tnum';
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+
+.pdf-sb-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
 }
 
-.page-wrapper {
-  margin-bottom: 8px;
+.pdf-sb-left { justify-self: start; }
+.pdf-sb-center { justify-self: center; gap: var(--space-1); }
+.pdf-sb-right { justify-self: end; }
+
+.pdf-sb-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-foreground-3);
+  font-size: 11px;
 }
 
-.page-container {
-  position: relative;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-  background: #fff;
+.pdf-sb-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--color-border);
+  flex-shrink: 0;
 }
 
-.page-canvas {
-  display: block;
+.pdf-sb-page-nav {
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--color-foreground-2);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.pdf-sb-page-nav:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-foreground);
+}
+.pdf-sb-page-nav:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
-/* 文字层 */
-.text-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 1;
+.pdf-sb-page-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  justify-content: center;
+}
+.pdf-sb-page-current {
+  color: var(--color-foreground);
+  font-weight: 600;
+}
+.pdf-sb-page-sep {
+  color: var(--color-foreground-4);
 }
 
-.text-layer.active {
-  pointer-events: auto;
-  z-index: 10;
+.pdf-sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-foreground-2);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pdf-sb-chip .ico {
+  color: var(--color-foreground-3);
+  flex-shrink: 0;
 }
 
-/* OCR 叠加文字层默认允许框选复制（无需切到 select 工具） */
-.text-layer.ocr-text-layer {
-  pointer-events: none; /* 让批注图标等上层元素仍可点击 */
-  z-index: 5;
+.pdf-sb-online {
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
-.text-layer.ocr-text-layer :deep(span) {
-  pointer-events: auto; /* 但文字 span 本身可被选中 */
-  cursor: text;
-}
-
-.text-layer :deep(span) {
-  color: transparent;
-  position: absolute;
-  white-space: pre;
-  cursor: text;
-  pointer-events: all;
+.pdf-sb-online-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
 }
 
-/* 标注层 */
-.annotation-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+.pdf-sb-ocr-recognized {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.pdf-sb-ocr-recognizing {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+.pdf-sb-ocr-unrecognized {
+  background: var(--color-surface-2);
+  color: var(--color-foreground-3);
+}
+.pdf-sb-ocr-error {
+  background: var(--color-destructive-soft);
+  color: var(--color-destructive);
 }
 
-.annotation-layer.editing {
-  pointer-events: auto;
-  cursor: crosshair;
+.pdf-sb-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.pdf-sb-saving { color: var(--color-info); }
+.pdf-sb-saved { color: var(--color-success); }
+.pdf-sb-error { color: var(--color-destructive); }
+.pdf-sb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pdf-sb-save-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: pdf-sb-spin 0.8s linear infinite;
+}
+@keyframes pdf-sb-spin {
+  to { transform: rotate(360deg); }
 }
 
-.ann-highlight {
-  position: absolute;
-  pointer-events: none;
+.pdf-sb-zoom-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-foreground-2);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 120ms ease;
+  font-weight: 500;
+}
+.pdf-sb-zoom-btn:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+  color: var(--color-foreground);
+}
+.pdf-sb-zoom-btn:active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 
-.ann-comment {
-  position: absolute;
-  font-size: 18px;
+.pdf-sb-zoom-display {
+  min-width: 52px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-foreground);
+  font-weight: 500;
+  padding: 0 4px;
   cursor: pointer;
 }
-
-.ann-tooltip {
-  display: none;
-  position: absolute;
-  top: 20px;
-  left: 0;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  max-width: 200px;
-  white-space: pre-wrap;
-  z-index: 100;
+.pdf-sb-zoom-display:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
 }
-
-.ann-comment:hover .ann-tooltip {
-  display: block;
-}
-
-.draw-svg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-}
-
-.rect-preview {
-  position: absolute;
-  pointer-events: none;
-}
-
-/* 识别中覆盖层 */
-.recognizing-overlay {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(255,255,255,0.95);
-  padding: 20px 40px;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  z-index: 1000;
-}
-
-/* ========== Markdown 面板 ========== */
-.markdown-panel {
-  width: 40%;
-  min-width: 280px;
-  max-width: 600px;
-  flex-shrink: 0;
-  background: #fff;
-  border-left: 1px solid #e4e7ed;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.markdown-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid #e4e7ed;
-  flex-shrink: 0;
-}
-
-.markdown-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: #303133;
-}
-
-.save-status {
-  font-size: 11px;
-  color: #67c23a;
-}
-
-.save-status.saving {
-  color: #e6a23c;
-}
-
-.markdown-body {
-  flex: 1;
-  overflow: hidden;
-}
-
-.markdown-textarea {
-  width: 100%;
-  height: 100%;
-  padding: 12px;
-  border: none;
+.pdf-sb-zoom-slider {
+  width: 80px;
+  height: 4px;
+  margin: 0 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-border);
+  border-radius: 999px;
   outline: none;
-  resize: none;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  cursor: pointer;
+}
+.pdf-sb-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: grab;
+  border: 2px solid var(--color-surface);
+  box-shadow: var(--shadow-2);
+}
+.pdf-sb-zoom-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  background: var(--color-primary-hover);
+  transform: scale(1.1);
+}
+.pdf-sb-zoom-slider:hover {
+  background: var(--color-border-strong);
+}
+.pdf-sb-zoom-fit {
+  margin-left: 2px;
   font-size: 13px;
-  line-height: 1.6;
-  color: #303133;
-  background: #fff;
 }
 
-.markdown-textarea::placeholder {
-  color: #c0c4cc;
+.ico {
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.markdown-footer {
+/* ==================== V2 保留:合同条款抽屉 ==================== */
+.pdf-terms-drawer {
+  position: fixed;
+  top: calc(var(--topbar-height) + 96px);
+  right: 0;
+  bottom: var(--statusbar-height);
+  width: var(--right-panel-width);
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-8);
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+}
+.pdf-terms-drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-top: 1px solid #e4e7ed;
-  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
 }
-
-.char-count {
-  font-size: 11px;
-  color: #909399;
-}
-
-/* ========== AI 聊天 ========== */
-.ai-chat-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 12px;
-  color: #909399;
-}
-
-.empty-icon {
-  font-size: 36px;
-}
-
-.empty-text {
-  font-size: 14px;
-}
-
-.quick-btns {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-msg {
-  display: flex;
-  gap: 8px;
-  max-width: 85%;
-}
-
-.chat-msg.user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.msg-avatar {
-  flex-shrink: 0;
+.pdf-terms-drawer-header h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.pdf-terms-drawer-close {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  background: #f0f2f5;
-  display: flex;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  color: var(--color-foreground-3);
 }
+.pdf-terms-drawer-close:hover { background: var(--color-surface-2); }
+.pdf-terms-drawer-body { flex: 1; overflow-y: auto; padding: var(--space-4); }
 
-.msg-bubble {
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-word;
+/* ==================== Transitions ==================== */
+.pdf-panel-fade-enter-active,
+.pdf-panel-fade-leave-active {
+  transition: transform var(--duration-slow) var(--ease-out),
+    opacity var(--duration-slow) var(--ease-out);
 }
-
-.chat-msg.user .msg-bubble {
-  background: #409eff;
-  color: #fff;
-}
-
-.chat-msg.assistant .msg-bubble {
-  background: #f5f7fa;
-  color: #303133;
-}
-
-.chat-input {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid #e4e7ed;
-}
-
-/* ========== 动画 ========== */
-.slide-left-enter-active,
-.slide-left-leave-active {
-  transition: all 0.3s ease;
-}
-
-.slide-left-enter-from,
-.slide-left-leave-to {
-  width: 0;
+.pdf-panel-fade-enter-from,
+.pdf-panel-fade-leave-to {
+  transform: translateX(100%);
   opacity: 0;
+}
+
+.pdf-drawer-fade-enter-active,
+.pdf-drawer-fade-leave-active {
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+.pdf-drawer-fade-enter-from,
+.pdf-drawer-fade-leave-to {
+  transform: translateX(100%);
 }
 </style>

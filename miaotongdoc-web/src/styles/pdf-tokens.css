@@ -1,0 +1,203 @@
+/**
+ * PDF 编辑器 — V3 设计令牌
+ *
+ * 风格: Adobe Fluent(产品级、扁平、克制)
+ * - 颜色饱和度降低(#3B6FE8 取代 #2563EB)
+ * - 圆角 6px(按钮) / 12px(卡片)
+ * - 1px 边框(克制阴影)
+ * - 字体更大,留白更宽松
+ *
+ * 来源:plans/twinkly-knitting-waterfall.md V3 计划
+ */
+
+:root {
+  /* ========== Brand & Color (产品级蓝) ========== */
+  --color-primary:        #3B6FE8;
+  --color-primary-hover:  #2D5BC9;
+  --color-primary-soft:   #EBF1FE;
+  --color-primary-rgb:    59, 111, 232;
+  --color-on-primary:     #FFFFFF;
+
+  /* Foreground 层级(Adobe 风格,对比度高) */
+  --color-foreground:     #0F172A;   /* slate-900 */
+  --color-foreground-2:   #334155;   /* slate-700 */
+  --color-foreground-3:   #64748B;   /* slate-500 */
+  --color-foreground-4:   #94A3B8;   /* slate-400 */
+
+  /* Background 层级 */
+  --color-background:     #F1F5F9;   /* slate-100,更深背景凸显白色卡片 */
+  --color-surface:        #FFFFFF;
+  --color-surface-2:      #F8FAFC;   /* slate-50 */
+  --color-surface-3:      #F1F5F9;
+  --color-canvas:         #E2E8F0;   /* slate-200,画布与卡片区分 */
+
+  /* Border(克制使用) */
+  --color-border:         #E2E8F0;
+  --color-border-strong:  #CBD5E1;
+  --color-border-focus:   #3B6FE8;
+  --color-divider:        #EDF1F5;
+
+  /* Semantic(语义色,Adobe 风格偏饱和度低) */
+  --color-success:        #16A34A;
+  --color-success-soft:   #DCFCE7;
+  --color-warning:        #F59E0B;
+  --color-warning-soft:   #FEF3C7;
+  --color-destructive:    #DC2626;
+  --color-destructive-soft: #FEE2E2;
+  --color-info:           #0EA5E9;
+  --color-info-soft:      #E0F2FE;
+
+  /* ========== Spacing (8pt 主节奏,4pt 微调) ========== */
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ========== Radius ========== */
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-2xl:  16px;
+  --radius-full: 9999px;
+
+  /* ========== Typography (Adobe 风格) ========== */
+  --font-sans: 'Plus Jakarta Sans', 'Segoe UI Variable', system-ui,
+               -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+
+  --text-xs:    11px; --leading-xs:    14px;  /* 微标签 */
+  --text-sm:    12px; --leading-sm:    16px;  /* 标签/工具提示 */
+  --text-base:  13px; --leading-base:  18px;  /* 主体文字 */
+  --text-md:    14px; --leading-md:    20px;  /* 重要文字 */
+  --text-lg:    16px; --leading-lg:    24px;  /* 标题 */
+  --text-xl:    18px; --leading-xl:    26px;
+  --text-2xl:   22px; --leading-2xl:   30px;  /* 大标题 */
+
+  --font-weight-normal:   400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+
+  /* ========== Elevation (Adobe 4 阶) ========== */
+  --shadow-1:  0 1px 2px rgba(15, 23, 42, .04);
+  --shadow-2:  0 1px 3px rgba(15, 23, 42, .08), 0 1px 2px rgba(15, 23, 42, .04);
+  --shadow-4:  0 4px 6px rgba(15, 23, 42, .06), 0 2px 4px rgba(15, 23, 42, .04);
+  --shadow-8:  0 8px 16px rgba(15, 23, 42, .08), 0 2px 4px rgba(15, 23, 42, .04);
+  --shadow-12: 0 12px 24px rgba(15, 23, 42, .10), 0 4px 8px rgba(15, 23, 42, .04);
+  --shadow-16: 0 16px 32px rgba(15, 23, 42, .12), 0 4px 8px rgba(15, 23, 42, .04);
+  --shadow-focus: 0 0 0 3px rgba(59, 111, 232, .15);
+
+  /* ========== Motion ========== */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:       cubic-bezier(0.55, 0, 0.6, 0.2);
+  --ease-in-out:   cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+
+  /* ========== Layout ========== */
+  --topbar-height:        40px;
+  --ribbon-height:        96px;
+  --thumb-rail-width:     220px;
+  --right-panel-width:    320px;
+  --statusbar-height:     28px;
+  --page-max-width:       760px;
+  --page-gap:             16px;
+
+  /* ========== Z-index 严格分层 ========== */
+  --z-canvas:          1;
+  --z-page-card:       2;
+  --z-page-overlay:    3;
+  --z-thumb-rail:      5;
+  --z-right-panel:     6;
+  --z-toolbar:         50;
+  --z-menu:            80;
+  --z-floating-panel:  90;
+  --z-modal:           100;
+  --z-toast:           200;
+}
+
+/* ========== prefers-reduced-motion ========== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}
+
+/* ========== 全局微调 ========== */
+html, body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-base);
+  color: var(--color-foreground);
+  background: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+input, textarea, select {
+  font: inherit;
+}
+
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-color: var(--color-border-focus);
+}
+
+/* 滚动条美化(Adobe 风格) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground-4);
+  background-clip: content-box;
+}
+
+/* 选中文本颜色 */
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--color-foreground);
+}
+/* ============ Phase 9.5: 浮动工具栏高亮 fallback ============ */
+/* 当 document.execCommand('hiliteColor') 失败时,父组件会给容器加 .pdf-floating-hl-fallback + --pdf-hl-color 变量 */
+.pdf-floating-hl-fallback ::selection,
+.pdf-floating-hl-fallback::selection {
+  background-color: var(--pdf-hl-color, #FACC15) !important;
+  color: var(--color-foreground) !important;
+}

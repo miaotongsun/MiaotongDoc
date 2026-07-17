@@ -633,7 +633,7 @@ public class DocumentService {
         // 使用 SQL 直接更新（假设已有 text_edits 列）
         // 如果列不存在，需要创建：ALTER TABLE mt_document ADD COLUMN text_edits JSONB DEFAULT '[]'
         jdbcTemplate.update(
-            "UPDATE mt_document SET text_edits = ?, updated_at = ? WHERE id = ?",
+            "UPDATE mt_document SET text_edits = ?::jsonb, updated_at = ? WHERE id = ?",
             editsJson,
             LocalDateTime.now(),
             docId

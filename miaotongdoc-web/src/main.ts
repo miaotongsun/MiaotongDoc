@@ -13,6 +13,8 @@ import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import 'element-plus/dist/index.css'
+// 设计令牌(全局 CSS 变量,Fluent 风格 PDF 编辑器必需,必须在 Element Plus 之后)
+import '@/styles/pdf-tokens.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'

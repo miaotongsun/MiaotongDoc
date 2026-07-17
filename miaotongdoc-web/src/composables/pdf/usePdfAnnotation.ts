@@ -19,7 +19,22 @@
 import { ref, computed } from 'vue'
 import type { PdfAnnotation, PdfAnnotationRect } from './usePdfCollaborate'
 
-export type AnnotationTool = 'select' | 'highlight' | 'comment' | 'draw' | 'eraser' | 'vqa'
+export type AnnotationTool =
+  | 'select'
+  | 'highlight'
+  | 'comment'
+  | 'draw'
+  | 'eraser'
+  | 'vqa'
+  | 'textEdit'
+  // Phase 10 形状工具
+  | 'rectangle'
+  | 'ellipse'
+  | 'arrow'
+  | 'line'
+  | 'underline'
+  | 'strikethrough'
+  | 'stamp'
 
 export interface PendingRect {
   pageNumber: number
@@ -65,6 +80,13 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   const annotations = ref<PdfAnnotation[]>([])
   const activeTool = ref<AnnotationTool>('select')
   const activeColor = ref('#FFEB3B')
+  const stampText = ref('DRAFT')
+  /** 图章预设文字(常用审批标签) */
+  const stampPresets = ['DRAFT', 'APPROVED', 'REJECTED', 'CONFIDENTIAL', 'FINAL', 'REVIEWED', 'VOID', 'COPY'] as const
+  const customStampText = ref('')
+  function setStampText(text: string): void {
+    stampText.value = (text || '').toUpperCase().slice(0, 16)
+  }
   const predefineColors = PREDEFINE_COLORS
 
   // 绘制中状态
@@ -103,6 +125,8 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       color: data.color ?? activeColor.value,
       content: data.content,
       points: data.points,
+      strokeWidth: data.strokeWidth,
+      stampText: data.stampText,
       userId: options.userId,
       userName: options.userName,
       createdAt: new Date().toISOString(),
@@ -138,15 +162,25 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
 
   // ===== 鼠标交互（高亮 / 评论 / 画笔） =====
 
-  function onMouseDown(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | undefined) {
+  function onMouseDown(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
     if (!checkEdit() || activeTool.value === 'select') return
     const pos = getRelPos(e, page, annotationLayerEl)
     if (activeTool.value === 'eraser') {
       eraseAt(pos.x, pos.y, page)
       return
     }
-    // vqa / highlight / comment 都用矩形框选：mousedown 起一个 pendingRect
-    if (activeTool.value === 'highlight' || activeTool.value === 'comment' || activeTool.value === 'vqa') {
+    // vqa / highlight / comment / 形状 / 下划线 / 删除线 都用矩形框选：mousedown 起一个 pendingRect
+    const isRectTool =
+      activeTool.value === 'highlight' ||
+      activeTool.value === 'comment' ||
+      activeTool.value === 'vqa' ||
+      activeTool.value === 'rectangle' ||
+      activeTool.value === 'ellipse' ||
+      activeTool.value === 'arrow' ||
+      activeTool.value === 'line' ||
+      activeTool.value === 'underline' ||
+      activeTool.value === 'strikethrough'
+    if (isRectTool) {
       pendingRect.value = {
         pageNumber: page, startX: pos.x, startY: pos.y,
         x: pos.x, y: pos.y, width: 0, height: 0,
@@ -158,15 +192,25 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     }
   }
 
-  function onMouseMove(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | undefined) {
+  function onMouseMove(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
     if (!checkEdit()) return
     const pos = getRelPos(e, page, annotationLayerEl)
     if (activeTool.value === 'eraser' && e.buttons === 1) {
       eraseAt(pos.x, pos.y, page)
       return
     }
-    // vqa / highlight / comment 都跟随鼠标调整矩形
-    if ((activeTool.value === 'highlight' || activeTool.value === 'comment' || activeTool.value === 'vqa') && pendingRect.value) {
+    // vqa / highlight / comment / shape tools / underline / strikethrough 都跟随鼠标调整矩形
+    const isRectTool =
+      activeTool.value === 'highlight' ||
+      activeTool.value === 'comment' ||
+      activeTool.value === 'vqa' ||
+      activeTool.value === 'rectangle' ||
+      activeTool.value === 'ellipse' ||
+      activeTool.value === 'arrow' ||
+      activeTool.value === 'line' ||
+      activeTool.value === 'underline' ||
+      activeTool.value === 'strikethrough'
+    if (isRectTool && pendingRect.value) {
       pendingRect.value.x = pos.x
       pendingRect.value.y = pos.y
       pendingRect.value.width = pos.x - pendingRect.value.startX
@@ -176,7 +220,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     }
   }
 
-  function onMouseUp(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | undefined) {
+  function onMouseUp(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
     if (!checkEdit()) return
     // vqa 由 PdfEditor.vue 的 onAnnotationMouseUp 接管（需要截图上传 AI）
     if (activeTool.value === 'vqa') {
@@ -191,23 +235,36 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       }
       return
     }
-    if ((activeTool.value === 'highlight' || activeTool.value === 'comment') && pendingRect.value) {
+    if (pendingRect.value && (
+      activeTool.value === 'highlight' ||
+      activeTool.value === 'comment' ||
+      activeTool.value === 'rectangle' ||
+      activeTool.value === 'ellipse' ||
+      activeTool.value === 'arrow' ||
+      activeTool.value === 'line' ||
+      activeTool.value === 'underline' ||
+      activeTool.value === 'strikethrough'
+    )) {
       const r = pendingRect.value
       const w = Math.abs(r.width)
       const h = Math.abs(r.height)
-      if (w > 10 && h > 10) {
+      if (w > 8 && h > 4) {
         const rect: PdfAnnotationRect = {
           x: Math.min(r.startX, r.x), y: Math.min(r.startY, r.y),
           width: w, height: h,
         }
         if (activeTool.value === 'comment') {
-          pendingCommentRect.value = {
-            ...r, x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-          }
+          pendingCommentRect.value = { ...r, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
           editingComment.value = ''
           showCommentDialog.value = true
         } else {
-          add({ type: 'highlight', pageNumber: page, rect, color: activeColor.value })
+          add({
+            type: activeTool.value as any,
+            pageNumber: page,
+            rect,
+            color: activeColor.value,
+            strokeWidth: 2,
+          })
         }
       }
       pendingRect.value = null
@@ -220,6 +277,18 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
         })
       }
       drawPoints.value = []
+    } else if (activeTool.value === 'stamp') {
+      // stamp - 点击放置,默认 120x40 居中
+      const pos2 = getRelPos(e, page, annotationLayerEl)
+      const w = 120, h = 40
+      const rect: PdfAnnotationRect = { x: pos2.x - w / 2, y: pos2.y - h / 2, width: w, height: h }
+      add({
+        type: 'stamp',
+        pageNumber: page,
+        rect,
+        color: activeColor.value,
+        stampText: stampText.value,
+      })
     }
   }
 
@@ -260,9 +329,11 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
 
   // ===== 工具函数 =====
 
-  function getRelPos(e: MouseEvent, page: number, layerEl: HTMLDivElement | undefined) {
+  function getRelPos(e: MouseEvent, page: number, layerEl: HTMLDivElement | DOMRect | undefined) {
     if (!layerEl) return { x: 0, y: 0 }
-    const rect = layerEl.getBoundingClientRect()
+    const rect = (layerEl as HTMLElement).getBoundingClientRect
+      ? (layerEl as HTMLElement).getBoundingClientRect()
+      : (layerEl as DOMRect)
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
@@ -366,6 +437,10 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     activeTool,
     activeColor,
     predefineColors,
+    stampText,
+    stampPresets,
+    customStampText,
+    setStampText,
     isDrawing,
     currentPageDraw,
     drawPoints,

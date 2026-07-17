@@ -65,6 +65,7 @@
         :doc-id="docId" :doc-key="doc?.docKey || ''"
         :file-url="pdfFileUrl" :can-edit="canEdit"
         :user-name="currentUserName" :user-id="currentUserId"
+        :filename="docTitle"
         @ready="onReady" @state-change="onStateChange" />
 
       <!-- 加载中 -->
@@ -99,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Share, ChatDotRound, Clock, User, Loading } from '@element-plus/icons-vue'
@@ -144,6 +145,15 @@ const pdfFileUrl = ref('')
 const pdfLoaded = ref(false)
 
 const docTitle = computed(() => doc.value?.title || '加载中...')
+
+// 同步 document.title(V3.3 UX 优化:浏览器标签可见文件名)
+watch(docTitle, (t) => {
+  if (t && t !== '加载中...') {
+    document.title = `${t} · MiaotongDoc - 妙同文档`
+  } else {
+    document.title = 'MiaotongDoc - 妙同文档'
+  }
+}, { immediate: true })
 const docStatus = computed(() => doc.value?.status || 'draft')
 const isOwner = computed(() => {
   const userId = Number(sessionStorage.getItem('userId'))
@@ -364,11 +374,16 @@ async function onCancelSigning() {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  height: 48px;
+  background: var(--color-surface, #fff);
+  border-bottom: 1px solid var(--color-border, #e4e7ed);
+  height: 40px;
   flex-shrink: 0;
   overflow: visible;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: var(--text-sm, 13px);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  position: relative;
+  z-index: 5;
 }
 
 .nav-left {

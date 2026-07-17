@@ -8,20 +8,7 @@
 -->
 <template>
   <Teleport to="body">
-    <!-- 圆形触发按钮（fixed 右下角） -->
-    <button
-      v-if="!open"
-      class="ai-trigger"
-      :class="{ 'is-streaming': chat.status.value === 'streaming' }"
-      aria-label="展开 AI 助手"
-      @click="open = true"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 2 14 8.5l6.5 1.5-4.7 4.6 1.1 6.4L12 17.8 7.1 21l1.1-6.4L3.5 10l6.5-1.5z" />
-      </svg>
-    </button>
-
-    <!-- 浮窗本体 -->
+    <!-- Phase 11.8: 浮窗本体(打开/关闭由父组件 visible 控制,trigger 入口合并到 ToolsRail/Ribbon) -->
     <Transition name="float-slide">
       <aside
         v-if="open"
@@ -319,7 +306,6 @@ onUnmounted(() => {
 
 <style scoped>
 /* ============ 设计令牌（与 PdfEditor / Home 统一 Element Plus 蓝 #409EFF） ============ */
-.ai-trigger,
 .ai-float {
   --ai-primary: #409EFF;
   --ai-primary-light: #66B1FF;
@@ -333,47 +319,6 @@ onUnmounted(() => {
                0 8px 24px -6px rgba(0, 0, 0, 0.10);
 }
 
-/* ============ 触发按钮 ============ */
-.ai-trigger {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 9998;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: none;
-  background: linear-gradient(135deg, #409EFF 0%, #66B1FF 100%);
-  color: #fff;
-  cursor: pointer;
-  box-shadow: 0 6px 18px rgba(64, 158, 255, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.18s ease-out, box-shadow 0.18s ease-out;
-}
-.ai-trigger:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(64, 158, 255, 0.42);
-}
-.ai-trigger:active { transform: scale(0.94); }
-.ai-trigger:focus-visible {
-  outline: 3px solid var(--ai-primary-light);
-  outline-offset: 4px;
-}
-/* streaming 状态：脉动点 */
-.ai-trigger.is-streaming::after {
-  content: '';
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #F56C6C;
-  border: 2px solid #fff;
-  animation: pulse 1.4s ease-out infinite;
-}
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.3); opacity: 0.6; }
@@ -717,7 +662,6 @@ onUnmounted(() => {
     width: auto;
     height: calc(100vh - 24px);
   }
-  .ai-trigger { right: 12px; bottom: 12px; }
 }
 
 /* 减少动画偏好 */

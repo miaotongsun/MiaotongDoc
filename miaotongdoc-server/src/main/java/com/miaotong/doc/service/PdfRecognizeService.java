@@ -26,6 +26,7 @@ public class PdfRecognizeService {
     private final DocumentService documentService;
     private final StorageService storageService;
     private final OcrService ocrService;
+    private final PaddleOcrClient paddleOcrClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private RestTemplate restTemplate;
@@ -71,7 +72,22 @@ public class PdfRecognizeService {
             }
         }
 
-        // 回退到 OCR（扫描件识别）
+        // 回退到 PaddleOCR(中文扫描件主力,Phase 4 接入)
+        try {
+            Map<String, Object> paddleResult = paddleOcrClient.recognizePdf(documentId, "ch", null);
+            if ("success".equals(paddleResult.get("status"))) {
+                result.putAll(paddleResult);
+                result.put("engine", "paddleocr");
+                log.info("PaddleOCR 识别成功: docId={}", documentId);
+                return result;
+            }
+            log.warn("PaddleOCR 未成功: status={}, error={}",
+                    paddleResult.get("status"), paddleResult.get("error"));
+        } catch (Exception e) {
+            log.warn("PaddleOCR 调用异常(非致命): {}", e.getMessage());
+        }
+
+        // 回退到 Tesseract OCR(多语言兜底)
         Map<String, Object> ocrResult = ocrService.recognizePdf(documentId, "auto");
         if ("success".equals(ocrResult.get("status"))) {
             result.putAll(ocrResult);
@@ -83,6 +99,21 @@ public class PdfRecognizeService {
         Map<String, Object> pdfBoxResult = recognizeWithPdfBox(doc);
         result.putAll(pdfBoxResult);
         result.put("engine", "pdfbox");
+        return result;
+    }
+
+    /**
+     * Phase 11.4: 强制走 PaddleOCR 路径(返回 bbox 坐标)
+     * 不经过 Docling,直接调 PaddleOCR 服务。
+     */
+    public Map<String, Object> recognizeWithPaddle(Long documentId) {
+        Document doc = documentService.getDocument(documentId);
+        if (!"pdf".equals(doc.getFileType())) {
+            throw new BusinessException("该文档不是 PDF 类型");
+        }
+        Map<String, Object> result = paddleOcrClient.recognizePdf(documentId, "ch", null);
+        result.putIfAbsent("documentId", documentId);
+        result.putIfAbsent("title", doc.getTitle());
         return result;
     }
 

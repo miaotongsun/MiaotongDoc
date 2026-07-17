@@ -62,16 +62,26 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   const pageHeight = ref(0)
   const loading = ref(false)
   const error = ref<Error | null>(null)
+  // Phase 11.8: 缩略图渲染并发锁
+  let thumbsRendering = false
 
   // ===== 内部工具 =====
 
-  /** 动态加载 pdfjs-dist 并配置 worker */
+  /** 动态加载 pdfjs-dist 并配置 worker + cMap */
   async function ensurePdfjs(): Promise<typeof PdfJs> {
     if (pdfjsLib.value) return pdfjsLib.value
     const lib = await import('pdfjs-dist')
+    // Phase 11.8: worker 用本地 public/pdf.worker.min.mjs,避免内网不通 unpkg CDN 时 getDocument 卡住
     const cdn = options.workerCdn
-      ?? `https://unpkg.com/pdfjs-dist@${lib.version}/build/pdf.worker.min.mjs`
+      ?? `${window.location.origin}/pdf.worker.min.mjs`
     lib.GlobalWorkerOptions.workerSrc = cdn
+    // 配置 cMap:中文扫描件 / PaddleOCR 输出 / pdf2htmlEX 等工具
+    // 生成的 PDF 常用 CIDFont 子集嵌入,需要 cMap 才能正确解析中文字符
+    // cMap 资源已复制到 public/cmaps(构建时由 Vite 打到 dist/)
+    // worker 内部通过此 URL 异步加载 .bcmap 文件
+    lib.GlobalWorkerOptions.cMapUrl = `${window.location.origin}/cmaps/`
+    lib.GlobalWorkerOptions.cMapPacked = true
+    lib.GlobalWorkerOptions.standardFontDataUrl = `${window.location.origin}/standard_fonts/`
     pdfjsLib.value = lib as any
     return lib as any
   }
@@ -88,15 +98,35 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     if (loading.value) return
     loading.value = true
     error.value = null
+    console.log('[renderer] load start, fileUrl=', options.fileUrl)
     try {
       const lib = await ensurePdfjs()
-      const doc = await lib.getDocument({
+      console.log('[renderer] pdfjs lib ready, version=', lib.version)
+      console.log('[renderer] calling getDocument...')
+      const loadingTask = lib.getDocument({
         url: options.fileUrl,
         httpHeaders: options.token ? { Authorization: `Bearer ${options.token}` } : {},
-      }).promise
+        // 中文扫描件 / PaddleOCR 输出需要 cMap 才能正确解析
+        cMapUrl: `${window.location.origin}/cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `${window.location.origin}/standard_fonts/`,
+        // 不使用系统字体回退(中文 TTF 加载耗时且可能阻塞),直接用 cMap 渲染
+        disableFontFace: false,
+        // 启用字体回退,内嵌 CIDFont 找不到时尝试 cMap 解析
+        useSystemFonts: true,
+        // 旧 PDF 的字体兼容
+        verbosity: 0,
+      })
+      console.log('[renderer] getDocument returned task, onProgress available=', typeof loadingTask.onProgress)
+      loadingTask.onProgress = (p: any) => {
+        console.log('[renderer] onProgress:', p.loaded, '/', p.total, 'pct=', p.total ? Math.round((p.loaded / p.total) * 100) : '?')
+      }
+      const doc = await loadingTask.promise
+      console.log('[renderer] PDF doc loaded, numPages=', doc.numPages)
       pdfDoc.value = doc
       totalPages.value = doc.numPages
     } catch (e) {
+      console.error('[renderer] load failed:', e)
       error.value = e as Error
       throw e
     } finally {
@@ -114,16 +144,17 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     if (!doc || !canvasEl) return
     const page = await doc.getPage(pageNum)
     const viewport = page.getViewport({ scale: scale.value })
-    canvasEl.width = viewport.width
-    canvasEl.height = viewport.height
-    pageWidth.value = viewport.width
-    pageHeight.value = viewport.height
+    // Phase 11.8: pdfjs 要求 canvas.width/height 为整数,浮点 viewport 会导致渲染异常
+    canvasEl.width = Math.ceil(viewport.width)
+    canvasEl.height = Math.ceil(viewport.height)
+    pageWidth.value = canvasEl.width
+    pageHeight.value = canvasEl.height
     await page.render({ canvasContext: canvasEl.getContext('2d')!, viewport }).promise
 
     if (textLayerEl) {
       textLayerEl.innerHTML = ''
-      textLayerEl.style.width = viewport.width + 'px'
-      textLayerEl.style.height = viewport.height + 'px'
+      textLayerEl.style.width = canvasEl.width + 'px'
+      textLayerEl.style.height = canvasEl.height + 'px'
       const textContent = await page.getTextContent()
       if (textContent.items.length > 0) {
         const lib = await ensurePdfjs()
@@ -144,15 +175,22 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   ): Promise<void> {
     const doc = pdfDoc.value
     if (!doc) return
-    const ts = options.thumbScale ?? 0.15
-    for (let i = 1; i <= totalPages.value; i++) {
-      const page = await doc.getPage(i)
-      const viewport = page.getViewport({ scale: ts })
-      const canvas = thumbElMap.get(i)
-      if (!canvas) continue
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-      await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
+    // Phase 11.8: 防止并发调用导致同一 canvas 多次 render() 报错
+    if (thumbsRendering) return
+    thumbsRendering = true
+    try {
+      const ts = options.thumbScale ?? 0.4
+      for (let i = 1; i <= totalPages.value; i++) {
+        const page = await doc.getPage(i)
+        const viewport = page.getViewport({ scale: ts })
+        const canvas = thumbElMap.get(i)
+        if (!canvas) continue
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
+      }
+    } finally {
+      thumbsRendering = false
     }
   }
 
@@ -206,7 +244,9 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
 
   /** 销毁 PDF 文档，释放 worker */
   function destroy() {
-    pdfDoc.value?.destroy()
+    console.log('[renderer] destroy called (soft — 不取消进行中的 load)')
+    // 不调用 pdfDoc.value?.destroy():会中断进行中的网络请求
+    // 只标记 doc 为 null,新 load 会覆盖
     pdfDoc.value = null
     totalPages.value = 0
   }
