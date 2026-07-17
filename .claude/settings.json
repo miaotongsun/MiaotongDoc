@@ -222,7 +222,11 @@
       "Bash(python -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(f\\\\\"{x['id']} {x['docType']} {x['title'][:40]}\\\\\" for x in d['content'] if x['docType']=='pdf'\\)\\)\")",
       "Bash(node diag-multi.js)",
       "Bash(node diag-canvas-state.js)",
-      "Bash(node diag-log.js)"
+      "Bash(node diag-log.js)",
+      "Bash(node diag-phase121.js)",
+      "Bash(node diag-tab.js)",
+      "Bash(node diag-tab2.js)",
+      "Bash(node diag-html.js)"
     ],
     "additionalDirectories": [
       "\\tmp",
