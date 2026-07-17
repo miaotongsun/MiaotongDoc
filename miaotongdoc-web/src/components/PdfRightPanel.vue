@@ -145,7 +145,95 @@
         </ul>
       </div>
 
-      <!-- Tab 4: 信息 -->
+      <!-- Tab 4: 表单(Phase 12.1 + 12.2) -->
+      <div v-show="activeTab === 'form'" class="pdf-rp-content">
+        <div v-if="formFields.length > 0" class="pdf-rp-form-toolbar">
+          <button class="pdf-rp-form-apply" :disabled="formSaving" @click="applyFormFill">
+            <span v-if="formSaving" class="pdf-rp-form-spinner"></span>
+            <span v-else>应用填充</span>
+          </button>
+          <button class="pdf-rp-form-reset" @click="resetFormFill">重置</button>
+        </div>
+        <div class="pdf-rp-form-filter">
+          <button
+            v-for="f in formTypeFilters"
+            :key="f.id"
+            class="pdf-rp-form-filter-btn"
+            :class="{ 'is-active': formTypeFilter === f.id }"
+            @click="formTypeFilter = f.id"
+          >
+            {{ f.label }}
+          </button>
+        </div>
+        <div v-if="formLoading" class="pdf-rp-loading">识别中…</div>
+        <div v-else-if="filteredFormFields.length === 0" class="pdf-rp-empty">
+          <PdfIcon name="panelForm" :size="32" />
+          <p>{{ formFields.length === 0 ? '该 PDF 无表单字段' : '该类型无字段' }}</p>
+          <p class="pdf-rp-empty-hint" v-if="formFields.length === 0">AcroForm 表单字段会自动识别</p>
+        </div>
+        <ul v-else class="pdf-rp-form-list">
+          <li
+            v-for="f in filteredFormFields"
+            :key="f.name"
+            class="pdf-rp-form-item"
+            :class="{ 'is-readonly': f.readOnly, 'is-required': f.required, 'is-dirty': formDraft[f.name] !== undefined && formDraft[f.name] !== f.value }"
+            @click="onFocusField(f)"
+          >
+            <div class="pdf-rp-form-head">
+              <span class="pdf-rp-form-type" :style="{ background: formTypeColor(f.type) }">
+                {{ formTypeLabel(f.type) }}
+              </span>
+              <span class="pdf-rp-form-name" :title="f.name">{{ f.partialName || f.name }}</span>
+              <span v-if="f.page > 0" class="pdf-rp-form-page">P{{ f.page }}</span>
+            </div>
+            <div class="pdf-rp-form-body">
+              <!-- Phase 12.2: 内联编辑控件 -->
+              <div v-if="!f.readOnly" class="pdf-rp-form-input" @click.stop>
+                <input
+                  v-if="f.type === 'text'"
+                  v-model="formDraft[f.name]"
+                  type="text"
+                  class="pdf-rp-form-input-el"
+                  :placeholder="f.value || '请输入'"
+                />
+                <label v-else-if="f.type === 'checkbox'" class="pdf-rp-form-checkbox">
+                  <input
+                    v-model="formDraft[f.name]"
+                    type="checkbox"
+                    true-value="true"
+                    false-value="false"
+                  />
+                  <span>{{ formDraft[f.name] === 'true' ? '已勾选' : '未勾选' }}</span>
+                </label>
+                <select
+                  v-else-if="f.type === 'radio' || f.type === 'combobox' || f.type === 'listbox'"
+                  v-model="formDraft[f.name]"
+                  class="pdf-rp-form-input-el"
+                >
+                  <option value="">{{ f.value || '(未选)' }}</option>
+                  <option v-for="opt in (f.options || [])" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <span v-else-if="f.type === 'signature'" class="pdf-rp-form-signature-hint">
+                  签名字段请在画布上签署
+                </span>
+                <span v-else class="pdf-rp-form-readonly-hint">不支持编辑</span>
+              </div>
+              <div v-else class="pdf-rp-form-value pdf-rp-form-readonly-value" :title="f.value">
+                只读: {{ f.value || '(空)' }}
+              </div>
+              <div v-if="f.options && f.options.length && f.type !== 'radio' && f.type !== 'combobox' && f.type !== 'listbox'" class="pdf-rp-form-options">
+                选项: {{ f.options.slice(0, 5).join(' / ') }}{{ f.options.length > 5 ? '...' : '' }}
+              </div>
+              <div class="pdf-rp-form-flags">
+                <span v-if="f.required" class="pdf-rp-form-flag is-required">必填</span>
+                <span v-if="f.readOnly" class="pdf-rp-form-flag is-readonly">只读</span>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Tab 5: 信息 -->
       <div v-show="activeTab === 'info'" class="pdf-rp-content">
         <div v-if="!metadata" class="pdf-rp-loading">加载中…</div>
         <table v-else class="pdf-rp-info-table">
@@ -160,14 +248,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, reactive } from 'vue'
+import { ElMessage } from 'element-plus'
 import PdfIcon from './PdfIcon.vue'
 import { pdfApi } from '@/api/pdf'
+import type { PdfFormField } from '@/api/pdf'
 import type { PdfAnnotation } from '@/composables/pdf/usePdfCollaborate'
 
 const props = defineProps<{
   docId: number
-  initialTab?: 'outline' | 'search' | 'info' | 'annotations'
+  initialTab?: 'outline' | 'search' | 'info' | 'annotations' | 'form'
   collapsed?: boolean
   /** 当前文档所有标注(由父组件 PdfEditor 注入) */
   annotations?: PdfAnnotation[]
@@ -179,6 +269,10 @@ const emit = defineEmits<{
   (e: 'jump', page: number): void
   (e: 'collapse'): void
   (e: 'remove-annotation', id: string): void
+  /** Phase 12.1: 聚焦表单字段(跳转 + 高亮) */
+  (e: 'focus-field', field: { page: number; rect: [number, number, number, number]; name: string }): void
+  /** Phase 12.2: 表单填充后下载新 PDF */
+  (e: 'form-filled', blob: Blob): void
 }>()
 
 const activeTab = ref(props.initialTab || 'outline')
@@ -186,6 +280,7 @@ const tabs = [
   { id: 'outline' as const, label: '大纲', icon: 'panelOutline' },
   { id: 'search' as const, label: '搜索', icon: 'panelSearch' },
   { id: 'annotations' as const, label: '批注', icon: 'panelComment' },
+  { id: 'form' as const, label: '表单', icon: 'panelForm' },
   { id: 'info' as const, label: '信息', icon: 'menu' },
 ]
 
@@ -320,6 +415,97 @@ async function loadMetadata() {
   }
 }
 
+// Phase 12.1: 表单字段
+const formFields = ref<PdfFormField[]>([])
+const formLoading = ref(false)
+const formTypeFilter = ref<'all' | PdfFormField['type']>('all')
+const formTypeFilters: Array<{ id: 'all' | PdfFormField['type']; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'text', label: '文本' },
+  { id: 'checkbox', label: '复选' },
+  { id: 'radio', label: '单选' },
+  { id: 'combobox', label: '下拉' },
+  { id: 'signature', label: '签名' },
+]
+const filteredFormFields = computed(() => {
+  if (formTypeFilter.value === 'all') return formFields.value
+  return formFields.value.filter(f => f.type === formTypeFilter.value)
+})
+function formTypeLabel(t: PdfFormField['type']): string {
+  const m: Record<string, string> = {
+    text: '文本', checkbox: '复选', radio: '单选', combobox: '下拉', listbox: '列表', signature: '签名', unknown: '未知',
+  }
+  return m[t] || t
+}
+function formTypeColor(t: PdfFormField['type']): string {
+  const m: Record<string, string> = {
+    text: '#409EFF', checkbox: '#67C23A', radio: '#E6A23C', combobox: '#F56C6C', listbox: '#909399', signature: '#9254DE', unknown: '#909399',
+  }
+  return m[t] || '#909399'
+}
+function onFocusField(f: PdfFormField) {
+  if (f.page > 0) {
+    emit('focus-field', { page: f.page, rect: f.rect, name: f.partialName || f.name })
+  }
+}
+
+// Phase 12.2: 表单填充
+const formDraft = reactive<Record<string, string>>({})
+const formSaving = ref(false)
+async function loadFormFields() {
+  formLoading.value = true
+  try {
+    formFields.value = await pdfApi.getFormFields(props.docId)
+    // 初始化草稿为当前值
+    formFields.value.forEach(f => {
+      formDraft[f.name] = f.value || ''
+    })
+  } catch (e) {
+    console.error('[PdfRightPanel] loadFormFields failed:', e)
+    formFields.value = []
+  } finally {
+    formLoading.value = false
+  }
+}
+function resetFormFill() {
+  formFields.value.forEach(f => {
+    formDraft[f.name] = f.value || ''
+  })
+  ElMessage.info('已重置为原始值')
+}
+async function applyFormFill() {
+  // 收集修改过的字段
+  const dirty: Record<string, string> = {}
+  formFields.value.forEach(f => {
+    const original = f.value || ''
+    const current = formDraft[f.name] ?? ''
+    if (current !== original && !f.readOnly) {
+      dirty[f.name] = current
+    }
+  })
+  if (Object.keys(dirty).length === 0) {
+    ElMessage.warning('没有修改的字段')
+    return
+  }
+  // 必填校验
+  const missingRequired = formFields.value.filter(f => f.required && !formDraft[f.name])
+  if (missingRequired.length > 0) {
+    ElMessage.warning(`有 ${missingRequired.length} 个必填字段未填写`)
+    return
+  }
+  formSaving.value = true
+  try {
+    const blob = await pdfApi.fillFormFields(props.docId, dirty)
+    ElMessage.success(`已填充 ${Object.keys(dirty).length} 个字段,PDF 已下载`)
+    emit('form-filled', blob)
+  } catch (e: any) {
+    console.error('[PdfRightPanel] applyFormFill failed:', e)
+    ElMessage.error(e?.message || '填充失败')
+  } finally {
+    formSaving.value = false
+  }
+}
+
 // 监听 docId 变化 + 初次激活 tab 时加载
 watch(
   () => props.docId,
@@ -327,14 +513,17 @@ watch(
     outline.value = []
     searchResults.value = []
     metadata.value = null
+    formFields.value = []
     if (activeTab.value === 'outline') loadOutline()
     if (activeTab.value === 'info') loadMetadata()
+    if (activeTab.value === 'form') loadFormFields()
   },
   { immediate: true },
 )
 watch(activeTab, (t) => {
   if (t === 'outline' && outline.value.length === 0) loadOutline()
   if (t === 'info' && !metadata.value) loadMetadata()
+  if (t === 'form' && formFields.value.length === 0 && !formLoading.value) loadFormFields()
 })
 
 // 跳转
@@ -753,5 +942,221 @@ function formatSize(bytes: number): string {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ============ Phase 12.1: 表单 tab ============ */
+.pdf-rp-form-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+}
+.pdf-rp-form-filter-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-foreground-2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.pdf-rp-form-filter-btn:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+.pdf-rp-form-filter-btn.is-active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.pdf-rp-form-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.pdf-rp-form-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  background: var(--color-surface);
+}
+.pdf-rp-form-item:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+.pdf-rp-form-item.is-readonly {
+  opacity: 0.7;
+}
+.pdf-rp-form-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 4px;
+}
+.pdf-rp-form-type {
+  font-size: 11px;
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.pdf-rp-form-name {
+  flex: 1;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pdf-rp-form-page {
+  font-size: var(--text-xs);
+  color: var(--color-foreground-3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.pdf-rp-form-body {
+  font-size: var(--text-xs);
+  color: var(--color-foreground-2);
+}
+.pdf-rp-form-value {
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pdf-rp-form-empty {
+  color: var(--color-foreground-3);
+  font-style: italic;
+}
+.pdf-rp-form-options {
+  margin-bottom: 2px;
+  color: var(--color-foreground-3);
+}
+.pdf-rp-form-flags {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.pdf-rp-form-flag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+.pdf-rp-form-flag.is-required {
+  background: #FEF0F0;
+  color: #F56C6C;
+}
+.pdf-rp-form-flag.is-readonly {
+  background: var(--color-surface-2);
+  color: var(--color-foreground-3);
+}
+
+/* Phase 12.2: 表单填充 UI */
+.pdf-rp-form-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
+}
+.pdf-rp-form-apply,
+.pdf-rp-form-reset {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.pdf-rp-form-apply {
+  background: var(--color-primary);
+  color: #fff;
+}
+.pdf-rp-form-apply:hover:not(:disabled) {
+  background: var(--color-primary-hover, #66B1FF);
+}
+.pdf-rp-form-apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.pdf-rp-form-reset {
+  flex: 0 0 auto;
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-foreground-2);
+}
+.pdf-rp-form-reset:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+.pdf-rp-form-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pdf-rp-form-spin 0.8s linear infinite;
+}
+@keyframes pdf-rp-form-spin {
+  to { transform: rotate(360deg); }
+}
+.pdf-rp-form-item.is-dirty {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.pdf-rp-form-input {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+.pdf-rp-form-input-el {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.pdf-rp-form-input-el:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+.pdf-rp-form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.pdf-rp-form-checkbox input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.pdf-rp-form-signature-hint,
+.pdf-rp-form-readonly-hint {
+  font-size: var(--text-xs);
+  color: var(--color-foreground-3);
+  font-style: italic;
+}
+.pdf-rp-form-readonly-value {
+  font-style: italic;
+  color: var(--color-foreground-3);
+  padding: 4px 0;
 }
 </style>

@@ -820,4 +820,73 @@ public class PdfController {
             throw new BusinessException("该文档不是 PDF 类型");
         }
     }
+
+    // ==================== Phase 12.1: 表单字段检测 ====================
+
+    /**
+     * 识别 PDF 的 AcroForm 表单字段
+     */
+    @GetMapping("/{id}/form-fields")
+    public ResponseEntity<List<Map<String, Object>>> getFormFields(@PathVariable Long id) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        List<Map<String, Object>> fields = pdfToolService.getFormFields(id);
+        return ResponseEntity.ok(fields);
+    }
+
+    /**
+     * Phase 12.2: 填充表单字段
+     * 接收 { values: { fieldName: value, ... } },返回新 PDF 字节
+     */
+    @PostMapping("/{id}/form-fields/fill")
+    public ResponseEntity<byte[]> fillFormFields(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        Map<String, String> values = (Map<String, String>) body.get("values");
+        byte[] result = pdfToolService.fillFormFields(id, values);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment().filename("filled.pdf").build());
+        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+    }
+
+    /**
+     * Phase 12.3: 嵌入签名图片
+     * 接收 { image: base64, page, x, y, width, height }
+     * 返回新 PDF 字节
+     */
+    @PostMapping("/{id}/signature")
+    public ResponseEntity<byte[]> embedSignature(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        String imageBase64 = (String) body.get("image");
+        int page = body.get("page") instanceof Number ? ((Number) body.get("page")).intValue() : 1;
+        double x = body.get("x") instanceof Number ? ((Number) body.get("x")).doubleValue() : 0;
+        double y = body.get("y") instanceof Number ? ((Number) body.get("y")).doubleValue() : 0;
+        double width = body.get("width") instanceof Number ? ((Number) body.get("width")).doubleValue() : 120;
+        double height = body.get("height") instanceof Number ? ((Number) body.get("height")).doubleValue() : 40;
+        byte[] result = pdfToolService.embedSignature(id, imageBase64, page, x, y, width, height);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment().filename("signed.pdf").build());
+        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+    }
+
+    /**
+     * Phase 12.4: 应用密文(绘制黑色矩形覆盖)
+     * 接收 { regions: [{page, x, y, width, height}, ...] }
+     */
+    @PostMapping("/{id}/redact")
+    public ResponseEntity<byte[]> applyRedaction(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> regions = (List<Map<String, Object>>) body.get("regions");
+        byte[] result = pdfToolService.applyRedaction(id, regions);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment().filename("redacted.pdf").build());
+        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+    }
 }

@@ -41,6 +41,8 @@
       @share="onShare"
       @send-sign="onSendSign"
       @open-ai="onOpenAi"
+      @place-signature="onOpenSignatureDialog"
+      @protect="onOpenSecurityDialog"
       @ocr-recognize="onOcrRecognize"
       @page-merge="onOpenMerge"
       @page-extract="onExtractCurrent"
@@ -118,6 +120,7 @@
               :pending-rect="pendingRect"
               :drawing-path="drawingPath"
               :recognized="recognizedPages.has(currentPage)"
+              :form-highlight="formHighlightFor(currentPage)"
               @ready="onPageReady"
               @mouse-down="onCanvasMouseDown"
               @mouse-move="onCanvasMouseMove"
@@ -163,6 +166,7 @@
                 :pending-rect="pendingRect"
                 :drawing-path="drawingPath"
                 :recognized="recognizedPages.has(currentPage)"
+                :form-highlight="formHighlightFor(currentPage)"
                 @ready="onPageReady"
                 @mouse-down="onCanvasMouseDown"
                 @mouse-move="onCanvasMouseMove"
@@ -183,6 +187,7 @@
                 :pending-rect="pendingRect"
                 :drawing-path="drawingPath"
                 :recognized="recognizedPages.has(currentPage + 1)"
+                :form-highlight="formHighlightFor(currentPage + 1)"
                 @ready="onPageReady"
               />
             </div>
@@ -204,6 +209,7 @@
               :pending-rect="pendingRect"
               :drawing-path="drawingPath"
               :recognized="recognizedPages.has(i)"
+              :form-highlight="formHighlightFor(i)"
               @ready="onPageReady"
               @mouse-down="onCanvasMouseDown"
               @mouse-move="onCanvasMouseMove"
@@ -245,6 +251,8 @@
           @jump="goToPage"
           @collapse="rightPanelOpen = null"
           @remove-annotation="onRemoveAnnotation"
+          @focus-field="onFocusFormField"
+          @form-filled="onFormFilled"
         />
       </Transition>
 
@@ -398,6 +406,19 @@
       :initial-tab="pageOpsInitialTab"
       @success="onPageOpSuccess"
     />
+    <!-- Phase 12.3: 签名创建对话框 -->
+    <PdfSignatureDialog
+      :open="signatureDialogOpen"
+      @close="signatureDialogOpen = false"
+      @created="onSignatureCreated"
+    />
+    <!-- Phase 12.4: 保护 PDF 对话框 -->
+    <PdfSecurityDialog
+      :open="securityDialogOpen"
+      :doc-id="docId"
+      @close="securityDialogOpen = false"
+      @done="onSecurityDone"
+    />
     <PdfAiMenu
       :open="aiMenuOpen"
       :anchor="aiMenuAnchor"
@@ -463,6 +484,8 @@ import PdfPageOpsMenu from './PdfPageOpsMenu.vue'
 import PdfExportMenu from './PdfExportMenu.vue'
 import PdfThumbnailContextMenu from './PdfThumbnailContextMenu.vue'
 import PdfAiMenu from './PdfAiMenu.vue'
+import PdfSignatureDialog from './PdfSignatureDialog.vue'
+import PdfSecurityDialog from './PdfSecurityDialog.vue'
 import MergeDialog from './MergeDialog.vue'
 import PdfPageOpsDialog from './PdfPageOpsDialog.vue'
 import PdfTermsPanel from './PdfTermsPanel.vue'
@@ -897,6 +920,46 @@ function goToPage(p: number) {
   nextTickScroll()
 }
 
+// Phase 12.1: 聚焦表单字段(跳转 + 临时高亮矩形)
+const formFieldHighlight = ref<{ pageNum: number; x: number; y: number; w: number; h: number; name: string; expireAt: number } | null>(null)
+let formHighlightTimer: number | null = null
+function onFocusFormField(field: { page: number; rect: [number, number, number, number]; name: string }) {
+  if (field.page <= 0) {
+    ElMessage.info(`字段 "${field.name}" 未定位到页面`)
+    return
+  }
+  goToPage(field.page)
+  const [llx, lly, urx, ury] = field.rect
+  formFieldHighlight.value = {
+    pageNum: field.page,
+    x: llx, y: lly, w: urx - llx, h: ury - lly,
+    name: field.name,
+    expireAt: Date.now() + 4000,
+  }
+  if (formHighlightTimer) window.clearTimeout(formHighlightTimer)
+  formHighlightTimer = window.setTimeout(() => {
+    formFieldHighlight.value = null
+  }, 4000)
+  ElMessage.success(`已定位到字段: ${field.name}`)
+}
+function formHighlightFor(pageNum: number) {
+  if (!formFieldHighlight.value || formFieldHighlight.value.pageNum !== pageNum) return null
+  const f = formFieldHighlight.value
+  return { x: f.x, y: f.y, w: f.w, h: f.h, name: f.name }
+}
+
+// Phase 12.2: 表单填充完成后,触发下载
+function onFormFilled(blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `filled-${props.docId}-${Date.now()}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 function nextTickScroll() {
   if (viewMode.value === 'continuous') {
     nextTickSmooth(() => {
@@ -968,6 +1031,76 @@ function onSave() { ElMessage.success('已保存(占位)') }
 function onPrint() { ElMessage.info('打印功能开发中') }
 function onShare() { ElMessage.info('分享功能开发中') }
 function onSendSign() { ElMessage.info('发送签署开发中') }
+
+// Phase 12.3: 签名创建 + 放置
+const signatureDialogOpen = ref(false)
+const pendingSignature = ref<{ imageBase64: string; width: number; height: number } | null>(null)
+const signaturePlacing = ref(false)
+const signatureSaving = ref(false)
+function onOpenSignatureDialog() {
+  signatureDialogOpen.value = true
+}
+function onSignatureCreated(payload: { imageBase64: string; width: number; height: number }) {
+  pendingSignature.value = payload
+  signaturePlacing.value = true
+  ElMessage.info('请在 PDF 画布上点击放置签名')
+}
+
+// Phase 12.4: 保护 PDF 对话框
+const securityDialogOpen = ref(false)
+function onOpenSecurityDialog() {
+  securityDialogOpen.value = true
+}
+function onSecurityDone(blob: Blob, action: 'encrypt' | 'decrypt') {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${action}-${props.docId}-${Date.now()}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  ElMessage.success(action === 'encrypt' ? '加密 PDF 已下载' : '解密 PDF 已下载')
+}
+async function placeSignature(pageNum: number, screenX: number, screenY: number) {
+  if (!pendingSignature.value || signatureSaving.value) return
+  signatureSaving.value = true
+  try {
+    // 屏幕 X/Y 是相对 canvas 的左上角,需要转 PDF 坐标(左下原点)
+    // scale 已包含在 canvasWidth/canvasHeight 中
+    const scaleX = 1 / scale.value  // 屏幕 pt -> PDF pt 的倒数
+    const pdfX = screenX * scaleX
+    // PDF Y 是从底部起算:pdfY = pageRawHeight - screenY/scale - signatureHeight/scale
+    const sigW = pendingSignature.value.width / scale.value * 0.5  // 缩小到 50% 适配显示
+    const sigH = pendingSignature.value.height / scale.value * 0.5
+    const pdfY = pageRawHeight.value - (screenY * scaleX) - sigH
+    const blob = await pdfApi.embedSignature(props.docId, {
+      image: pendingSignature.value.imageBase64,
+      page: pageNum,
+      x: pdfX,
+      y: pdfY,
+      width: sigW,
+      height: sigH,
+    })
+    // 下载签名后的 PDF
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `signed-${props.docId}-${Date.now()}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('签名已嵌入并下载')
+    pendingSignature.value = null
+    signaturePlacing.value = false
+  } catch (e: any) {
+    console.error('[PdfEditor] placeSignature failed:', e)
+    ElMessage.error(e?.message || '签名嵌入失败')
+  } finally {
+    signatureSaving.value = false
+  }
+}
 function onZoomMenu() { ElMessage.info('缩放菜单开发中') }
 function onOpenExport(_evt?: MouseEvent) {
   const anchor = canvasAreaRef.value?.getBoundingClientRect()
@@ -1122,6 +1255,13 @@ function onCtxDelete(p: number) {
 
 // ========== 标注鼠标事件 ==========
 function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  // Phase 12.3: 签名放置模式优先
+  if (signaturePlacing.value) {
+    const x = evt.clientX - containerRect.left
+    const y = evt.clientY - containerRect.top
+    void placeSignature(pageNum, x, y)
+    return
+  }
   ;(annot as any).onMouseDown?.(evt, pageNum, containerRect)
 }
 function onCanvasMouseMove(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {

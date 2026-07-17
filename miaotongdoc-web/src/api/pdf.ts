@@ -275,6 +275,52 @@ export const pdfApi = {
   getMetadata(docId: number) {
     return api.get<any, Record<string, unknown>>(`/pdf/${docId}/metadata`)
   },
+
+  /**
+   * Phase 12.1: 表单字段检测
+   * GET /api/pdf/{id}/form-fields
+   */
+  getFormFields(docId: number) {
+    return api.get<any, PdfFormField[]>(`/pdf/${docId}/form-fields`)
+  },
+
+  /**
+   * Phase 12.2: 填充表单字段
+   * POST /api/pdf/{id}/form-fields/fill
+   * 返回填充后的 PDF Blob
+   */
+  fillFormFields(docId: number, values: Record<string, string>) {
+    return api.post<any, Blob>(
+      `/pdf/${docId}/form-fields/fill`,
+      { values },
+      { responseType: 'blob' as any },
+    )
+  },
+
+  /**
+   * Phase 12.3: 嵌入签名图片
+   * POST /api/pdf/{id}/signature
+   * 返回签名后的 PDF Blob
+   */
+  embedSignature(docId: number, data: PdfSignatureRequest) {
+    return api.post<any, Blob>(
+      `/pdf/${docId}/signature`,
+      data,
+      { responseType: 'blob' as any },
+    )
+  },
+
+  /**
+   * Phase 12.4: 应用密文(绘制黑色矩形覆盖)
+   * POST /api/pdf/{id}/redact
+   */
+  applyRedaction(docId: number, regions: Array<{ page: number; x: number; y: number; width: number; height: number }>) {
+    return api.post<any, Blob>(
+      `/pdf/${docId}/redact`,
+      { regions },
+      { responseType: 'blob' as any },
+    )
+  },
 }
 
 // ==================== Phase 2 类型扩展 ====================
@@ -345,4 +391,46 @@ export interface PageOpResult {
   extractedPages?: number[]
   /** reorder 时包含 */
   newOrder?: number[]
+}
+
+/**
+ * Phase 12.1: PDF AcroForm 表单字段
+ */
+export interface PdfFormField {
+  /** 完整限定名(层级用 . 分隔) */
+  name: string
+  /** 简称(末段) */
+  partialName: string
+  /** 类型: text/checkbox/radio/combobox/listbox/signature/unknown */
+  type: 'text' | 'checkbox' | 'radio' | 'combobox' | 'listbox' | 'signature' | 'unknown'
+  /** 当前值 */
+  value: string
+  /** 是否只读 */
+  readOnly: boolean
+  /** 是否必填 */
+  required: boolean
+  /** 所在页码(1-based,0 表示未定位) */
+  page: number
+  /** 矩形坐标 [llx, lly, urx, ury] PDF 坐标系(原点左下) */
+  rect: [number, number, number, number]
+  /** 选项列表(combobox/listbox/radio 用) */
+  options?: string[]
+}
+
+/**
+ * Phase 12.3: 签名嵌入请求
+ */
+export interface PdfSignatureRequest {
+  /** 签名图片 base64(不含 data:image/png;base64, 前缀) */
+  image: string
+  /** 页码(1-based) */
+  page: number
+  /** PDF 坐标 X(左下原点,pt) */
+  x: number
+  /** PDF 坐标 Y(左下原点,pt) */
+  y: number
+  /** 显示宽度(pt) */
+  width: number
+  /** 显示高度(pt) */
+  height: number
 }

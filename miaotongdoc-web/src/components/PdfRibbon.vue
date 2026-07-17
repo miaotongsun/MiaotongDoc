@@ -42,6 +42,8 @@
         <RibbonGroup label="分享">
           <RibbonBtn icon="share" label="复制链接" @click="$emit('share')" />
           <RibbonBtn icon="signature" label="发送签署" @click="$emit('send-sign')" />
+          <RibbonBtn icon="signature" label="签名" @click="$emit('place-signature')" />
+          <RibbonBtn icon="menu" label="保护" @click="$emit('protect')" />
         </RibbonGroup>
         <RibbonGroup label="AI">
           <RibbonBtn icon="ai" label="AI 助手" @click="$emit('open-ai')" />
@@ -191,7 +193,7 @@ const emit = defineEmits<{
   (e: 'toggle-panel', panel: 'outline' | 'search' | 'info' | 'annotations'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
   (e: 'zoom-menu', evt: MouseEvent): void
-  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'ocr-recognize'): void
+  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'ocr-recognize' | 'place-signature' | 'protect'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void
   (e: 'page-insert' | 'page-insert-from-file'): void

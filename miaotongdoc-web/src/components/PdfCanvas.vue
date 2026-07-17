@@ -202,6 +202,21 @@
           stroke-linecap="round"
           stroke-linejoin="round"
         />
+        <!-- Phase 12.1: 表单字段临时高亮矩形(4 秒) -->
+        <rect
+          v-if="formHighlightBox"
+          :x="formHighlightBox.x"
+          :y="formHighlightBox.y"
+          :width="formHighlightBox.w"
+          :height="formHighlightBox.h"
+          fill="rgba(64, 158, 255, 0.18)"
+          stroke="#409EFF"
+          stroke-width="2"
+          stroke-dasharray="4 2"
+          class="pdf-form-highlight"
+        >
+          <title>{{ formHighlight.name }}</title>
+        </rect>
       </svg>
 
       <!-- 加载占位 -->
@@ -240,6 +255,8 @@ const props = defineProps<{
   recognizing?: boolean
   /** 渲染完成的回调(供父组件收集 refs) */
   isRendered?: boolean
+  /** Phase 12.1: 表单字段临时高亮(在画布上画矩形 4 秒) */
+  formHighlight?: { x: number; y: number; w: number; h: number; name: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -260,6 +277,20 @@ const rendered = computed(() => props.isRendered ?? true)
 // canvas 尺寸 = 原始 PDF 尺寸 * scale
 const canvasWidth = computed(() => Math.round(props.pageRawWidth * props.scale))
 const canvasHeight = computed(() => Math.round(props.pageRawHeight * props.scale))
+
+// Phase 12.1: PDF 坐标(左下原点) -> SVG 坐标(左上原点)
+const formHighlightBox = computed(() => {
+  if (!props.formHighlight) return null
+  const { x, y, w, h } = props.formHighlight
+  const svgX = x * props.scale
+  const svgY = canvasHeight.value - (y + h) * props.scale  // PDF 左下角 -> SVG 左上角
+  return {
+    x: svgX,
+    y: svgY,
+    w: w * props.scale,
+    h: h * props.scale,
+  }
+})
 
 const cardStyle = computed(() => ({
   width: canvasWidth.value + 'px',
@@ -481,5 +512,15 @@ function onMouseLeave(evt: MouseEvent) {
 @keyframes shimmer {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
+}
+
+/* Phase 12.1: 表单字段高亮闪烁 */
+.pdf-form-highlight {
+  animation: pdf-form-highlight-pulse 1s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes pdf-form-highlight-pulse {
+  0%, 100% { stroke-opacity: 1; fill-opacity: 0.18; }
+  50% { stroke-opacity: 0.6; fill-opacity: 0.32; }
 }
 </style>

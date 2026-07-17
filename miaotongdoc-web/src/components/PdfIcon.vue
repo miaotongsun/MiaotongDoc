@@ -64,6 +64,7 @@ const ICONS: Record<string, string> = {
   panelOutline: 'M4 4h16v3H4zM4 10h10v1H4zM4 14h12v1H4zM4 18h8v1H4z',
   panelSearch:  'M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3',
   panelComment: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM8 9h8M8 13h6',
+  panelForm:    'M4 5h16v4H4zM4 13h10v6H4zM16 13h4v6h-4z',
   // ===== AI =====
   ai:        'M12 2l2.4 6.6L21 10l-5.4 4.6L17 22l-5-3.5L7 22l1.4-7.4L3 10l6.6-1.4z',
   // ===== 关闭 =====
