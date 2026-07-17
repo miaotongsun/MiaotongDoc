@@ -2,7 +2,7 @@
 """
 PaddleOCR 服务 - 中文扫描件 PDF 文字识别（主力）
 兼容现有 Tesseract OCR 接口约定（/ocr/pdf、/ocr/image、/health、/ocr/languages）
-基于 PaddleOCR 3.0 API（paddlepaddle 3.0.0 + paddleocr 3.0.0）
+基于 PaddleOCR 3.2+ API(paddlepaddle 3.0+ + paddleocr 3.2+,默认 PP-OCRv5 模型)
 """
 
 import io
@@ -16,7 +16,7 @@ from flask_cors import CORS
 from pdf2image import convert_from_bytes
 from PIL import Image
 
-# PaddleOCR 3.0 延迟导入（避免启动慢）
+# PaddleOCR 3.2+ 延迟导入(避免启动慢)
 _ocr_engine = None
 
 
@@ -27,11 +27,15 @@ def get_ocr_engine(lang: str = 'ch'):
         from paddleocr import PaddleOCR
         _ocr_engine = PaddleOCR(
             lang=lang,
+            # PP-OCRv5_server 模型(精度最高,3.2+ 默认)
+            text_detection_model_name="PP-OCRv5_server_det",
+            text_recognition_model_name="PP-OCRv5_server_rec",
+            textline_orientation_model_name="PP-LCNet_x0_25_textline_ori",
             use_textline_orientation=True,  # 文字方向分类（替代 2.x 的 use_angle_cls）
             use_doc_orientation_classify=False,  # 不做整页方向判断（PDF 已是正向）
             use_doc_unwarping=False,  # 不做文档矫正（PDF 不需要）
         )
-        logging.info(f"PaddleOCR 3.0 引擎初始化完成（lang={lang}）")
+        logging.info(f"PaddleOCR 3.2+ 引擎初始化完成(lang={lang}, model=PP-OCRv5_server)")
     return _ocr_engine
 
 

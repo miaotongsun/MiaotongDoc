@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
         --trusted-host pypi.tuna.tsinghua.edu.cn \
         paddlepaddle==3.0.0 \
-        paddleocr==3.0.0 \
+        paddleocr==3.2.0 \
         pdf2image==1.17.0 \
         Pillow==10.4.0 \
         flask==3.0.3 \
