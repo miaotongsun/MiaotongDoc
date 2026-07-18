@@ -9,6 +9,7 @@
   <div
     v-if="positions.length > 0"
     class="pdf-ocr-layer"
+    :class="{ 'is-selectable': selectable }"
     aria-label="OCR 识别结果"
   >
     <div
@@ -40,6 +41,8 @@ const props = defineProps<{
   scale: number          // 渲染缩放比(等于 PdfCanvas 的 scale)
   pageRawHeight: number  // PDF 原始高度(用于 Y 翻转)
   tokens: OcrToken[]     // 当前页所有 OCR token
+  /** Phase 13.4: 选择工具下允许选中 OCR 文字 */
+  selectable?: boolean
 }>()
 
 const positions = computed(() => props.tokens)
@@ -86,6 +89,27 @@ function tokenStyle(tok: OcrToken) {
   background: rgba(59, 111, 232, 0.12);
   z-index: 3;
   box-shadow: 0 0 0 2px var(--color-primary-soft, #ebf1fe);
+}
+
+/* Phase 13.4: 选择工具下 token 可选中文字 */
+.pdf-ocr-layer.is-selectable .pdf-ocr-token {
+  cursor: text;
+  background: transparent;
+  border: 1px solid rgba(59, 111, 232, 0.25);
+}
+.pdf-ocr-layer.is-selectable .pdf-ocr-token:hover {
+  background: rgba(59, 111, 232, 0.1);
+  border-color: var(--color-primary, #3b6fe8);
+  border-width: 1.5px;
+  z-index: 3;
+}
+.pdf-ocr-layer.is-selectable .pdf-ocr-text {
+  user-select: text;
+  -webkit-user-select: text;
+  color: transparent;
+}
+.pdf-ocr-layer.is-selectable .pdf-ocr-token:hover .pdf-ocr-text {
+  color: var(--color-primary, #3b6fe8);
 }
 
 .pdf-ocr-text {

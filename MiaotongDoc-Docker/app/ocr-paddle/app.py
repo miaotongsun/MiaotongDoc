@@ -27,15 +27,16 @@ def get_ocr_engine(lang: str = 'ch'):
         from paddleocr import PaddleOCR
         _ocr_engine = PaddleOCR(
             lang=lang,
-            # PP-OCRv5_server 模型(精度最高,3.2+ 默认)
-            text_detection_model_name="PP-OCRv5_server_det",
-            text_recognition_model_name="PP-OCRv5_server_rec",
+            # Phase 13.4: 改用 mobile 模型,server_det 在容器内推理崩溃(std::exception)
+            # mobile 精度略低但稳定,适合容器环境
+            text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="PP-OCRv5_mobile_rec",
             textline_orientation_model_name="PP-LCNet_x0_25_textline_ori",
             use_textline_orientation=True,  # 文字方向分类（替代 2.x 的 use_angle_cls）
             use_doc_orientation_classify=False,  # 不做整页方向判断（PDF 已是正向）
             use_doc_unwarping=False,  # 不做文档矫正（PDF 不需要）
         )
-        logging.info(f"PaddleOCR 3.2+ 引擎初始化完成(lang={lang}, model=PP-OCRv5_server)")
+        logging.info(f"PaddleOCR 3.2+ 引擎初始化完成(lang={lang}, model=PP-OCRv5_mobile)")
     return _ocr_engine
 
 

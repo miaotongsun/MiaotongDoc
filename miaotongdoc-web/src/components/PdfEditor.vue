@@ -144,6 +144,7 @@
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
+                  :selectable="activeTool === 'select'"
                 />
               </template>
             </PdfCanvas>
@@ -233,6 +234,7 @@
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
+                  :selectable="activeTool === 'select'"
                 />
               </template>
             </PdfCanvas>
@@ -1318,6 +1320,18 @@ onMounted(async () => {
     }
     collab.connect()
     void textEditor.loadAllPositions()
+    // Phase 13.4: 自动检查 OCR 识别状态,已识别的文档自动加载 bbox + 文字层
+    try {
+      const status = await pdfApi.getRecognizeStatus(props.docId)
+      if (status.recognized) {
+        recognizedPages.value = new Set(Array.from({ length: totalPages.value }, (_, i) => i + 1))
+        recognizeStatus.value = 'recognized'
+      } else {
+        recognizeStatus.value = 'unrecognized'
+      }
+    } catch {
+      recognizeStatus.value = 'unrecognized'
+    }
     emit('ready')
   } catch (e) {
     console.error('[PdfEditor] 加载失败:', e)

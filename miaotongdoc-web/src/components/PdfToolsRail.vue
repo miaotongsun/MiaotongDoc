@@ -21,11 +21,11 @@
       :title="collapsed ? '展开工具栏' : '折叠工具栏'"
       @click="$emit('toggle-collapse')"
     >
-      <svg class="rail-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <svg class="rail-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
         <path
           :d="collapsed ? 'M14 6l-6 6 6 6' : 'M10 6l6 6-6 6'"
           stroke="currentColor"
-          stroke-width="2"
+          stroke-width="2.5"
           fill="none"
           stroke-linecap="round"
           stroke-linejoin="round"
@@ -218,22 +218,22 @@ const bottomActions: RailAction[] = [
   display: none;
 }
 
-/* Phase 11.8: 折叠按钮撑满 rail 中段(top:12 bottom:12 留间距给 ribbon) + 更靠外 left:-10 + hover 全条变蓝 */
+/* Phase 13.4: 折叠按钮重设计 - 加宽 22px + 完全在 rail 外(left:-22 不侵入工具栏) + 箭头明显 */
 .pdf-tools-rail-toggle {
   position: absolute;
-  left: -10px;
+  left: -22px;
   top: 12px;
   bottom: 12px;
-  width: 16px;
-  border-radius: 8px 0 0 8px;
-  background: var(--color-surface-2);
+  width: 22px;
+  border-radius: 10px 0 0 10px;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-right: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-foreground-3);
+  color: var(--color-foreground-2);
   z-index: 10;
   transition: width 180ms cubic-bezier(.4,0,.2,1),
               left 180ms ease,
@@ -241,12 +241,12 @@ const bottomActions: RailAction[] = [
               color 180ms ease,
               box-shadow 180ms ease;
   padding: 0;
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2);
 }
 
 .pdf-tools-rail-toggle:hover {
-  width: 22px;
-  left: -16px;
+  width: 28px;
+  left: -28px;
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
@@ -260,8 +260,8 @@ const bottomActions: RailAction[] = [
 }
 
 .pdf-tools-rail-toggle.is-collapsed:hover {
-  width: 22px;
-  left: -16px;
+  width: 28px;
+  left: -28px;
 }
 
 .pdf-tools-rail-toggle .rail-icon {

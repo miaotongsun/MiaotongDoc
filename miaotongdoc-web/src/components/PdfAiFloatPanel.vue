@@ -8,6 +8,20 @@
 -->
 <template>
   <Teleport to="body">
+    <!-- Phase 13.4: 常驻 AI 浮标(默认显示,点击展开浮窗) -->
+    <button
+      v-if="!open"
+      class="ai-fab"
+      :class="{ 'is-streaming': chat.status.value === 'streaming' }"
+      aria-label="展开 AI 助手"
+      title="AI 助手"
+      @click="open = true"
+    >
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 2 14 8.5l6.5 1.5-4.7 4.6 1.1 6.4L12 17.8 7.1 21l1.1-6.4L3.5 10l6.5-1.5z" />
+      </svg>
+    </button>
+
     <!-- Phase 11.8: 浮窗本体(打开/关闭由父组件 visible 控制,trigger 入口合并到 ToolsRail/Ribbon) -->
     <Transition name="float-slide">
       <aside
@@ -306,6 +320,7 @@ onUnmounted(() => {
 
 <style scoped>
 /* ============ 设计令牌（与 PdfEditor / Home 统一 Element Plus 蓝 #409EFF） ============ */
+.ai-fab,
 .ai-float {
   --ai-primary: #409EFF;
   --ai-primary-light: #66B1FF;
@@ -317,6 +332,51 @@ onUnmounted(() => {
   --ai-border: #E4E7ED;
   --ai-shadow: 0 20px 60px -12px rgba(64, 158, 255, 0.22),
                0 8px 24px -6px rgba(0, 0, 0, 0.10);
+}
+
+/* ============ Phase 13.4: 常驻 AI 浮标 ============ */
+.ai-fab {
+  position: fixed;
+  right: 84px;
+  bottom: calc(var(--statusbar-height, 32px) + 20px);
+  z-index: 9998;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #409EFF 0%, #6366F1 100%);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(64, 158, 255, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.18s ease-out, box-shadow 0.18s ease-out;
+}
+.ai-fab:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 10px 24px rgba(64, 158, 255, 0.45);
+}
+.ai-fab:active { transform: scale(0.96); }
+.ai-fab:focus-visible {
+  outline: 3px solid var(--ai-primary-light);
+  outline-offset: 4px;
+}
+.ai-fab.is-streaming::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #F56C6C;
+  border: 2px solid #fff;
+  animation: ai-fab-pulse 1.4s ease-out infinite;
+}
+@keyframes ai-fab-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.5; }
 }
 
 @keyframes pulse {
