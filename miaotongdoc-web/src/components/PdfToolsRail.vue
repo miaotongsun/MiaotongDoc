@@ -199,9 +199,8 @@ const bottomActions: RailAction[] = [
   z-index: var(--z-toolbar);
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  /* Phase 13.5: 改 visible 让折叠按钮(left:-22)可见 */
-  overflow-x: visible;
+  /* Phase 13.9: overflow 必须全 visible(auto/scroll 会强制另一轴变 auto,裁掉折叠按钮) */
+  overflow: visible;
   position: relative;
   transition: width 200ms ease;
 }
@@ -219,12 +218,12 @@ const bottomActions: RailAction[] = [
   display: none;
 }
 
-/* Phase 13.4: 折叠按钮重设计 - 加宽 22px + 完全在 rail 外(left:-22 不侵入工具栏) + 箭头明显 */
+/* Phase 13.9: 折叠按钮撑满 rail 全高(top:0 bottom:0 与缩略图对齐) + hover 浅蓝 */
 .pdf-tools-rail-toggle {
   position: absolute;
   left: -22px;
-  top: 12px;
-  bottom: 12px;
+  top: 0;
+  bottom: 0;
   width: 22px;
   border-radius: 10px 0 0 10px;
   background: var(--color-surface);
@@ -248,15 +247,15 @@ const bottomActions: RailAction[] = [
 .pdf-tools-rail-toggle:hover {
   width: 28px;
   left: -28px;
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
   border-color: var(--color-primary);
   box-shadow: var(--shadow-4);
 }
 
 .pdf-tools-rail-toggle.is-collapsed {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
   border-color: var(--color-primary);
 }
 

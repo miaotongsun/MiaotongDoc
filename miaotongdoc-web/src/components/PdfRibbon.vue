@@ -157,6 +157,9 @@
           <RibbonBtn icon="panelSearch" label="搜索" :columns="2" :active="rightPanel === 'search'" @click="$emit('toggle-panel', 'search')" />
           <RibbonBtn icon="panelComment" label="批注" :columns="2" :active="rightPanel === 'annotations'" @click="$emit('toggle-panel', 'annotations')" />
         </RibbonGroup>
+        <RibbonGroup label="OCR">
+          <RibbonBtn icon="vqa" label="OCR 叠加" :active="showOcrOverlay" @click="$emit('toggle-ocr-overlay')" />
+        </RibbonGroup>
       </div>
     </div>
   </header>
@@ -183,6 +186,8 @@ const props = defineProps<{
   stampText?: string
   /** Phase 10.3: 图章预设列表 */
   stampPresets?: readonly string[]
+  /** Phase 13.9: OCR 叠加层是否显示 */
+  showOcrOverlay?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -192,6 +197,8 @@ const emit = defineEmits<{
   (e: 'set-view-mode', mode: ViewMode): void
   (e: 'cycle-view-mode'): void
   (e: 'toggle-panel', panel: 'outline' | 'search' | 'info' | 'annotations'): void
+  /** Phase 13.9: 切换 OCR 叠加层 */
+  (e: 'toggle-ocr-overlay'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
   (e: 'zoom-menu', evt: MouseEvent): void
   (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect'): void

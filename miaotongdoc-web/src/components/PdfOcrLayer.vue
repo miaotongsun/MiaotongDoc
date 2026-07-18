@@ -9,7 +9,10 @@
   <div
     v-if="positions.length > 0"
     class="pdf-ocr-layer"
-    :class="{ 'is-selectable': selectable }"
+    :class="{
+      'is-selectable': selectable,
+      'is-text-visible': showText,
+    }"
     aria-label="OCR 识别结果"
   >
     <div
@@ -43,6 +46,8 @@ const props = defineProps<{
   tokens: OcrToken[]     // 当前页所有 OCR token
   /** Phase 13.4: 选择工具下允许选中 OCR 文字 */
   selectable?: boolean
+  /** Phase 13.9: 是否显示 OCR 文字叠加(默认 false,只显示 bbox 边框) */
+  showText?: boolean
 }>()
 
 const positions = computed(() => props.tokens)
@@ -91,7 +96,7 @@ function tokenStyle(tok: OcrToken) {
   box-shadow: 0 0 0 2px var(--color-primary-soft, #ebf1fe);
 }
 
-/* Phase 13.7: 选择工具下 token 文字可见 + 可选(直接选 token,不用 text layer) */
+/* Phase 13.9: 选择工具下 token 文字可选但默认透明(不遮挡原图),hover 时显示蓝色提示 */
 .pdf-ocr-layer.is-selectable .pdf-ocr-token {
   cursor: text;
   background: transparent;
@@ -107,7 +112,8 @@ function tokenStyle(tok: OcrToken) {
 .pdf-ocr-layer.is-selectable .pdf-ocr-text {
   user-select: text;
   -webkit-user-select: text;
-  color: rgba(30, 40, 60, 0.55);
+  /* 默认透明,不遮挡原图(文字仍可选中复制) */
+  color: transparent;
 }
 .pdf-ocr-layer.is-selectable .pdf-ocr-token:hover .pdf-ocr-text {
   color: var(--color-primary, #3b6fe8);
@@ -118,7 +124,8 @@ function tokenStyle(tok: OcrToken) {
   width: 100%;
   height: 100%;
   font-family: var(--font-sans);
-  color: var(--color-primary, #3b6fe8);
+  /* Phase 13.9: 默认透明(只显示 bbox 边框,不遮挡原图) */
+  color: transparent;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -126,5 +133,13 @@ function tokenStyle(tok: OcrToken) {
   padding: 0 4px;
   box-sizing: border-box;
   letter-spacing: 0.2px;
+}
+
+/* Phase 13.9: showText=true 时文字半透明可见(识别后内容叠加原图) */
+.pdf-ocr-layer.is-text-visible .pdf-ocr-text {
+  color: rgba(30, 40, 60, 0.55);
+}
+.pdf-ocr-layer.is-text-visible .pdf-ocr-token:hover .pdf-ocr-text {
+  color: var(--color-primary, #3b6fe8);
 }
 </style>

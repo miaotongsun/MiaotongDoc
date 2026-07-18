@@ -23,6 +23,7 @@
       :right-panel="rightPanelOpen"
       :stamp-text="stampText"
       :stamp-presets="stampPresets"
+      :show-ocr-overlay="showOcrOverlay"
       @change-tab="onChangeRibbonTab"
       @select-tool="selectTool"
       @select-color="selectColor"
@@ -30,6 +31,7 @@
       @set-view-mode="setViewMode"
       @cycle-view-mode="cycleViewMode"
       @toggle-panel="toggleRightPanel"
+      @toggle-ocr-overlay="onToggleOcrOverlay"
       @zoom-in="onZoomIn"
       @zoom-out="onZoomOut"
       @fit-width="onFitWidth"
@@ -141,12 +143,13 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn)"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit'"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
+                  :show-text="showOcrOverlay"
                 />
               </template>
             </PdfCanvas>
@@ -236,12 +239,13 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn)"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit'"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
+                  :show-text="showOcrOverlay"
                 />
               </template>
             </PdfCanvas>
@@ -1404,6 +1408,11 @@ const termsPanelOpen = ref(false)
 const thumbCollapsed = ref(false)
 // Phase 11.6: 右侧 ToolsRail 折叠状态(默认展开)
 const toolsRailCollapsed = ref(false)
+/** Phase 13.9: OCR 叠加层开关(默认 false=识别前原图,true=识别后叠加 OCR 文字) */
+const showOcrOverlay = ref(false)
+function onToggleOcrOverlay() {
+  showOcrOverlay.value = !showOcrOverlay.value
+}
 
 // 右键菜单
 const ctxMenuOpen = ref(false)

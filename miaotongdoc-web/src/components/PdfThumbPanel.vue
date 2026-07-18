@@ -230,12 +230,12 @@ onBeforeUnmount(() => {
   background: var(--color-surface-2);
 }
 
-/* Phase 13.4: 折叠按钮重设计 - 加宽 22px + 完全在 panel 外(right:-22 不侵入) + 箭头明显 */
+/* Phase 13.9: 折叠按钮撑满 panel 全高(top:0 bottom:0 与缩略图对齐) + hover 浅蓝 */
 .pdf-thumb-collapse-rail {
   position: absolute;
   right: -22px;
-  top: 12px;
-  bottom: 12px;
+  top: 0;
+  bottom: 0;
   width: 22px;
   border-radius: 0 10px 10px 0;
   background: var(--color-surface);
@@ -259,15 +259,15 @@ onBeforeUnmount(() => {
 .pdf-thumb-collapse-rail:hover {
   width: 28px;
   right: -28px;
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
   border-color: var(--color-primary);
   box-shadow: var(--shadow-4);
 }
 
 .pdf-thumb-collapse-rail.is-collapsed {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
   border-color: var(--color-primary);
 }
 
