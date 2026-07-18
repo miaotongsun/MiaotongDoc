@@ -226,11 +226,17 @@
       "Bash(node diag-phase121.js)",
       "Bash(node diag-tab.js)",
       "Bash(node diag-tab2.js)",
-      "Bash(node diag-html.js)"
+      "Bash(node diag-html.js)",
+      "Bash(node e2e-phase13.js)",
+      "Bash(curl -sI http://localhost/)",
+      "Bash(curl -s http://localhost:9004/actuator/health/liveness)",
+      "Bash(curl -s http://localhost:9004/actuator/health/readiness)",
+      "Read(//c/Users/tiany/AppData/Local/Temp/pdf-e2e/**)"
     ],
     "additionalDirectories": [
       "\\tmp",
-      "d:\\tiany\\stycode\\MiaotongDoc\\miaotongdoc-server\\target\\classes\\com\\miaotong\\doc\\service"
+      "d:\\tiany\\stycode\\MiaotongDoc\\miaotongdoc-server\\target\\classes\\com\\miaotong\\doc\\service",
+      "C:\\Users\\tiany\\AppData\\Local\\Temp\\pdf-e2e"
     ]
   },
   "hooks": {
