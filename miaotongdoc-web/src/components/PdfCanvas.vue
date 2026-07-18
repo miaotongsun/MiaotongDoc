@@ -216,7 +216,7 @@
           stroke-dasharray="4 2"
           class="pdf-form-highlight"
         >
-          <title>{{ formHighlight.name }}</title>
+          <title>{{ formHighlight?.name }}</title>
         </rect>
       </svg>
 

@@ -79,9 +79,11 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     // 生成的 PDF 常用 CIDFont 子集嵌入,需要 cMap 才能正确解析中文字符
     // cMap 资源已复制到 public/cmaps(构建时由 Vite 打到 dist/)
     // worker 内部通过此 URL 异步加载 .bcmap 文件
-    lib.GlobalWorkerOptions.cMapUrl = `${window.location.origin}/cmaps/`
-    lib.GlobalWorkerOptions.cMapPacked = true
-    lib.GlobalWorkerOptions.standardFontDataUrl = `${window.location.origin}/standard_fonts/`
+    // 注:pdfjs-dist 4.x 类型定义未声明这 3 个属性,用 as any 绕过 vue-tsc
+    const gwo = lib.GlobalWorkerOptions as any
+    gwo.cMapUrl = `${window.location.origin}/cmaps/`
+    gwo.cMapPacked = true
+    gwo.standardFontDataUrl = `${window.location.origin}/standard_fonts/`
     pdfjsLib.value = lib as any
     return lib as any
   }

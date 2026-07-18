@@ -166,11 +166,11 @@
 import { computed, ref, watch } from 'vue'
 import RibbonGroup from './RibbonGroup.vue'
 import RibbonBtn from './RibbonBtn.vue'
+import type { AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
 
 type RibbonTab = 'home' | 'edit' | 'page' | 'view'
-type AnnotationTool = 'select' | 'highlight' | 'comment' | 'draw' | 'eraser' | 'vqa' | 'textEdit'
 type ViewMode = 'single' | 'continuous' | 'facing'
-type RightPanel = 'outline' | 'search' | 'info' | null
+type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | 'form' | null
 
 const props = defineProps<{
   activeTab: RibbonTab

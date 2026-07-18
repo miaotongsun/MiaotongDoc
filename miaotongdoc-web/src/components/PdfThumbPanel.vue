@@ -80,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick, type ComponentPublicInstance } from 'vue'
 
 const props = defineProps<{
   totalPages: number
@@ -102,8 +102,8 @@ const thumbRendered = ref<Set<number>>(new Set())
 const thumbRefs = new Map<number, HTMLCanvasElement>()
 const observerRef = ref<IntersectionObserver | null>(null)
 
-function bindThumb(el: HTMLCanvasElement | null, pageNum: number) {
-  if (!el) {
+function bindThumb(el: Element | ComponentPublicInstance | null, pageNum: number) {
+  if (!el || !(el instanceof HTMLCanvasElement)) {
     thumbRefs.delete(pageNum)
     return
   }

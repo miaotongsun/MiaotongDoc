@@ -867,7 +867,7 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   const modelLabel = model === 'server' ? '高精度' : '快速'
   ElMessage.info(`OCR ${modelLabel}识别中(PaddleOCR ${model})...`)
   try {
-    const r = await pdfApi.recognizePaddle(props.docId, model)
+    const r: any = await pdfApi.recognizePaddle(props.docId, model)
     if (r.status !== 'success') {
       recognizeStatus.value = 'error'
       ElMessage.error(r.error || 'OCR 识别失败')
@@ -952,6 +952,13 @@ const toolLabel = computed(() => {
     draw: '画笔',
     eraser: '橡皮',
     vqa: '识图',
+    rectangle: '矩形',
+    ellipse: '椭圆',
+    arrow: '箭头',
+    line: '直线',
+    underline: '下划线',
+    strikethrough: '删除线',
+    stamp: '图章',
   }
   return map[activeTool.value] ?? '选择'
 })

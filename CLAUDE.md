@@ -51,7 +51,7 @@ npm run dev
 
 | 用途 | 账号 | 密码 |
 |------|------|------|
-| 管理员 | `10000001` | `123456` |
+| 管理员 | `10000000` | `123456` |
 | 数据库 | `miaotong` | 见 `.env` |
 
 ### 一键部署（Docker）
@@ -621,14 +621,19 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 
 ### 更新前端
 
+> **构建规范**(2026-07-18):
+> - **生产部署/CI**:用 `npm run build`(= `vue-tsc && vite build`,含类型检查,内网隔离部署必用)
+> - **本地快速调试**:用 `npx vite build`(跳过 vue-tsc,10-20s 出 bundle)
+> - **内网部署最佳实践**:外网构建 dist 产物带入内网 Docker 镜像,内网不构建(避免依赖 devDependencies)
+
 ```bash
 # 1. 进入前端目录
 cd miaotongdoc-web
 
-# 2. 安装依赖（如需要）
+# 2. 安装依赖（如需要,含 devDependencies: typescript/vue-tsc）
 npm install
 
-# 3. 构建生产版本
+# 3. 构建生产版本(类型检查 + 打包)
 npm run build
 
 # 4. 将构建产物复制到 Docker 部署目录
