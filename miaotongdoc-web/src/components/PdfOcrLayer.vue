@@ -91,15 +91,15 @@ function tokenStyle(tok: OcrToken) {
   box-shadow: 0 0 0 2px var(--color-primary-soft, #ebf1fe);
 }
 
-/* Phase 13.5: 选择工具下 token 不拦截事件,让 text layer(注入了 OCR 文字)接收选择 */
+/* Phase 13.7: 选择工具下 token 文字可见 + 可选(直接选 token,不用 text layer) */
 .pdf-ocr-layer.is-selectable .pdf-ocr-token {
   cursor: text;
   background: transparent;
   border: 1px solid rgba(59, 111, 232, 0.2);
-  pointer-events: none;
+  pointer-events: auto;
 }
 .pdf-ocr-layer.is-selectable .pdf-ocr-token:hover {
-  background: rgba(59, 111, 232, 0.08);
+  background: rgba(59, 111, 232, 0.1);
   border-color: var(--color-primary, #3b6fe8);
   border-width: 1.5px;
   z-index: 3;
@@ -107,7 +107,10 @@ function tokenStyle(tok: OcrToken) {
 .pdf-ocr-layer.is-selectable .pdf-ocr-text {
   user-select: text;
   -webkit-user-select: text;
-  color: transparent;
+  color: rgba(30, 40, 60, 0.55);
+}
+.pdf-ocr-layer.is-selectable .pdf-ocr-token:hover .pdf-ocr-text {
+  color: var(--color-primary, #3b6fe8);
 }
 
 .pdf-ocr-text {

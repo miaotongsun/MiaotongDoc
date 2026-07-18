@@ -47,7 +47,8 @@
         </RibbonGroup>
         <RibbonGroup label="AI">
           <RibbonBtn icon="ai" label="AI 助手" @click="$emit('open-ai')" />
-          <RibbonBtn icon="vqa" label="OCR 识别" @click="$emit('ocr-recognize')" />
+          <RibbonBtn icon="vqa" label="OCR 快速" @click="$emit('ocr-recognize', 'mobile')" />
+          <RibbonBtn icon="vqa" label="OCR 高精度" @click="$emit('ocr-recognize', 'server')" />
         </RibbonGroup>
       </div>
 
@@ -193,7 +194,8 @@ const emit = defineEmits<{
   (e: 'toggle-panel', panel: 'outline' | 'search' | 'info' | 'annotations'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
   (e: 'zoom-menu', evt: MouseEvent): void
-  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'ocr-recognize' | 'place-signature' | 'protect'): void
+  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect'): void
+  (e: 'ocr-recognize', model: 'mobile' | 'server'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void
   (e: 'page-insert' | 'page-insert-from-file'): void

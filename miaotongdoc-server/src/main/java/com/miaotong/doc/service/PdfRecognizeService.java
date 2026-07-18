@@ -107,11 +107,19 @@ public class PdfRecognizeService {
      * 不经过 Docling,直接调 PaddleOCR 服务。
      */
     public Map<String, Object> recognizeWithPaddle(Long documentId) {
+        return recognizeWithPaddle(documentId, "mobile");
+    }
+
+    /**
+     * Phase 13.6: 强制走 PaddleOCR 路径,可选模型
+     * @param model "mobile"(轻量,默认) 或 "server"(高精度)
+     */
+    public Map<String, Object> recognizeWithPaddle(Long documentId, String model) {
         Document doc = documentService.getDocument(documentId);
         if (!"pdf".equals(doc.getFileType())) {
             throw new BusinessException("该文档不是 PDF 类型");
         }
-        Map<String, Object> result = paddleOcrClient.recognizePdf(documentId, "ch", null);
+        Map<String, Object> result = paddleOcrClient.recognizePdf(documentId, "ch", model, null);
         result.putIfAbsent("documentId", documentId);
         result.putIfAbsent("title", doc.getTitle());
         return result;

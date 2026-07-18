@@ -677,8 +677,10 @@ public class PdfController {
      * 跳过 Docling 路径,直接用 PaddleOCR 拿到完整坐标数据
      */
     @PostMapping("/{id}/recognize-paddle")
-    public ResponseEntity<Map<String, Object>> recognizePaddle(@PathVariable Long id) {
-        Map<String, Object> result = pdfRecognizeService.recognizeWithPaddle(id);
+    public ResponseEntity<Map<String, Object>> recognizePaddle(
+            @PathVariable Long id,
+            @RequestParam(value = "model", required = false, defaultValue = "mobile") String model) {
+        Map<String, Object> result = pdfRecognizeService.recognizeWithPaddle(id, model);
         if ("success".equals(result.get("status"))) {
             Object mdObj = result.get("markdown");
             if (mdObj != null) {
@@ -688,7 +690,7 @@ public class PdfController {
             Map<String, Object> ocrData = pdfRecognizeService.extractOcrData(result);
             if (!ocrData.isEmpty()) {
                 documentService.savePdfOcrData(id, ocrData);
-                log.info("Phase 11.4 PaddleOCR 坐标数据已保存: docId={}, pages={}", id, ocrData.size());
+                log.info("Phase 11.4 PaddleOCR 坐标数据已保存: docId={}, model={}, pages={}", id, model, ocrData.size());
             }
             documentService.markPdfRecognized(id);
         }

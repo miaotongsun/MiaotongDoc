@@ -145,10 +145,12 @@ export const pdfApi = {
   recognize(docId: number) {
     return api.post<any, PdfRecognizeResponse>(`/pdf/${docId}/recognize`)
   },
-  /** Phase 11.4: 强制 PaddleOCR 识别(返回 bbox 坐标) */
-  recognizePaddle(docId: number) {
-    return api.post<any, { status: string; engine: string; pages?: any[]; totalPages?: number }>(
-      `/pdf/${docId}/recognize-paddle`,
+  /** Phase 11.4: 强制 PaddleOCR 识别(返回 bbox 坐标)
+   *  Phase 13.6: model 参数选择 mobile(轻量,默认)/ server(高精度)
+   */
+  recognizePaddle(docId: number, model: 'mobile' | 'server' = 'mobile') {
+    return api.post<any, { status: string; engine: string; model?: string; degraded?: boolean; pages?: any[]; totalPages?: number }>(
+      `/pdf/${docId}/recognize-paddle?model=${model}`,
     )
   },
 

@@ -77,6 +77,15 @@ public class PaddleOcrClient {
      */
     public Map<String, Object> recognizePdf(Long documentId, String language,
                                             ProgressCallback progressCallback) {
+        return recognizePdf(documentId, language, "mobile", progressCallback);
+    }
+
+    /**
+     * Phase 13.6: 支持选择模型(mobile/server)
+     * @param model "mobile"(轻量,默认) 或 "server"(高精度)
+     */
+    public Map<String, Object> recognizePdf(Long documentId, String language, String model,
+                                            ProgressCallback progressCallback) {
         Map<String, Object> result = new HashMap<>();
         Document doc = documentService.getDocument(documentId);
 
@@ -90,6 +99,10 @@ public class PaddleOcrClient {
             result.put("status", "unavailable");
             result.put("error", "PaddleOCR 服务不可用");
             return result;
+        }
+
+        if (model == null || model.isBlank()) {
+            model = "mobile";
         }
 
         try {
@@ -109,6 +122,7 @@ public class PaddleOcrClient {
                 }
             });
             body.add("language", language != null ? language : properties.getLanguage());
+            body.add("model", model);
             body.add("use_table", String.valueOf(properties.isUseTableRecognition()));
             body.add("use_layout", String.valueOf(properties.isUseLayout()));
             body.add("return_coords", String.valueOf(properties.isReturnCoordinates()));
@@ -117,8 +131,8 @@ public class PaddleOcrClient {
                     new HttpEntity<>(body, headers);
 
             String url = properties.getServerUrl() + "/ocr/pdf";
-            log.info("PaddleOCR 识别: docId={}, url={}, lang={}, table={}, layout={}",
-                    doc.getId(), url, language, properties.isUseTableRecognition(), properties.isUseLayout());
+            log.info("PaddleOCR 识别: docId={}, url={}, lang={}, model={}, table={}, layout={}",
+                    doc.getId(), url, language, model, properties.isUseTableRecognition(), properties.isUseLayout());
 
             if (progressCallback != null) progressCallback.onProgress(30, "PaddleOCR 处理中...");
 

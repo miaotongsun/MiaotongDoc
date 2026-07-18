@@ -17,27 +17,50 @@ from pdf2image import convert_from_bytes
 from PIL import Image
 
 # PaddleOCR 3.2+ 延迟导入(避免启动慢)
-_ocr_engine = None
+# Phase 13.6: 双引擎并存(mobile + server),按 API model 参数选择
+_ocr_engines = {}      # key="lang:model" -> PaddleOCR engine
+_engine_errors = {}    # key -> error message(加载失败时记录)
 
 
-def get_ocr_engine(lang: str = 'ch'):
-    """延迟加载 OCR 引擎（首次调用时初始化）"""
-    global _ocr_engine
-    if _ocr_engine is None:
-        from paddleocr import PaddleOCR
-        _ocr_engine = PaddleOCR(
-            lang=lang,
-            # Phase 13.4: 改用 mobile 模型,server_det 在容器内推理崩溃(std::exception)
-            # mobile 精度略低但稳定,适合容器环境
-            text_detection_model_name="PP-OCRv5_mobile_det",
-            text_recognition_model_name="PP-OCRv5_mobile_rec",
-            textline_orientation_model_name="PP-LCNet_x0_25_textline_ori",
-            use_textline_orientation=True,  # 文字方向分类（替代 2.x 的 use_angle_cls）
-            use_doc_orientation_classify=False,  # 不做整页方向判断（PDF 已是正向）
-            use_doc_unwarping=False,  # 不做文档矫正（PDF 不需要）
-        )
-        logging.info(f"PaddleOCR 3.2+ 引擎初始化完成(lang={lang}, model=PP-OCRv5_mobile)")
-    return _ocr_engine
+def _create_engine(lang: str, model: str):
+    """创建指定模型的 OCR 引擎"""
+    from paddleocr import PaddleOCR
+    if model == 'server':
+        det_name = "PP-OCRv5_server_det"
+        rec_name = "PP-OCRv5_server_rec"
+    else:
+        det_name = "PP-OCRv5_mobile_det"
+        rec_name = "PP-OCRv5_mobile_rec"
+    return PaddleOCR(
+        lang=lang,
+        text_detection_model_name=det_name,
+        text_recognition_model_name=rec_name,
+        textline_orientation_model_name="PP-LCNet_x0_25_textline_ori",
+        use_textline_orientation=True,  # 文字方向分类
+        use_doc_orientation_classify=False,  # PDF 已正向
+        use_doc_unwarping=False,
+    )
+
+
+def get_ocr_engine(lang: str = 'ch', model: str = 'mobile'):
+    """延迟加载 OCR 引擎(首次调用初始化,后续从缓存取)
+
+    Returns: (engine, error) 二元组。engine 为 None 表示加载失败,error 含原因。
+    """
+    key = f"{lang}:{model}"
+    if key in _ocr_engines:
+        return _ocr_engines[key], None
+    if key in _engine_errors:
+        return None, _engine_errors[key]
+    try:
+        engine = _create_engine(lang, model)
+        _ocr_engines[key] = engine
+        logging.info(f"PaddleOCR 引擎加载成功: lang={lang}, model={model}")
+        return engine, None
+    except Exception as e:
+        _engine_errors[key] = str(e)
+        logging.error(f"PaddleOCR 引擎加载失败: lang={lang}, model={model}, err={e}", exc_info=True)
+        return None, str(e)
 
 
 app = Flask(__name__)
@@ -60,11 +83,16 @@ SUPPORTED_LANGUAGES = {
 
 @app.route('/health', methods=['GET'])
 def health():
-    """健康检查"""
+    """健康检查 - 返回已加载的引擎"""
+    loaded = [k.split(':')[1] for k in _ocr_engines.keys()]
+    failed = {k.split(':')[1]: v for k, v in _engine_errors.items()}
     return jsonify({
         'status': 'ok',
         'service': 'ocr-paddle',
         'engine': 'PaddleOCR',
+        'loaded_engines': loaded,
+        'failed_engines': failed,
+        'supported_models': ['mobile', 'server'],
     })
 
 
@@ -185,41 +213,62 @@ def _convert_paddle_result(page_result: dict, layout: bool = False) -> dict:
 
 @app.route('/ocr/pdf', methods=['POST'])
 def ocr_pdf():
-    """对 PDF 文件进行 PaddleOCR 识别（兼容 Tesseract 接口）"""
+    """对 PDF 文件进行 PaddleOCR 识别（兼容 Tesseract 接口）
+
+    form 参数:
+        file: PDF 文件
+        language: ch/en/japan/korean
+        model: mobile(默认,轻量)/ server(高精度)
+        use_table, use_layout, return_coords
+    """
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
     language = request.form.get('language', 'ch')
-    use_table = request.form.get('use_table', 'true').lower() == 'true'  # 3.0 API 未实现，忽略
-    use_layout = request.form.get('use_layout', 'true').lower() == 'true'  # 默认开启版面重建
+    model = request.form.get('model', 'mobile').lower()
+    if model not in ('mobile', 'server'):
+        model = 'mobile'
+    use_table = request.form.get('use_table', 'true').lower() == 'true'
+    use_layout = request.form.get('use_layout', 'true').lower() == 'true'
     return_coords = request.form.get('return_coords', 'true').lower() == 'true'
 
     lang_code = SUPPORTED_LANGUAGES.get(language, 'ch')
 
+    ocr, err = get_ocr_engine(lang_code, model)
+    if ocr is None:
+        # server 加载失败时降级 mobile(并提示)
+        if model == 'server':
+            logging.warning(f"server 引擎不可用({err}),降级 mobile")
+            ocr, err2 = get_ocr_engine(lang_code, 'mobile')
+            if ocr is None:
+                return jsonify({'error': f'所有引擎不可用: {err}; {err2}'}), 500
+            model = 'mobile'
+            degraded = True
+        else:
+            return jsonify({'error': f'引擎加载失败: {err}'}), 500
+    else:
+        degraded = False
+
     try:
         start = time.time()
         pdf_bytes = file.read()
-        logger.info(f"PaddleOCR 3.0 识别开始: size={len(pdf_bytes)/1024:.1f}KB, lang={language}")
+        logger.info(f"PaddleOCR 识别开始: size={len(pdf_bytes)/1024:.1f}KB, lang={language}, model={model}")
 
         # PDF 转图片（DPI 200 平衡精度和性能）
         images = convert_from_bytes(pdf_bytes, dpi=200)
         logger.info(f"PDF 转图片: {len(images)} 页")
-
-        ocr = get_ocr_engine(lang_code)
 
         pages = []
         full_text_parts = []
 
         for i, image in enumerate(images):
             page_start = time.time()
-            logger.info(f"识别第 {i+1}/{len(images)} 页...")
+            logger.info(f"识别第 {i+1}/{len(images)} 页(model={model})...")
 
             img_array = np.array(image)
-            # PaddleOCR 3.0 用 predict() 替代 2.x 的 ocr()
             page_results = ocr.predict(img_array)
 
-            # page_results 是 list，每个元素是一页的 dict
             page_text = ''
             regions = []
             avg_conf = 0.0
@@ -234,7 +283,7 @@ def ocr_pdf():
             pages.append({
                 'pageNum': i + 1,
                 'text': page_text,
-                'tables': [],  # PaddleOCR 3.0 表格识别 API 复杂，暂不实现
+                'tables': [],
                 'regions': regions,
                 'confidence': avg_conf,
             })
@@ -246,6 +295,8 @@ def ocr_pdf():
         result = {
             'status': 'success',
             'engine': 'paddleocr',
+            'model': model,
+            'degraded': degraded,
             'totalPages': len(images),
             'fullText': '\n\n'.join(full_text_parts),
             'pages': pages,
@@ -256,12 +307,12 @@ def ocr_pdf():
             ),
         }
 
-        logger.info(f"PaddleOCR 识别完成: {len(images)} 页, 总耗时={elapsed:.1f}s, 总字符={len(result['fullText'])}")
+        logger.info(f"PaddleOCR 识别完成: model={model}, {len(images)} 页, 总耗时={elapsed:.1f}s")
         return jsonify(result)
 
     except Exception as e:
         logger.error(f"PaddleOCR 识别失败: {e}", exc_info=True)
-        return jsonify({'error': str(e), 'engine': 'paddleocr'}), 500
+        return jsonify({'error': str(e), 'engine': 'paddleocr', 'model': model}), 500
 
 
 @app.route('/ocr/image', methods=['POST'])
@@ -272,16 +323,26 @@ def ocr_image():
 
     file = request.files['file']
     language = request.form.get('language', 'ch')
+    model = request.form.get('model', 'mobile').lower()
+    if model not in ('mobile', 'server'):
+        model = 'mobile'
     return_coords = request.form.get('return_coords', 'true').lower() == 'true'
 
     lang_code = SUPPORTED_LANGUAGES.get(language, 'ch')
+
+    ocr, err = get_ocr_engine(lang_code, model)
+    if ocr is None:
+        if model == 'server':
+            ocr, _ = get_ocr_engine(lang_code, 'mobile')
+            model = 'mobile' if ocr else model
+        if ocr is None:
+            return jsonify({'error': f'引擎加载失败: {err}'}), 500
 
     try:
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
         img_array = np.array(img)
 
-        ocr = get_ocr_engine(lang_code)
         results = ocr.predict(img_array)
 
         if results:
@@ -289,6 +350,7 @@ def ocr_image():
             return jsonify({
                 'status': 'success',
                 'engine': 'paddleocr',
+                'model': model,
                 'text': data['text'],
                 'regions': data['regions'] if return_coords else [],
                 'confidence': data['confidence'],
@@ -298,6 +360,7 @@ def ocr_image():
             return jsonify({
                 'status': 'success',
                 'engine': 'paddleocr',
+                'model': model,
                 'text': '',
                 'regions': [],
                 'confidence': 0.0,

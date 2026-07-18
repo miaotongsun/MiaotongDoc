@@ -641,8 +641,9 @@ public class PdfToolService {
             double hPx = b.get(3).doubleValue();
             double w = wPx * pxToPt;
             double h = hPx * pxToPt;
-            // 像素 y 转 PDF pt:Y_pdf = (H_px - y_px - h_px) * pxToPt
-            double yPdf = yPx * pxToPt;
+            // Phase 13.7: 像素 y(图像左上原点)转 PDF Y(左下原点)
+            // 之前未翻转导致 OCR 文字上下相反,渲染不在原文位置
+            double yPdf = pageSize.getHeight() - (yPx + hPx) * pxToPt;
             // bbox 高度估算字符大小
             double fontSize = h;
 

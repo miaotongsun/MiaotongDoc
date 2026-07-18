@@ -826,16 +826,21 @@ function clearVqa() {
  * 2) 后端存 ocrData → text-positions
  * 3) 重新加载 positions,渲染 bbox 框
  */
-async function onOcrRecognize() {
+async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   if (recognizeStatus.value === 'recognizing') return
   recognizeStatus.value = 'recognizing'
-  ElMessage.info('OCR 识别中(PaddleOCR)...')
+  const modelLabel = model === 'server' ? '高精度' : '快速'
+  ElMessage.info(`OCR ${modelLabel}识别中(PaddleOCR ${model})...`)
   try {
-    const r = await pdfApi.recognizePaddle(props.docId)
+    const r = await pdfApi.recognizePaddle(props.docId, model)
     if (r.status !== 'success') {
       recognizeStatus.value = 'error'
       ElMessage.error(r.error || 'OCR 识别失败')
       return
+    }
+    // server 降级提示
+    if (r.degraded) {
+      ElMessage.warning('server 引擎不可用,已降级 mobile 识别')
     }
     // 标记所有页已识别 + 重新加载 positions
     const total = r.totalPages || 1
@@ -849,7 +854,7 @@ async function onOcrRecognize() {
       }
     }
     recognizeStatus.value = 'recognized'
-    ElMessage.success(`OCR 识别完成(共 ${(r.pages || []).reduce((s: number, p: any) => s + (p.regions?.length || 0), 0)} 个文字区域)`)
+    ElMessage.success(`OCR ${modelLabel}识别完成(共 ${(r.pages || []).reduce((s: number, p: any) => s + (p.regions?.length || 0), 0)} 个文字区域)`)
   } catch (e: any) {
     console.error('[PdfEditor] OCR failed:', e)
     recognizeStatus.value = 'error'
@@ -1213,19 +1218,8 @@ async function renderPageIfReady(pageNum: number) {
   if (!canvasEl || !textLayerEl) return
   try {
     await renderer.renderPage(pageNum, canvasEl, textLayerEl)
-    pageRawWidth.value = renderer.pageWidth.value || pageRawWidth.value
-    pageRawHeight.value = renderer.pageHeight.value || pageRawHeight.value
-    // Phase 13.5: 如果 text layer 为空(扫描件),用 OCR 数据注入让文字可选
-    if (recognizedPages.value.has(pageNum)) {
-      const tokens = ocrTokensForPage(pageNum)
-      if (tokens.length > 0) {
-        // 检查 pdfjs text layer 是否空(扫描件无原生文字)
-        const hasNativeText = textLayerEl.children.length > 0
-        if (!hasNativeText) {
-          await renderer.renderOcrTextLayer(pageNum, tokens, textLayerEl)
-        }
-      }
-    }
+    // Phase 13.7: 不覆盖 pageRawWidth/Height(onMounted 已设 PDF pt 正确值)
+    // renderer.pageWidth/Height 是 canvas size(含 scale),覆盖会导致 OCR 坐标偏移
   } catch (e) {
     console.error(`[PdfEditor] renderPage(${pageNum}) failed:`, e)
   }
