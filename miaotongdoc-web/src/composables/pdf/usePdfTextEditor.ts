@@ -49,6 +49,8 @@ export interface UsePdfTextEditorOptions {
   onSaved?: () => void
   /** 错误回调 */
   onError?: (err: Error) => void
+  /** Phase 13.11: 是否自动提交(默认 true;编辑模式设 false 由用户手动保存) */
+  autoCommit?: boolean
 }
 
 /**
@@ -98,6 +100,7 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
     debounceMs = 600,
     onSaved,
     onError,
+    autoCommit = true,
   } = options
 
   // ========== 状态 ==========
@@ -124,8 +127,10 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
 
   /**
    * 提交所有待编辑(立即执行)
+   * Phase 13.11: 支持指定 targetDocId(另存为新文档时提交到新文档)
    */
-  async function commitNow(): Promise<void> {
+  async function commitNow(targetDocId?: number): Promise<void> {
+    const targetId = targetDocId ?? docId
     const groups: Array<{ pageNum: number; edits: PendingEdit[] }> = []
     for (const [pageNum, edits] of pendingByPage.value.entries()) {
       if (edits.length > 0) groups.push({ pageNum, edits })
@@ -155,7 +160,7 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
           ...(e.originalY !== undefined ? { originalY: e.originalY } : {}),
         }))
 
-        await pdfApi.applyTextEdits(docId, payload)
+        await pdfApi.applyTextEdits(targetId, payload)
 
         // 标记 saved
         for (const e of edits) {
@@ -309,7 +314,10 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
     pendingByPage.value.get(edit.pageNumber)!.push(edit)
     editStates.value.set(id, 'editing')
 
-    debouncedCommit()
+    // Phase 13.11: autoCommit=false 时不自动提交(由用户点保存触发)
+    if (autoCommit) {
+      debouncedCommit()
+    }
     return edit
   }
 
@@ -335,7 +343,9 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
       editStates.value.set(id, 'editing')
       out.push(pending)
     }
-    debouncedCommit()
+    if (autoCommit) {
+      debouncedCommit()
+    }
     return out
   }
 
@@ -345,6 +355,15 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
   async function flush(): Promise<void> {
     debouncedCommit.cancel()
     await commitNow()
+  }
+
+  /**
+   * Phase 13.11: 提交到指定文档(另存为新文档时用)
+   * 提交后清空 pending,但不清除 positions(保持画布编辑状态)
+   */
+  async function flushTo(targetDocId: number): Promise<void> {
+    debouncedCommit.cancel()
+    await commitNow(targetDocId)
   }
 
   /**
@@ -404,6 +423,7 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
     applyEdit,
     applyEdits,
     flush,
+    flushTo,
     rollback,
     clearCache,
     getPendingCount,

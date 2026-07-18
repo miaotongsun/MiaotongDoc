@@ -451,12 +451,27 @@
       @ai-chat="onCanvasMenuAiChat"
       @ocr-recognize="onCanvasMenuOcr"
     />
-    <!-- Phase 13.8: 编辑模式提示条(Acrobat DC 风格) -->
+    <!-- Phase 13.11: 编辑模式提示条(Acrobat DC 风格 + 保存按钮) -->
     <div v-if="activeTool === 'textEdit'" class="pdf-edit-banner">
       <span class="pdf-edit-banner-icon">✏️</span>
       <span class="pdf-edit-banner-text">编辑模式 - 点击文字修改,按 Esc 退出</span>
+      <span v-if="textEditor.dirty.value" class="pdf-edit-banner-dirty">{{ textEditor.pendingByPage.value.size }} 页未保存</span>
+      <button
+        class="pdf-edit-banner-save"
+        :disabled="!textEditor.dirty.value || savingEdit"
+        @click="openSaveModeDialog"
+      >{{ savingEdit ? '保存中...' : '保存' }}</button>
       <button class="pdf-edit-banner-exit" @click="exitEditMode">退出编辑</button>
     </div>
+    <!-- Phase 13.11: 保存模式对话框(覆盖/另存为) -->
+    <PdfSaveModeDialog
+      :open="saveModeDialogOpen"
+      :edit-count="pendingEditCount"
+      :default-title="saveModeDefaultTitle"
+      :saving="savingEdit"
+      @close="saveModeDialogOpen = false"
+      @confirm="onSaveModeConfirm"
+    />
     <PdfAiMenu
       :open="aiMenuOpen"
       :anchor="aiMenuAnchor"
@@ -525,6 +540,7 @@ import PdfCanvasContextMenu from './PdfCanvasContextMenu.vue'
 import PdfAiMenu from './PdfAiMenu.vue'
 import PdfSignatureDialog from './PdfSignatureDialog.vue'
 import PdfSecurityDialog from './PdfSecurityDialog.vue'
+import PdfSaveModeDialog from './PdfSaveModeDialog.vue'
 import MergeDialog from './MergeDialog.vue'
 import PdfPageOpsDialog from './PdfPageOpsDialog.vue'
 import PdfTermsPanel from './PdfTermsPanel.vue'
@@ -613,6 +629,7 @@ const selectColor = (c: string) => (annot.activeColor.value = c)
 // ========== 文本编辑 ==========
 const textEditor = usePdfTextEditor({
   docId: props.docId,
+  autoCommit: false,  // Phase 13.11: 编辑模式不自动保存,用户点保存按钮触发
   onSaved: () => {
     saveStatus.value = 'saved'
     saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
@@ -1085,6 +1102,55 @@ function onSendSign() { ElMessage.info('发送签署开发中') }
 
 // Phase 12.3: 签名创建 + 放置
 const signatureDialogOpen = ref(false)
+
+// Phase 13.11: 编辑保存模式(覆盖/另存为)
+const saveModeDialogOpen = ref(false)
+const savingEdit = ref(false)
+const pendingEditCount = ref(0)
+const saveModeDefaultTitle = ref('')
+function openSaveModeDialog() {
+  // 计算待保存编辑数
+  let count = 0
+  for (const arr of textEditor.pendingByPage.value.values()) count += arr.length
+  pendingEditCount.value = count
+  if (count === 0) {
+    ElMessage.info('没有需要保存的编辑')
+    return
+  }
+  saveModeDefaultTitle.value = `${props.filename || '未命名'} (副本)`
+  saveModeDialogOpen.value = true
+}
+async function onSaveModeConfirm(mode: 'overwrite' | 'new', newTitle?: string) {
+  savingEdit.value = true
+  try {
+    if (mode === 'overwrite') {
+      // 覆盖当前:flush(提交到当前) + createVersion
+      await textEditor.flushTo(props.docId)
+      await pdfApi.createVersion(props.docId, '编辑保存')
+      ElMessage.success('已覆盖当前文档(新版本已记录)')
+      saveModeDialogOpen.value = false
+      void reloadAfterTextEdit()
+    } else {
+      // 另存为新文档:save-as-new + flush 到新文档 + createVersion
+      const r = await pdfApi.saveAsNew(props.docId, newTitle)
+      if (r.success && r.newDocId) {
+        await textEditor.flushTo(r.newDocId)
+        await pdfApi.createVersion(r.newDocId, '另存为')
+        ElMessage.success(`已另存为新文档: ${r.title}`)
+        saveModeDialogOpen.value = false
+        // 跳转新文档
+        router.push(`/editor/${r.newDocId}`)
+      } else {
+        ElMessage.error(r.message || '另存为失败')
+      }
+    }
+  } catch (e: any) {
+    console.error('[PdfEditor] save failed:', e)
+    ElMessage.error(e?.message || '保存失败')
+  } finally {
+    savingEdit.value = false
+  }
+}
 const pendingSignature = ref<{ imageBase64: string; width: number; height: number } | null>(null)
 const signaturePlacing = ref(false)
 const signatureSaving = ref(false)
@@ -2085,7 +2151,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   letter-spacing: 0.2px;
 }
 .pdf-edit-banner-exit {
-  margin-left: 12px;
+  margin-left: 8px;
   padding: 4px 12px;
   background: rgba(255,255,255,0.2);
   color: #fff;
@@ -2097,5 +2163,38 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 }
 .pdf-edit-banner-exit:hover {
   background: rgba(255,255,255,0.35);
+}
+/* Phase 13.11: 编辑模式保存按钮(白底高亮,与退出按钮区分) */
+.pdf-edit-banner-save {
+  margin-left: 8px;
+  padding: 4px 14px;
+  background: #fff;
+  color: var(--color-primary, #409eff);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.pdf-edit-banner-save:hover:not(:disabled) {
+  background: var(--color-primary, #409eff);
+  color: #fff;
+}
+.pdf-edit-banner-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: rgba(255,255,255,0.5);
+  color: rgba(255,255,255,0.7);
+}
+/* Phase 13.11: dirty 提示(未保存编辑数) */
+.pdf-edit-banner-dirty {
+  margin-left: 4px;
+  padding: 3px 8px;
+  background: rgba(255, 200, 0, 0.3);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
 }
 </style>

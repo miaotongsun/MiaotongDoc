@@ -1,5 +1,9 @@
 {
   "dependencies": {
     "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vue-tsc": "^3.3.7"
   }
 }

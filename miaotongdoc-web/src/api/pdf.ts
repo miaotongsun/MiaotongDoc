@@ -287,6 +287,28 @@ export const pdfApi = {
   },
 
   /**
+   * Phase 13.11: 另存为新文档(复制当前 PDF 为新文档)
+   * POST /api/pdf/{id}/save-as-new
+   */
+  saveAsNew(docId: number, title?: string) {
+    return api.post<any, { success: boolean; newDocId: number; title: string; message: string }>(
+      `/pdf/${docId}/save-as-new`,
+      { title: title || '' },
+    )
+  },
+
+  /**
+   * Phase 13.11: 创建新版本(编辑保存时记录版本)
+   * POST /api/documents/{id}/versions
+   */
+  createVersion(docId: number, summary: string) {
+    return api.post<any, { message: string; versionNumber: number }>(
+      `/documents/${docId}/versions`,
+      { summary },
+    )
+  },
+
+  /**
    * Phase 12.2: 填充表单字段
    * POST /api/pdf/{id}/form-fields/fill
    * 返回填充后的 PDF Blob

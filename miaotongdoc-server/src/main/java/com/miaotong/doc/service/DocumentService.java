@@ -334,6 +334,51 @@ public class DocumentService {
         return doc;
     }
 
+    /**
+     * Phase 13.11: 复制文档为新文档(另存为)
+     * 复制文件字节 + 创建新 Document + 初始版本,不复制版本历史
+     */
+    @Transactional
+    public Document copyDocument(Long sourceDocId, String newTitle, Long userId) {
+        Document source = getDocument(sourceDocId);
+        if (!storageService.exists(source.getFilePath())) {
+            throw new BusinessException("源文档文件不存在");
+        }
+        byte[] content = storageService.load(source.getFilePath());
+
+        String docKey = UUID.randomUUID().toString();
+        String fileType = source.getFileType();
+        String filePath = saveFile(docKey, 1, fileType, content);
+        String hash = com.miaotong.doc.util.FileHashUtil.calculateSHA256(content);
+        String title = (newTitle != null && !newTitle.isBlank()) ? newTitle : (source.getTitle() + " (副本)");
+
+        Document doc = new Document();
+        doc.setDocKey(docKey);
+        doc.setTitle(title);
+        doc.setDocType(source.getDocType());
+        doc.setFilePath(filePath);
+        doc.setFileType(fileType);
+        doc.setFileSize((long) content.length);
+        doc.setFileHash(hash);
+        doc.setOwnerUserId(userId);
+        doc.setStatus("draft");
+        doc.setCurrentVersion(1);
+        doc = documentRepository.save(doc);
+
+        DocumentVersion initialVersion = new DocumentVersion();
+        initialVersion.setDocumentId(doc.getId());
+        initialVersion.setVersionNumber(1);
+        initialVersion.setFilePath(filePath);
+        initialVersion.setFileSize((long) content.length);
+        initialVersion.setFileHash(hash);
+        initialVersion.setChangeSummary("另存为新文档");
+        initialVersion.setCreatedBy(userId);
+        versionRepository.save(initialVersion);
+
+        auditService.log(userId, "COPY_DOCUMENT", "DOCUMENT", doc.getId(), "from " + sourceDocId);
+        return doc;
+    }
+
     @Transactional
     public DocumentVersion createVersion(Long docId, String summary, Long userId) {
         Document doc = getDocument(docId);

@@ -826,6 +826,28 @@ public class PdfController {
     // ==================== Phase 12.1: 表单字段检测 ====================
 
     /**
+     * Phase 13.11: 另存为新文档(复制当前 PDF 为新文档,不复制版本历史)
+     */
+    @PostMapping("/{id}/save-as-new")
+    public ResponseEntity<Map<String, Object>> saveAsNew(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest httpRequest) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        String title = body != null ? body.get("title") : null;
+        Document newDoc = documentService.copyDocument(id, title, userId);
+        log.info("Phase 13.11 另存为新文档: src={}, new={}, title={}", id, newDoc.getId(), newDoc.getTitle());
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "newDocId", newDoc.getId(),
+            "title", newDoc.getTitle(),
+            "message", "已另存为新文档"
+        ));
+    }
+
+    /**
      * 识别 PDF 的 AcroForm 表单字段
      */
     @GetMapping("/{id}/form-fields")
