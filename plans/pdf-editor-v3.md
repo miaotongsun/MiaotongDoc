@@ -1628,3 +1628,85 @@ POST /redact:    200 size=96783 type=application/pdf
 | 13 | 综合 E2E + 性能基线 + 文档 | ✅ |
 
 PDF 编辑器 V3 全部交付完成。
+
+---
+
+## 三十三、Phase 13.4 - 折叠按钮重设计 + AI 常驻浮标 + OCR 修复(2026-07-18)
+
+> **状态**:✅ 完成
+
+### 1. 折叠按钮重设计
+
+**问题**:折叠条太细(16px)、箭头不明显(14x14)、侵入工具栏区域(left:-10 占据 rail 6px)。
+
+**修复**:
+- 加宽:16px -> **22px**(hover 28px)
+- 完全在 panel/rail 外侧:`right/left: -22px`(不侵入内部)
+- 箭头加大:14x14 -> **18x18**,stroke 2 -> **2.5**
+- 两个按钮 top:12 bottom:12 完全对齐(689px 高)
+- hover 蓝色主题 + shadow-4
+
+**验证**:
+- 缩略图按钮 right=241,panel right=220(差 21px,完全在外)✓
+- 工具栏按钮 left=1307,rail left=1328(差 21px,完全在外)✓
+- 两按钮 top=171 bottom=860 完全一致 ✓
+
+### 2. AI 常驻浮标
+
+**问题**:Phase 11.8 合并 FAB 后,无常驻入口,用户找不到 AI。
+
+**修复**:
+- PdfAiFloatPanel 恢复 `.ai-fab` 按钮(`v-if="!open"`)
+- 48×48 圆形,蓝紫渐变(#409EFF -> #6366F1)
+- 位置:右下角(right:84px,避开 ToolsRail)
+- streaming 状态:右上角红色脉动点
+- 点击展开浮窗,关闭后 FAB 重新显示
+
+### 3. OCR 修复
+
+**问题**:
+- OCR 没自动加载(用户没点 OCR 按钮时不显示)
+- 扫描件无法选择文字(text layer 空)
+- PP-OCRv5_server_det 推理崩溃(std::exception)
+
+**修复**:
+
+#### 3.1 OCR 自动加载
+- PdfEditor `onMounted` 调用 `pdfApi.getRecognizeStatus(docId)`
+- 已识别文档自动设置 `recognizedPages = {1..total}` + `recognizeStatus = 'recognized'`
+- PdfOcrLayer 自动渲染 bbox + 文字
+
+#### 3.2 OCR 文字可选
+- PdfOcrLayer 新增 `selectable` prop
+- 选择工具下(`activeTool === 'select'`):
+  - token 显示淡蓝边框(rgba(59,111,232,0.25))提示位置
+  - 文字 `user-select: text` 可选中
+  - hover 边框加粗 + 文字变蓝
+- 其他工具:token pointer-events: auto(不影响标注)
+
+#### 3.3 PaddleOCR 模型降级
+- `PP-OCRv5_server_det` -> `PP-OCRv5_mobile_det`
+- `PP-OCRv5_server_rec` -> `PP-OCRv5_mobile_rec`
+- 原因:server_det 在容器内 predictor.run 抛 std::exception(底层 Paddle 推理崩溃)
+- mobile 模型更小更稳,精度略低但适合容器环境
+
+**验证**:
+- OCR 重新识别成功(4 页,置信度 0.88-0.96)✓
+- "Page 1 of 4" / "合同编号:HT-2026-001" 坐标准确 ✓
+- "CONFIDENTIAL" 斜水印识别为超大块(OCR 对斜文字识别限制,可接受)
+- 前端自动加载 19 个 token ✓
+- 选择工具下 layerSelectable=true, cursor=text, userSelect=text ✓
+
+### Critical Files
+
+- `miaotongdoc-web/src/components/PdfThumbPanel.vue` - 折叠按钮重设计 + 箭头加大
+- `miaotongdoc-web/src/components/PdfToolsRail.vue` - 折叠按钮重设计 + 箭头加大
+- `miaotongdoc-web/src/components/PdfAiFloatPanel.vue` - 恢复常驻 FAB
+- `miaotongdoc-web/src/components/PdfOcrLayer.vue` - selectable prop + 选择工具样式
+- `miaotongdoc-web/src/components/PdfEditor.vue` - onMounted 自动检查 OCR 状态 + 传 selectable
+- `MiaotongDoc-Docker/app/ocr-paddle/app.py` - PP-OCRv5_mobile 模型
+
+### 遗留
+
+- "CONFIDENTIAL" 斜水印 OCR 识别为超大块(PaddleOCR 对斜文字限制,非 bug)
+- OCR token 跨 token 选择受限(每个 token 独立,无法跨 token 选)
