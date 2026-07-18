@@ -143,13 +143,12 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit'"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && (showOcrOverlay || activeTool === 'select')"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
-                  :show-text="showOcrOverlay"
                 />
               </template>
             </PdfCanvas>
@@ -239,13 +238,12 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit'"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && (showOcrOverlay || activeTool === 'select')"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
-                  :show-text="showOcrOverlay"
                 />
               </template>
             </PdfCanvas>

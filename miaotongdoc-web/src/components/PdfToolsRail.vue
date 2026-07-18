@@ -13,25 +13,14 @@
 -->
 <template>
   <aside class="pdf-tools-rail" role="toolbar" aria-label="快捷工具">
-    <!-- Phase 11.7: 重设计折叠按钮 - 左侧贴边 + 三角形更精致 + 留 12px 间距 -->
+    <!-- Phase 13.10: 简单矩形长条折叠按钮(无箭头,hover 整条加深) -->
     <button
       class="pdf-tools-rail-toggle"
       :class="{ 'is-collapsed': collapsed }"
       :aria-label="collapsed ? '展开工具栏' : '折叠工具栏'"
       :title="collapsed ? '展开工具栏' : '折叠工具栏'"
       @click="$emit('toggle-collapse')"
-    >
-      <svg class="rail-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-        <path
-          :d="collapsed ? 'M14 6l-6 6 6 6' : 'M10 6l6 6-6 6'"
-          stroke="currentColor"
-          stroke-width="2.5"
-          fill="none"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-    </button>
+    ></button>
 
     <!-- 顶部:常用操作组 -->
     <div class="pdf-rail-group">
@@ -218,50 +207,58 @@ const bottomActions: RailAction[] = [
   display: none;
 }
 
-/* Phase 13.9: 折叠按钮撑满 rail 全高(top:0 bottom:0 与缩略图对齐) + hover 浅蓝 */
+/* Phase 13.10: 折叠态 - 缩到 14px,去掉蓝条(用透明背景,不突兀) */
+.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) {
+  width: 14px;
+  padding: 0;
+  background: transparent;
+}
+
+.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) .pdf-rail-group,
+.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) .pdf-rail-divider,
+.pdf-tools-rail:has(.pdf-rail-toggle.is-collapsed) .pdf-rail-spacer {
+  display: none;
+}
+
+/* Phase 13.10: 折叠按钮重设计 - 简单矩形长条,不放大,hover 整条颜色加深 */
 .pdf-tools-rail-toggle {
   position: absolute;
-  left: -22px;
+  left: -8px;
   top: 0;
   bottom: 0;
-  width: 22px;
-  border-radius: 10px 0 0 10px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-right: none;
+  width: 8px;
+  border-radius: 0;
+  background: var(--color-border);
+  border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-foreground-2);
+  color: var(--color-foreground-3);
   z-index: 10;
-  transition: width 180ms cubic-bezier(.4,0,.2,1),
-              left 180ms ease,
-              background 180ms ease,
-              color 180ms ease,
-              box-shadow 180ms ease;
+  transition: background 180ms ease, color 180ms ease;
   padding: 0;
-  box-shadow: var(--shadow-2);
+  box-shadow: none;
 }
 
 .pdf-tools-rail-toggle:hover {
-  width: 28px;
-  left: -28px;
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-4);
+  width: 8px;
+  left: -8px;
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: none;
 }
 
 .pdf-tools-rail-toggle.is-collapsed {
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  border-color: var(--color-primary);
+  background: var(--color-border);
+  color: var(--color-foreground-3);
 }
 
 .pdf-tools-rail-toggle.is-collapsed:hover {
-  width: 28px;
-  left: -28px;
+  width: 8px;
+  left: -8px;
+  background: var(--color-primary);
+  color: #fff;
 }
 
 .pdf-tools-rail-toggle .rail-icon {

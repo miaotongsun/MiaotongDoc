@@ -484,6 +484,16 @@ function onContextMenu(evt: MouseEvent) {
   pointer-events: auto;
 }
 
+/* Phase 13.10: 选中文字去掉蓝色,改浅灰背景 + 深色文字(不影响复制) */
+.pdf-text-layer ::selection,
+.pdf-ocr-text ::selection {
+  background: rgba(59, 111, 232, 0.15);
+  color: var(--color-foreground);
+}
+.pdf-text-layer ::selection {
+  background: rgba(100, 149, 237, 0.25);
+}
+
 .pdf-text-edit-layer {
   position: absolute;
   inset: 0;

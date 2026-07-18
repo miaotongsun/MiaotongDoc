@@ -57,25 +57,14 @@
       </div>
     </div>
 
-    <!-- Phase 11.7: 重新设计的折叠按钮 - 竖条居中箭头 + 浅灰底 -->
+    <!-- Phase 13.10: 简单矩形长条折叠按钮(无箭头,hover 整条加深) -->
     <button
       class="pdf-thumb-collapse-rail"
       :class="{ 'is-collapsed': collapsed }"
       :aria-label="collapsed ? '展开缩略图' : '折叠缩略图'"
       :title="collapsed ? '展开缩略图' : '折叠缩略图'"
       @click="$emit('toggle-collapse')"
-    >
-      <svg class="rail-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-        <path
-          :d="collapsed ? 'M10 6l6 6-6 6' : 'M14 6l-6 6 6 6'"
-          stroke="currentColor"
-          stroke-width="2.5"
-          fill="none"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-    </button>
+    ></button>
   </aside>
 </template>
 
@@ -230,50 +219,45 @@ onBeforeUnmount(() => {
   background: var(--color-surface-2);
 }
 
-/* Phase 13.9: 折叠按钮撑满 panel 全高(top:0 bottom:0 与缩略图对齐) + hover 浅蓝 */
+/* Phase 13.10: 折叠按钮重设计 - 简单矩形长条,不放大,hover 整条颜色加深 */
 .pdf-thumb-collapse-rail {
   position: absolute;
-  right: -22px;
+  right: -8px;
   top: 0;
   bottom: 0;
-  width: 22px;
-  border-radius: 0 10px 10px 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-left: none;
+  width: 8px;
+  border-radius: 0;
+  background: var(--color-border);
+  border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-foreground-2);
+  color: var(--color-foreground-3);
   z-index: 10;
-  transition: width 180ms cubic-bezier(.4,0,.2,1),
-              background 180ms ease,
-              color 180ms ease,
-              box-shadow 180ms ease,
-              right 180ms ease;
+  transition: background 180ms ease, color 180ms ease;
   padding: 0;
-  box-shadow: var(--shadow-2);
+  box-shadow: none;
 }
 
 .pdf-thumb-collapse-rail:hover {
-  width: 28px;
-  right: -28px;
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-4);
+  width: 8px;
+  right: -8px;
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: none;
 }
 
 .pdf-thumb-collapse-rail.is-collapsed {
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  border-color: var(--color-primary);
+  background: var(--color-border);
+  color: var(--color-foreground-3);
 }
 
 .pdf-thumb-collapse-rail.is-collapsed:hover {
-  width: 28px;
-  right: -28px;
+  width: 8px;
+  right: -8px;
+  background: var(--color-primary);
+  color: #fff;
 }
 
 .pdf-thumb-collapse-rail .rail-icon {
