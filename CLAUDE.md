@@ -196,6 +196,16 @@ MiaotongDoc/
 | `src/views/DocEditor.vue` | 文档编辑页 |
 | `src/components/MarkdownEditor.vue` | Markdown 编辑器 |
 | `src/components/DocumentEditor.vue` | OnlyOffice 编辑器 |
+| `src/components/PdfEditor.vue` | **PDF 编辑器 V3 主壳**(Phase 7-12) |
+| `src/components/PdfRibbon.vue` | PDF 多 tab 顶栏 |
+| `src/components/PdfThumbPanel.vue` | PDF 缩略图侧栏(2x 高清+懒加载+拖拽) |
+| `src/components/PdfCanvas.vue` | PDF 单页渲染容器(4 层堆叠) |
+| `src/components/PdfToolsRail.vue` | PDF 右侧快捷工具栏 |
+| `src/components/PdfRightPanel.vue` | PDF 右侧任务面板(大纲/搜索/批注/表单/信息) |
+| `src/components/PdfPageOpsDialog.vue` | PDF 页面操作(插入/裁剪/水印/页眉页脚) |
+| `src/components/PdfSignatureDialog.vue` | PDF 签名创建(键入/绘制/上传) |
+| `src/components/PdfSecurityDialog.vue` | PDF 保护(加密/解密) |
+| `src/composables/pdf/usePdfRenderer.ts` | PDF.js 渲染封装(worker 本地化+cMap) |
 
 ### 后端关键文件
 
@@ -228,6 +238,7 @@ MiaotongDoc/
 | 用户管理 | 登录、注册、角色、部门 | `/api/auth`, `/api/admin` |
 | SSO | OAuth2 单点登录 | `/api/sso` |
 | AI 功能 | 问答、摘要、翻译、改写 | `/api/ai` |
+| **PDF 编辑器 V3** | Ribbon/缩略图/ToolsRail/标注/页面操作/OCR/表单/签名/加密 | `/api/pdf` |
 
 ### 文档状态机
 
@@ -366,6 +377,35 @@ draft (草稿)
 | POST | `/proxy` | LLM API 代理 |
 | GET | `/models` | 模型列表 |
 | GET | `/config` | AI 配置 |
+
+### PDF 工具模块 (`/api/pdf`) — Phase 11-12 新增
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/{id}/info` | PDF 基本信息(页数/尺寸/版本) |
+| GET | `/{id}/metadata` | PDF 元数据(标题/作者/创建时间) |
+| GET | `/{id}/text` | 全文提取 |
+| GET | `/{id}/pages/{pageNum}/text` | 单页文本 |
+| POST | `/{id}/convert` | 转 docx/md/png/txt |
+| POST | `/merge` | 多文档合并 |
+| POST | `/{id}/split` | 拆分 |
+| POST | `/{id}/pages/rotate` | 旋转页面 |
+| POST | `/{id}/pages/delete` | 删除页面 |
+| POST | `/{id}/pages/extract` | 提取页面 |
+| POST | `/{id}/pages/reorder` | 重排页面 |
+| POST | `/{id}/pages/insert-blank` | 插入空白页 |
+| POST | `/{id}/pages/crop` | 裁剪页面 |
+| POST | `/{id}/watermark` | 添加水印 |
+| POST | `/{id}/header-footer` | 添加页眉页脚 |
+| POST | `/{id}/compress` | 压缩 PDF |
+| GET | `/{id}/form-fields` | **12.1** 表单字段识别 |
+| POST | `/{id}/form-fields/fill` | **12.2** 表单填充 |
+| POST | `/{id}/signature` | **12.3** 签名图片嵌入 |
+| POST | `/{id}/encrypt` | **12.4** 密码加密 |
+| POST | `/{id}/decrypt` | **12.4** 密码解密 |
+| POST | `/{id}/redact` | **12.4** 密文遮盖 |
+| POST | `/{id}/recognize-paddle` | PaddleOCR 识别 |
+| POST | `/{id}/search` | 全文搜索 |
 
 ### 响应格式
 
