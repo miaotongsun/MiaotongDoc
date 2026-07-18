@@ -169,6 +169,46 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     cleanupHiddenCanvases()
   }
 
+  /**
+   * Phase 13.5: 用 OCR 数据注入 text layer(扫描件无原生文字层时)
+   * 让用户能用原生方式选择 OCR 识别的文字
+   * @param tokens OCR 文字坐标(PDF pt,左下原点)
+   */
+  async function renderOcrTextLayer(
+    pageNum: number,
+    tokens: Array<{ text: string; x: number; y: number; width: number; height: number }>,
+    textLayerEl: HTMLDivElement | undefined,
+  ): Promise<void> {
+    const doc = pdfDoc.value
+    if (!doc || !textLayerEl || tokens.length === 0) return
+    try {
+      const page = await doc.getPage(pageNum)
+      const viewport = page.getViewport({ scale: scale.value })
+      const lib = await ensurePdfjs()
+      // 构造 pdfjs textContent:transform = [fontSize, 0, 0, fontSize, x, y]
+      const items = tokens.map(t => ({
+        str: t.text,
+        transform: [t.height, 0, 0, t.height, t.x, t.y],
+        width: t.width,
+        height: t.height,
+        dir: 'ltr',
+        fontName: 'OCR',
+      }))
+      const textContent = { items, styles: {} }
+      textLayerEl.innerHTML = ''
+      textLayerEl.style.width = Math.ceil(viewport.width) + 'px'
+      textLayerEl.style.height = Math.ceil(viewport.height) + 'px'
+      const textLayer = new (lib as any).TextLayer({
+        textContentSource: textContent,
+        container: textLayerEl,
+        viewport,
+      })
+      await textLayer.render()
+    } catch (e) {
+      console.error(`[renderer] renderOcrTextLayer(${pageNum}) failed:`, e)
+    }
+  }
+
   /** 批量渲染所有缩略图 */
   async function renderAllThumbs(
     thumbElMap: Map<number, HTMLCanvasElement>,
@@ -266,6 +306,7 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     // actions
     load,
     renderPage,
+    renderOcrTextLayer,
     renderAllThumbs,
     reRenderAll,
     zoomIn,

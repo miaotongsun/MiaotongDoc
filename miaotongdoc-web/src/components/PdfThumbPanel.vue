@@ -210,7 +210,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   align-self: stretch;
   max-height: 100%;
-  overflow: hidden;
+  /* Phase 13.5: 改 visible 让折叠按钮(right:-22)可见,内部 list 自己有 overflow */
+  overflow: visible;
   transition: width var(--duration-base) var(--ease-out);
 }
 

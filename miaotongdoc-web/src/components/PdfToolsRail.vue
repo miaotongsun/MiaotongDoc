@@ -200,7 +200,8 @@ const bottomActions: RailAction[] = [
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  /* Phase 13.5: 改 visible 让折叠按钮(left:-22)可见 */
+  overflow-x: visible;
   position: relative;
   transition: width 200ms ease;
 }

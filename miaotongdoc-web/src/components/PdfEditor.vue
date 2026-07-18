@@ -1215,6 +1215,17 @@ async function renderPageIfReady(pageNum: number) {
     await renderer.renderPage(pageNum, canvasEl, textLayerEl)
     pageRawWidth.value = renderer.pageWidth.value || pageRawWidth.value
     pageRawHeight.value = renderer.pageHeight.value || pageRawHeight.value
+    // Phase 13.5: 如果 text layer 为空(扫描件),用 OCR 数据注入让文字可选
+    if (recognizedPages.value.has(pageNum)) {
+      const tokens = ocrTokensForPage(pageNum)
+      if (tokens.length > 0) {
+        // 检查 pdfjs text layer 是否空(扫描件无原生文字)
+        const hasNativeText = textLayerEl.children.length > 0
+        if (!hasNativeText) {
+          await renderer.renderOcrTextLayer(pageNum, tokens, textLayerEl)
+        }
+      }
+    }
   } catch (e) {
     console.error(`[PdfEditor] renderPage(${pageNum}) failed:`, e)
   }
