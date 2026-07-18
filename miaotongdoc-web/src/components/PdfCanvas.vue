@@ -14,7 +14,7 @@
     - emit ready(canvasEl, textLayerEl, pageEl) 给父组件建立 refs Map
 -->
 <template>
-  <article class="pdf-page-card" :style="cardStyle">
+  <article class="pdf-page-card" :class="{ 'is-editing': isEditing }" :style="cardStyle">
     <header class="pdf-page-card-header">
       <div class="pdf-page-card-title">第 {{ pageNum }} 页 / 共 {{ totalPages }} 页</div>
       <div class="pdf-page-card-meta">
@@ -33,6 +33,7 @@
       @mousemove="onMouseMove"
       @mouseup="onMouseUp"
       @mouseleave="onMouseLeave"
+      @contextmenu.prevent="onContextMenu"
     >
       <!-- 层 1: canvas -->
       <!-- Phase 11.8: 移除 :width/:height 绑定,由 usePdfRenderer.renderPage 直接设置 canvas.width/height
@@ -257,6 +258,8 @@ const props = defineProps<{
   isRendered?: boolean
   /** Phase 12.1: 表单字段临时高亮(在画布上画矩形 4 秒) */
   formHighlight?: { x: number; y: number; w: number; h: number; name: string } | null
+  /** Phase 13.8: 编辑模式(画布蓝色边框) */
+  isEditing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -265,6 +268,8 @@ const emit = defineEmits<{
   (e: 'mouse-move', evt: MouseEvent, pageNum: number, rect: DOMRect): void
   (e: 'mouse-up', evt: MouseEvent, pageNum: number, rect: DOMRect): void
   (e: 'mouse-leave', evt: MouseEvent, pageNum: number, rect: DOMRect): void
+  /** Phase 13.8: 右键菜单 */
+  (e: 'context-menu', x: number, y: number, pageNum: number): void
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -396,6 +401,10 @@ function onMouseUp(evt: MouseEvent) {
 function onMouseLeave(evt: MouseEvent) {
   emit('mouse-leave', evt, props.pageNum, makeRect(evt))
 }
+// Phase 13.8: 右键唤出快捷菜单
+function onContextMenu(evt: MouseEvent) {
+  emit('context-menu', evt.clientX, evt.clientY, props.pageNum)
+}
 </script>
 
 <style scoped>
@@ -413,6 +422,12 @@ function onMouseLeave(evt: MouseEvent) {
 }
 .pdf-page-card:hover {
   box-shadow: var(--shadow-4);
+}
+
+/* Phase 13.8: 编辑模式 - Acrobat DC 风格蓝色边框 */
+.pdf-page-card.is-editing {
+  border: 2px solid var(--color-primary);
+  box-shadow: 0 0 0 4px var(--color-primary-soft), var(--shadow-4);
 }
 
 .pdf-page-card-header {

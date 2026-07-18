@@ -121,11 +121,13 @@
               :drawing-path="drawingPath"
               :recognized="recognizedPages.has(currentPage)"
               :form-highlight="formHighlightFor(currentPage)"
+              :is-editing="activeTool === 'textEdit'"
               @ready="onPageReady"
               @mouse-down="onCanvasMouseDown"
               @mouse-move="onCanvasMouseMove"
               @mouse-up="onCanvasMouseUp"
               @mouse-leave="onCanvasMouseLeave"
+              @context-menu="onCanvasContextMenu"
             >
               <template #text-edit="{ pageNum: pn, scale: sc }">
                 <PdfTextEditorLayer
@@ -168,6 +170,7 @@
                 :drawing-path="drawingPath"
                 :recognized="recognizedPages.has(currentPage)"
                 :form-highlight="formHighlightFor(currentPage)"
+                :is-editing="activeTool === 'textEdit'"
                 @ready="onPageReady"
                 @mouse-down="onCanvasMouseDown"
                 @mouse-move="onCanvasMouseMove"
@@ -189,7 +192,9 @@
                 :drawing-path="drawingPath"
                 :recognized="recognizedPages.has(currentPage + 1)"
                 :form-highlight="formHighlightFor(currentPage + 1)"
+                :is-editing="activeTool === 'textEdit'"
                 @ready="onPageReady"
+                @context-menu="onCanvasContextMenu"
               />
             </div>
           </template>
@@ -211,11 +216,13 @@
               :drawing-path="drawingPath"
               :recognized="recognizedPages.has(i)"
               :form-highlight="formHighlightFor(i)"
+              :is-editing="activeTool === 'textEdit'"
               @ready="onPageReady"
               @mouse-down="onCanvasMouseDown"
               @mouse-move="onCanvasMouseMove"
               @mouse-up="onCanvasMouseUp"
               @mouse-leave="onCanvasMouseLeave"
+              @context-menu="onCanvasContextMenu"
             >
               <template #text-edit="{ pageNum: pn, scale: sc }">
                 <PdfTextEditorLayer
@@ -421,6 +428,33 @@
       @close="securityDialogOpen = false"
       @done="onSecurityDone"
     />
+    <!-- Phase 13.8: PDF 画布右键快捷菜单 -->
+    <PdfCanvasContextMenu
+      :open="canvasMenuOpen"
+      :anchor="canvasMenuAnchor"
+      :page-num="canvasMenuPage"
+      :total-pages="totalPages"
+      :active-tool="activeTool"
+      :has-selection="canvasMenuHasSelection"
+      @close="canvasMenuOpen = false"
+      @copy="onCanvasMenuCopy"
+      @select-all="onCanvasMenuSelectAll"
+      @edit-text="onCanvasMenuEditText"
+      @select-tool="onCanvasMenuSelectTool"
+      @rotate="onCtxRotate"
+      @extract="onCtxExtract"
+      @delete="onCtxDelete"
+      @ai-translate="onCanvasMenuAiTranslate"
+      @ai-summarize="onCanvasMenuAiSummarize"
+      @ai-chat="onCanvasMenuAiChat"
+      @ocr-recognize="onCanvasMenuOcr"
+    />
+    <!-- Phase 13.8: 编辑模式提示条(Acrobat DC 风格) -->
+    <div v-if="activeTool === 'textEdit'" class="pdf-edit-banner">
+      <span class="pdf-edit-banner-icon">✏️</span>
+      <span class="pdf-edit-banner-text">编辑模式 - 点击文字修改,按 Esc 退出</span>
+      <button class="pdf-edit-banner-exit" @click="exitEditMode">退出编辑</button>
+    </div>
     <PdfAiMenu
       :open="aiMenuOpen"
       :anchor="aiMenuAnchor"
@@ -485,6 +519,7 @@ import PdfFloatingToolbar from './PdfFloatingToolbar.vue'
 import PdfPageOpsMenu from './PdfPageOpsMenu.vue'
 import PdfExportMenu from './PdfExportMenu.vue'
 import PdfThumbnailContextMenu from './PdfThumbnailContextMenu.vue'
+import PdfCanvasContextMenu from './PdfCanvasContextMenu.vue'
 import PdfAiMenu from './PdfAiMenu.vue'
 import PdfSignatureDialog from './PdfSignatureDialog.vue'
 import PdfSecurityDialog from './PdfSecurityDialog.vue'
@@ -1260,6 +1295,70 @@ function onCtxDelete(p: number) {
   pageOps.deletePage(p).then((r) => { if (r) reloadAfterPageOp(pageOps.bustUrl(r)) })
 }
 
+// ========== Phase 13.8: 画布右键菜单 ==========
+const canvasMenuOpen = ref(false)
+const canvasMenuAnchor = ref<{ x: number; y: number } | null>(null)
+const canvasMenuPage = ref(1)
+const canvasMenuHasSelection = ref(false)
+
+function onCanvasContextMenu(x: number, y: number, pageNum: number) {
+  canvasMenuPage.value = pageNum
+  canvasMenuAnchor.value = { x, y }
+  canvasMenuHasSelection.value = !!window.getSelection()?.toString().trim()
+  canvasMenuOpen.value = true
+}
+
+function onCanvasMenuCopy() {
+  const sel = window.getSelection()?.toString() || ''
+  if (sel) {
+    navigator.clipboard?.writeText(sel).then(
+      () => ElMessage.success('已复制'),
+      () => ElMessage.warning('复制失败,请手动 Ctrl+C'),
+    )
+  }
+}
+function onCanvasMenuSelectAll() {
+  // 选当前页 text layer 所有文字
+  const tl = document.querySelector(`.pdf-page-card[data-page-num="${canvasMenuPage.value}"] .pdf-text-layer`) as HTMLElement | null
+  if (tl) {
+    const range = document.createRange()
+    range.selectNodeContents(tl)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+    ElMessage.success('已全选当前页')
+  }
+}
+function onCanvasMenuEditText() {
+  selectTool('textEdit')
+  ElMessage.info('已进入编辑模式,点击文字可修改,按 Esc 退出')
+}
+function onCanvasMenuSelectTool(tool: AnnotationTool) {
+  selectTool(tool)
+}
+async function onCanvasMenuAiTranslate() {
+  const sel = window.getSelection()?.toString().trim()
+  if (!sel) {
+    ElMessage.warning('请先选中要翻译的文字')
+    return
+  }
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`请将以下文字翻译成中文(保持原意,无需解释):\n\n${sel}`)
+}
+async function onCanvasMenuAiSummarize() {
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`请摘要第 ${canvasMenuPage.value} 页的核心内容(100 字以内)。`)
+}
+function onCanvasMenuAiChat() {
+  onOpenAi()
+}
+function onCanvasMenuOcr(model: 'mobile' | 'server') {
+  void onOcrRecognize(model)
+}
+function exitEditMode() {
+  selectTool('select')
+}
+
 // ========== 标注鼠标事件 ==========
 function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
   // Phase 12.3: 签名放置模式优先
@@ -1377,6 +1476,13 @@ function onKeydown(e: KeyboardEvent) {
   // 只在没有焦点输入框时响应
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
   if (e.ctrlKey || e.metaKey) return
+
+  // Phase 13.8: 编辑模式下 Esc 退出(优先处理)
+  if (e.key === 'Escape' && activeTool.value === 'textEdit') {
+    e.preventDefault()
+    selectTool('select')
+    return
+  }
 
   switch (e.key.toLowerCase()) {
     case 'v': selectTool('select'); break
@@ -1938,5 +2044,44 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 .pdf-drawer-fade-enter-from,
 .pdf-drawer-fade-leave-to {
   transform: translateX(100%);
+}
+
+/* Phase 13.8: 编辑模式提示条(Acrobat DC 风格 - 蓝色横幅) */
+.pdf-edit-banner {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toolbar, 50);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 0 0 8px 8px;
+  box-shadow: var(--shadow-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.pdf-edit-banner-icon {
+  font-size: 16px;
+}
+.pdf-edit-banner-text {
+  letter-spacing: 0.2px;
+}
+.pdf-edit-banner-exit {
+  margin-left: 12px;
+  padding: 4px 12px;
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.pdf-edit-banner-exit:hover {
+  background: rgba(255,255,255,0.35);
 }
 </style>

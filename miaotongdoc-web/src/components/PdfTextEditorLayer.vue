@@ -214,14 +214,14 @@ watch(
 
 .pdf-edit-token {
   pointer-events: auto;
-  border: 1.5px dashed transparent;
+  border: 1px dashed var(--color-primary);
   border-radius: 2px;
   padding: 0 2px;
   margin: 0;
   display: inline-block;
   font-family: var(--font-sans);
   color: var(--color-foreground);
-  background: transparent;
+  background: rgba(64, 158, 255, 0.08);
   cursor: text;
   outline: none;
   white-space: nowrap;
@@ -234,28 +234,34 @@ watch(
 
 .pdf-edit-token:hover,
 .pdf-edit-token.is-hover {
+  border-style: solid;
   border-color: var(--color-primary);
-  background: var(--color-primary-soft);
+  background: rgba(64, 158, 255, 0.18);
+  z-index: 1;
 }
 
 .pdf-edit-token:focus,
 .pdf-edit-token.is-editing {
-  border-color: var(--color-warning);
-  background: var(--color-warning-soft);
-  z-index: 1;
+  border-style: solid;
+  border-color: var(--color-primary);
+  border-width: 1.5px;
+  background: #fff;
+  z-index: 2;
   white-space: normal;
   overflow: visible;
   width: auto;
   min-width: 60px;
-  box-shadow: var(--shadow-2);
+  box-shadow: 0 0 0 2px var(--color-primary-soft), var(--shadow-2);
 }
 
 .pdf-edit-token.is-saving {
+  border-style: solid;
   border-color: var(--color-info);
   background: var(--color-primary-soft);
 }
 
 .pdf-edit-token.is-saved {
+  border-style: solid;
   border-color: var(--color-success);
   background: var(--color-success-soft);
   animation: pdf-saved-flash 1.5s var(--ease-out);
