@@ -1,4 +1,8 @@
-version: '3.8'
+# MiaotongDoc Docker Compose
+#
+# 内存策略：所有容器不设硬性内存限制，跟随宿主机自动伸缩。
+# 唯一例外：Elasticsearch 通过 ES_JAVA_OPTS 显式限制 JVM heap（防止 Java 默认占满容器内存）。
+# 宿主机层面建议：Docker Desktop 内存上限设为物理内存的 75%，给宿主机 OS 留 25%。
 
 services:
   nginx:
@@ -65,6 +69,8 @@ services:
     command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     volumes:
       - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./data/redis:/data
+      - ./data/logs/redis:/var/log/redis
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -157,7 +163,7 @@ services:
       PADDLE_OCR_ENABLED: ${PADDLE_OCR_ENABLED}
       PADDLE_OCR_SERVER_URL: http://ocr-paddle:5003
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9004/actuator/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9004/actuator/health/liveness || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -417,6 +423,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - YJS_PORT=1234
+    volumes:
+      - ./data/yjs:/data
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:1234/health"]
       interval: 30s
@@ -428,7 +436,7 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
+        max-size: "10m"
         max-file: "3"
     restart: unless-stopped
 
@@ -449,12 +457,6 @@ services:
       - DOCLING_SERVE_MAX_SOURCES_PER_REQUEST=1
     volumes:
       - ./data/docling-cache:/root/.cache
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s

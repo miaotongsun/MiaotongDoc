@@ -1,8 +1,8 @@
 # MiaotongDoc 开发参考手册
 
-> **版本**: v1.0.2 | **维护者**: Claude Code
+> **版本**: v1.0.3 | **维护者**: Claude Code
 > **项目**: 企业级多格式在线文档协作与签署平台
-> **最后更新**: 2026年7月10日
+> **最后更新**: 2026年7月18日
 
 ---
 
@@ -17,6 +17,7 @@
 - [数据库设计](#数据库设计)
 - [部署指南](#部署指南)
 - [更新部署包](#更新部署包)
+- [内网迁移部署](#内网迁移部署)（详细方案见 [DEPLOY.md](DEPLOY.md)）
 - [开发规范](#开发规范)
 - [调试技巧](#调试技巧)
 - [常见问题](#常见问题)
@@ -54,14 +55,20 @@ npm run dev
 | 管理员 | `10000000` | `123456` |
 | 数据库 | `miaotong` | 见 `.env` |
 
+> 注：管理员初始密码 `Admin@123` 无效，需按 [DEPLOY.md 第 4 步](DEPLOY.md#第-4-步重置管理员密码)重置为 `123456`。
+
 ### 一键部署（Docker）
+
+> **生产环境（Linux）**：首次部署先运行 `sudo ./setup-linux-host.sh` 完成宿主机基线配置（见 [DEPLOY.md - Linux 生产环境基线配置](DEPLOY.md#linux-生产环境基线配置)），再执行下面的 `deploy.sh start`。
 
 ```bash
 cd MiaotongDoc-Docker
 cp .env.example .env
 vi .env  # 修改密码
-./deploy.sh start
+./deploy.sh start    # 自动按 A→E 分阶段启动，无需手动排序
 ```
+
+`deploy.sh` 子命令：`start / stop / status / health / logs / build / backup / clean-logs / restart`。
 
 ---
 
@@ -84,7 +91,7 @@ vi .env  # 修改密码
         │          │          │          │          │
         ▼          ▼          ▼          ▼          ▼
 ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-│ Spring   │ │ Spring   │ │ OnlyOffice│ │ Yjs      │ │ 前端静态  │
+│ Spring   │ │ Spring   │ │ MTOffice│ │ Yjs      │ │ 前端静态  │
 │ Boot     │ │ Boot     │ │ Editor   │ │ Server   │ │ 资源     │
 │ (9004)   │ │ (9004)   │ │ (80)     │ │ (1234)   │ │          │
 └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────────┘
@@ -101,13 +108,15 @@ vi .env  # 修改密码
 
 ### 请求流转路径
 
-| 请求类型 | 路径 | 目标服务 |
-|----------|------|----------|
-| API 请求 | `/api/*` | Spring Boot (9004) |
-| WebSocket | `/ws/presence/*`, `/ws/notifications` | Spring Boot (9004) |
-| 协同编辑 | `/ws/yjs` | Yjs Server (1234) |
-| 编辑器 | `/editor/*` | OnlyOffice (80) |
-| 静态资源 | `/*` | Nginx |
+| 请求类型 | 路径 | 目标服务 | 路由策略 |
+|----------|------|----------|----------|
+| API 请求 | `/api/*` | Spring Boot (9004) | 直接代理 |
+| WebSocket | `/ws/presence/*`, `/ws/notifications` | Spring Boot (9004) | 升级协议 |
+| AI 聊天（SSE） | `/api/ai/chat/stream`, `/ws/ai/` | Spring Boot (9004) | 流式输出 |
+| 协同编辑 | `/ws/yjs` | Yjs Server (1234) | WebSocket 升级 |
+| 编辑器 | `/editor/*` | MTOffice (80) × 3 实例 | **hash 分流**：按文档 key + IP 哈希到固定 editor，保证同一文档编辑请求落到同一实例 |
+| socket.io | `/ds-vpath/.../vendor/socket.io` | MTOffice × 3 实例 | 按 remote_addr 哈希保持长连接 |
+| 静态资源 | `/*` | Nginx 直接返回 | 无代理 |
 
 ---
 
@@ -126,7 +135,7 @@ vi .env  # 修改密码
 | Axios | 1.6+ | HTTP 客户端 |
 | Tiptap | 3.26+ | Markdown 编辑器 |
 | Yjs | 13.6+ | CRDT 实时协同 |
-| OnlyOffice | 9.3 | Office 文档编辑 |
+| MTOffice | 9.3 | Office 文档编辑 |
 | pdfjs-dist | 4.8+ | PDF 渲染 |
 
 ### 后端技术栈
@@ -155,33 +164,36 @@ vi .env  # 修改密码
 MiaotongDoc/
 ├── miaotongdoc-web/                # Vue 3 前端
 │   └── src/
-│       ├── api/                    # API 模块 (20个)
-│       ├── components/             # 组件 (17个)
-│       ├── router/                 # 路由 (7条)
+│       ├── api/                    # API 模块 (22个)
+│       ├── components/             # 组件 (41个)
+│       ├── router/                 # 路由 (8条)
 │       ├── stores/                 # 状态管理 (4个)
-│       ├── utils/                  # 工具函数 (5个)
+│       ├── utils/                  # 工具函数 (8个)
 │       └── views/                  # 页面 (8个)
 │
 ├── miaotongdoc-server/             # Spring Boot 后端
 │   └── src/main/java/com/miaotong/doc/
-│       ├── config/                 # 配置类 (11个)
-│       ├── controller/             # 控制器 (23个)
-│       ├── entity/                 # 实体类 (23个)
-│       ├── repository/             # 数据仓库 (23个)
-│       ├── service/                # 业务服务 (25个)
+│       ├── config/                 # 配置类 (15个)
+│       ├── controller/             # 控制器 (29个)
+│       ├── entity/                 # 实体类 (25个)
+│       ├── repository/             # 数据仓库 (25个)
+│       ├── service/                # 业务服务 (30个)
 │       └── websocket/              # WebSocket (3个)
 │
 ├── MiaotongDoc-Docker/             # Docker 部署
-│   ├── docker-compose.yml
-│   └── deploy.sh
+│   ├── docker-compose.yml          # 13 个服务编排
+│   ├── deploy.sh                   # 分阶段启动脚本（A→E）
+│   └── app/                        # 构建产物（前端/后端/编辑器/yjs/docling/ocr）
 │
-├── MiaotongDoc-Editor/             # OnlyOffice 定制
+├── MiaotongDoc-Editor/             # MTOffice 定制
 │   ├── Dockerfile
 │   ├── branding/                   # 品牌 Logo
 │   ├── fonts/                      # 中文字体
 │   └── plugins/                    # 插件
 │
 ├── MiaotongDoc-AI/                 # AI 插件
+├── setup-linux-host.sh             # Linux 宿主机一键基线配置（生产部署前运行）
+├── DEPLOY.md                       # 详细内网部署指南
 └── CLAUDE.md                       # 本文件
 ```
 
@@ -195,7 +207,7 @@ MiaotongDoc/
 | `src/views/Home.vue` | 主页（核心页面） |
 | `src/views/DocEditor.vue` | 文档编辑页 |
 | `src/components/MarkdownEditor.vue` | Markdown 编辑器 |
-| `src/components/DocumentEditor.vue` | OnlyOffice 编辑器 |
+| `src/components/DocumentEditor.vue` | MTOffice 编辑器 |
 | `src/components/PdfEditor.vue` | **PDF 编辑器 V3 主壳**(Phase 7-12) |
 | `src/components/PdfRibbon.vue` | PDF 多 tab 顶栏 |
 | `src/components/PdfThumbPanel.vue` | PDF 缩略图侧栏(2x 高清+懒加载+拖拽) |
@@ -228,7 +240,7 @@ MiaotongDoc/
 |------|------|----------|
 | 文档管理 | 创建、上传、列表、搜索、删除 | `/api/documents` |
 | 文件夹 | 无限层级、颜色标记、拖拽排序 | `/api/folders` |
-| 在线编辑 | OnlyOffice、Markdown、PDF | `/api/documents/{id}/config` |
+| 在线编辑 | MTOffice、Markdown、PDF | `/api/documents/{id}/config` |
 | 版本管理 | 版本历史、恢复、下载 | `/api/documents/{id}/versions` |
 | 共享权限 | 用户级、部门级、4级权限 | `/api/shares` |
 | 评论协作 | 评论、@提及、解决 | `/api/comments` |
@@ -302,7 +314,7 @@ draft (草稿)
 | POST | `/upload` | 上传文件 |
 | GET | `/list` | 文档列表（支持分页、排序、筛选） |
 | GET | `/{id}` | 文档详情 |
-| GET | `/{id}/config` | OnlyOffice 编辑器配置 |
+| GET | `/{id}/config` | MTOffice 编辑器配置 |
 | GET | `/{id}/file` | 下载文件 |
 | GET | `/{id}/export/pdf` | 导出 PDF |
 | PUT | `/{id}/rename` | 重命名 |
@@ -507,9 +519,9 @@ SELECT id, employee_id, username, real_name, role FROM sys_user;
 -- 查看文档
 SELECT id, title, doc_key, doc_type, status, owner_id FROM mt_document;
 
--- 重置管理员密码（BCrypt 加密的 123456）
-UPDATE sys_user SET password = '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iKTVKIUi' 
-WHERE employee_id = '10000001';
+-- 重置管理员密码为 123456（详细步骤见 DEPLOY.md 第 4 步；注意 $ 符号需用 SQL 文件方式避免 shell 转义）
+UPDATE sys_user SET password = '$2a$10$V.BH63HYFT1VHugUozl7r.oKJ9cAWI.4FlbGPojh1rIh7Lj.kHqPm' 
+WHERE employee_id = '10000000';
 
 -- 解锁文档
 UPDATE mt_document SET status = 'draft', signing_locked = false WHERE id = ?;
@@ -520,20 +532,20 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 
 ### 数据库迁移
 
-使用 Flyway 管理，共 21 个迁移脚本（V1-V21），位于：
+使用 Flyway 管理，共 26 个迁移脚本（V1-V26），位于：
 `miaotongdoc-server/src/main/resources/db/migration/`
 
 **新增迁移**:
 ```bash
 # 文件命名: V{next_version}__description.sql
-# 示例: V22__add_ai_config_table.sql
+# 示例: V27__add_new_feature_table.sql
 ```
 
 ---
 
 ## 部署指南
 
-### Docker 服务清单（13 个容器）
+### Docker 服务清单（15 个容器）
 
 | 服务 | 容器名 | 端口 | IP | 用途 |
 |------|--------|------|-----|------|
@@ -542,14 +554,21 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 | redis | miaotongdoc-redis | 6379 | 172.20.0.30 | 缓存 |
 | rabbitmq | miaotongdoc-rabbitmq | 5672/15672 | 172.20.0.35 | 消息队列 |
 | web-server | miaotongdoc-server | 9004 | 172.20.0.40 | Spring Boot 后端 |
-| editor | miaotongdoc-editor | (内部80) | 172.20.0.50 | OnlyOffice 主实例 |
-| editor2 | miaotongdoc-editor2 | (内部80) | 172.20.0.51 | OnlyOffice 副实例1 |
-| editor3 | miaotongdoc-editor3 | (内部80) | 172.20.0.52 | OnlyOffice 副实例2 |
-| cache-cleaner | miaotongdoc-cache-cleaner | - | - | 定时清理缓存 |
-| logrotate | miaotongdoc-logrotate | - | - | 日志轮转 |
-| minio | miaotongdoc-minio | 9000/9001 | 172.20.0.60 | 对象存储 |
+| editor | miaotongdoc-editor | (内部80) | 172.20.0.50 | MTOffice 主实例 |
+| editor2 | miaotongdoc-editor2 | (内部80) | 172.20.0.51 | MTOffice 副实例1 |
+| editor3 | miaotongdoc-editor3 | (内部80) | 172.20.0.52 | MTOffice 副实例2 |
+| cache-cleaner | miaotongdoc-cache-cleaner | - | - | 定时清理 MTOffice 缓存（cron） |
+| logrotate | miaotongdoc-logrotate | - | - | 定时日志轮转（cron） |
+| minio | miaotongdoc-minio | 9000/9001 | 172.20.0.60 | 对象存储（单节点） |
 | elasticsearch | miaotongdoc-elasticsearch | (内部9200) | 172.20.0.70 | 全文搜索 |
 | yjs-server | miaotongdoc-yjs | 1234 | 172.20.0.80 | Yjs 协同服务器 |
+| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile） |
+| ocr | miaotongdoc-ocr | 5002 | 172.20.0.95 | OCR 服务（可选 profile） |
+| ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.20.0.96 | PaddleOCR 中文扫描件（可选 profile） |
+
+> **可选 profile**：`docling` / `ocr` / `ocr-paddle` 默认不启动，需用 `docker compose --profile ocr up -d ocr` 等命令启用。完整启用：`--profile all`。
+>
+> **架构图说明**：nginx 通过 `/editor/*` 路由用 `hash $doc_key$remote_addr consistent` 策略将请求分流到 3 个 editor 实例（按文档 key + IP 哈希保持会话亲和性），参见 [config/nginx/nginx.conf](MiaotongDoc-Docker/config/nginx/nginx.conf)。
 
 ### 环境变量配置
 
@@ -580,10 +599,10 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 ### 部署命令
 
 ```bash
-# 启动服务
+# 启动服务（自动分阶段 A→E）
 ./deploy.sh start
 
-# 停止服务
+# 停止服务（⚠️ 会 docker compose down，非 stop）
 ./deploy.sh stop
 
 # 重启服务
@@ -592,16 +611,20 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 # 查看状态
 ./deploy.sh status
 
-# 查看日志
-./deploy.sh logs
-
 # 健康检查
 ./deploy.sh health
+
+# 查看日志
+./deploy.sh logs
 
 # 构建镜像
 ./deploy.sh build
 
 # 备份数据
+./deploy.sh backup
+
+# 清理 30 天前的日志
+./deploy.sh clean-logs
 ./deploy.sh backup
 ```
 
@@ -665,7 +688,7 @@ docker compose restart web-server
 
 **效果**: 后端 API 立即使用新版本。
 
-### 更新编辑器（OnlyOffice）
+### 更新编辑器（MTOffice）
 
 编辑器的更新需要重新构建 Docker 镜像：
 
@@ -743,11 +766,24 @@ docker compose restart nginx web-server
 
 ---
 
+## 内网迁移部署
+
+> 详细的从零部署流程、启动顺序、故障排查、已知陷阱见 **[DEPLOY.md](DEPLOY.md)**。
+
+**关键要点**：
+- **启动顺序**：基础设施 → RabbitMQ → editor → web-server → yjs+nginx（editor 必须先于 web-server，否则 Flyway V9 因 `task_result` 表不存在而失败）
+- **Linux 宿主机**（生产环境）：首次部署先运行 `sudo ./setup-linux-host.sh`，完成内核参数/文件句柄/Docker daemon/防火墙/swap/SSH 加固/自动备份 cron 共 9 项配置
+- **Windows 端口陷阱**：yjs 端口 1234 可能被 `winnat` 排除，需 `net stop/start winnat`
+- **admin 密码**：初始 `Admin@123` 无效，需重置为 `123456`（见 DEPLOY.md 第 4 步）
+- **RabbitMQ**：Windows 下 bind mount 可能遇 cookie 权限问题，改命名卷解决（见 DEPLOY.md 阶段 B）
+
+---
+
 ## 开发规范
 
 ### 源码目录规范（重要！）
 
-**OnlyOffice 编辑器相关文件存在两个镜像位置，必须同步**：
+**MTOffice 编辑器相关文件存在两个镜像位置，必须同步**：
 
 | 路径 | 用途 |
 |------|------|
@@ -779,7 +815,7 @@ md5sum MiaotongDoc-Editor/plugins/ai-plugin/scripts/engine/engine.js \
 |------|------|------|---------|
 | **热更新** | `docker cp` + `nginx -s reload` | 无 | 修改 JS/HTML/CSS 等静态文件 |
 | **热更新** | `mvn package` + `docker cp *.jar` + `docker restart` | 秒级 | 修改 Java 后端 |
-| **冷更新** | `docker compose build editor` + `up -d` | 5-10 分钟 | 改 Dockerfile、改 docservice 二进制、升级 OnlyOffice |
+| **冷更新** | `docker compose build editor` + `up -d` | 5-10 分钟 | 改 Dockerfile、改 docservice 二进制、升级 MTOffice |
 
 **优先用热更新**，只在必须重建时才冷更新。
 
@@ -922,33 +958,48 @@ npm run lint
 
 **Docker 命令**:
 ```bash
-# 启动所有服务
-docker compose up -d
+# 推荐：使用 deploy.sh 分阶段启动（避免 Flyway V9 失败）
+cd Miaotongdoc-Docker
+./deploy.sh start          # 自动按 A→E 分阶段
+./deploy.sh status         # 查看所有容器状态
+./deploy.sh health         # 检查 PostgreSQL/Redis/web-server/MinIO 健康
+./deploy.sh logs [service]  # 查看日志（可指定服务名）
+./deploy.sh backup         # 备份数据
+./deploy.sh clean-logs     # 清理 30 天前的日志
+./deploy.sh restart        # 重启所有服务（保留容器数据）
 
-# 停止所有服务
-docker compose down
+# 底层 docker compose 命令（调试时用，不推荐日常使用）
+docker compose up -d                  # ⚠️ 不分阶段,可能 Flyway V9 失败
+docker compose stop                  # ✅ 保留容器和数据(推荐)
+docker compose down                  # ⚠️ 删除容器,只保留挂载的 host 数据
+docker compose logs -f [service]     # 查看日志
+docker compose build --no-cache [s]  # 重建镜像
+docker compose exec [service] bash   # 进入容器
+docker compose ps                     # 查看状态
 
-# 查看日志
-docker compose logs -f [service_name]
+# 单容器操作
+docker compose restart web-server
+docker stats                          # 实时内存使用
+docker system df                      # 磁盘占用
+docker volume ls                      # 命名卷列表
 
-# 重建镜像
-docker compose build --no-cache [service_name]
-
-# 进入容器
-docker exec -it miaotongdoc-server /bin/bash
-
-# 查看容器状态
-docker ps -a
+# 数据备份
+./deploy.sh backup                    # 一键备份 PostgreSQL + documents + config
 ```
+
+**Docker Compose 命令修饰符（内存不卡顿的关键）**:
+- 容器间网络隔离由 `172.20.0.0/16` 桥接网络 `mtd-net` 提供
+- 所有服务通过 `docker compose ps` 中的 `healthy` 状态确认就绪
+- 健康检查失败容器会显示 `Restarting (1)`,需查 `docker compose logs <service>` 诊断
 
 ---
 
 ## 常见问题
 
-### 1. OnlyOffice 编辑器无法打开文档
+### 1. MTOffice 编辑器无法打开文档
 
 **可能原因**:
-- OnlyOffice 容器未启动
+- MTOffice 容器未启动
 - JWT 密钥配置不一致
 - 网络连接问题
 
@@ -995,8 +1046,10 @@ docker logs miaotongdoc-minio
 # 检查存储配置
 cat .env | grep STORAGE_TYPE
 
-# 检查文件大小限制（默认 100MB）
-# Nginx 配置: client_max_body_size 100m
+# 检查文件大小限制（默认 200MB，可在 application.yml 调整）
+# Nginx 配置: client_max_body_size 200m
+# Tomcat: server.tomcat.max-http-form-post-size: 200MB
+# Spring: spring.servlet.multipart.max-file-size: 200MB
 ```
 
 ### 4. 数据库连接失败
@@ -1057,6 +1110,8 @@ npm install
 # 查看详细错误
 npm run build --verbose
 ```
+
+> **更多部署相关问题**（RabbitMQ 重启、yjs 端口绑定、Flyway 迁移失败、编辑器 nginx 启动失败、管理员登录等）见 [DEPLOY.md - 常见部署问题详解](DEPLOY.md#常见部署问题详解)。
 
 ---
 
@@ -1183,7 +1238,7 @@ GET /api/documents/list?page=0&size=20&sort=updatedAt,desc
 2. 创建 Repository: `repository/NewRepository.java`
 3. 创建 Service: `service/NewService.java`
 4. 创建 Controller: `controller/NewController.java`
-5. 添加数据库迁移: `db/migration/V22__add_new_table.sql`
+5. 添加数据库迁移: `db/migration/V27__add_new_table.sql`
 
 **前端**:
 1. 创建 API 模块: `api/newModule.ts`
@@ -1201,7 +1256,7 @@ plugins/
 └── ai/              # AI 插件
 ```
 
-插件开发参考 OnlyOffice 官方文档。
+插件开发参考 MTOffice 官方文档。
 
 ### AI 功能扩展
 
@@ -1218,6 +1273,7 @@ AI 功能通过 `AiProxyService` 代理转发，支持：
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
+| **内网部署指南** | `DEPLOY.md` | **从零部署流程、启动顺序、故障排查、已知陷阱** |
 | 产品功能规划 | `FEATURE_DESIGN.md` | 7 个模块、页面清单、优先级排序 |
 | 系统架构文档 | `MiaotongDoc-Architecture.md` | 架构图、Docker 服务清单、问题排查 |
 | 系统审查报告 | `SYSTEM_AUDIT.md` | 已开发功能、43 个问题、修复计划 |
@@ -1241,6 +1297,8 @@ AI 功能通过 `AiProxyService` 代理转发，支持：
 | RabbitMQ | 5672/15672 | 消息队列/管理界面 |
 | MinIO | 9000/9001 | 对象存储/控制台 |
 | Yjs Server | 1234 | 协同编辑 |
+| Docling | 5001 | AI 文档解析（可选） |
+| OCR | 5002 | OCR 服务（可选） |
 | Nginx | 80 | 反向代理 |
 
 ### 关键配置文件

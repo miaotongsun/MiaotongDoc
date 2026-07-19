@@ -132,7 +132,7 @@ update_backend() {
     local login_code=$(curl -s -o /dev/null -w "%{http_code}" \
       -X POST http://localhost:9004/api/auth/login \
       -H 'Content-Type: application/json' \
-      -d '{"username":"10000001","password":"123456"}' 2>/dev/null || echo "000")
+      -d '{"username":"10000000","password":"123456"}' 2>/dev/null || echo "000")
     if [ "$login_code" = "200" ]; then
       log_info "  ✓ 登录 API 正常"
     else
