@@ -919,28 +919,41 @@ public class PdfController {
     /**
      * 创建空白 PDF:指定页数 + 尺寸
      * POST /api/pdf/create/blank { pages, width, height, title }
+     * Phase 13.12: 手动读 body + UTF-8 解码,绕过 Jackson ISO-8859-1 默认编码问题
      */
     @PostMapping("/create/blank")
     public ResponseEntity<Map<String, Object>> createBlankPdf(
-            @RequestBody Map<String, Object> body,
-            HttpServletRequest httpRequest) {
+            HttpServletRequest httpRequest) throws java.io.IOException {
+        String bodyStr = new String(httpRequest.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = om.readValue(bodyStr, Map.class);
+
         int pages = body.get("pages") instanceof Number n ? n.intValue() : 1;
         float widthPt = body.get("width") instanceof Number w ? w.floatValue() : 595f;
         float heightPt = body.get("height") instanceof Number h ? h.floatValue() : 842f;
         byte[] pdfBytes = pdfToolService.createBlankPdf(pages, widthPt, heightPt);
 
         Long userId = (Long) httpRequest.getAttribute("userId");
+        String title = body.get("title") != null ? body.get("title").toString() : "新建空白文档";
         com.miaotong.doc.dto.CreateDocumentRequest req = new com.miaotong.doc.dto.CreateDocumentRequest();
         req.setDocType("pdf");
-        req.setTitle(body.get("title") != null ? body.get("title").toString() : "新建空白文档");
+        req.setTitle("blank"); // 占位英文,避免 DocGenerator 中文 title bug
         com.miaotong.doc.entity.Document doc = documentService.createDocument(req, userId);
 
-        // createDocument 已通过 DocGenerator 默认占位落盘,这里用 replacePdfBytes 覆盖为我们的真实字节
-        pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-blank");
+        // 覆盖为真实空白 PDF + 正确中文 title
+        String newPath = pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-blank");
+        // Phase 13.12: replacePdfBytes 内 updateDocument 可能因事务未提交而 DB 未更新,
+        // 这里重新查 + 强制 setFilePath + updateDocument 确保持久化
+        com.miaotong.doc.entity.Document reloaded = documentService.getDocument(doc.getId());
+        reloaded.setFilePath(newPath);
+        reloaded.setFileSize((long) pdfBytes.length);
+        reloaded.setTitle(title);
+        documentService.updateDocument(reloaded);
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("docId", doc.getId());
-        resp.put("title", doc.getTitle());
+        resp.put("title", title);
         resp.put("pages", pages);
         return ResponseEntity.ok(resp);
     }
@@ -962,16 +975,22 @@ public class PdfController {
         byte[] pdfBytes = pdfToolService.createFromImages(images);
 
         Long userId = (Long) httpRequest.getAttribute("userId");
+        String finalTitle = title != null ? title : "图片合集";
         com.miaotong.doc.dto.CreateDocumentRequest req = new com.miaotong.doc.dto.CreateDocumentRequest();
         req.setDocType("pdf");
-        req.setTitle(title != null ? title : "图片合集");
+        req.setTitle("images"); // 占位英文,避免 DocGenerator 中文 title bug
         com.miaotong.doc.entity.Document doc = documentService.createDocument(req, userId);
 
-        pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-from-images");
+        String newPath = pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-from-images");
+        com.miaotong.doc.entity.Document reloaded = documentService.getDocument(doc.getId());
+        reloaded.setFilePath(newPath);
+        reloaded.setFileSize((long) pdfBytes.length);
+        reloaded.setTitle(finalTitle);
+        documentService.updateDocument(reloaded);
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("docId", doc.getId());
-        resp.put("title", doc.getTitle());
+        resp.put("title", finalTitle);
         resp.put("pages", images.size());
         return ResponseEntity.ok(resp);
     }

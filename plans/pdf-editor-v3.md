@@ -1890,3 +1890,32 @@ PDF 编辑器 V3 全部交付完成。
   - Node http 模块默认 chunked 传输导致 Spring 解析 JSON 失败(测试脚本问题,实际前端 axios 正常)
   - from-images 测试用 1x1 png,实际图片需真实尺寸验证 fit 居中
 ```
+
+### 阶段 B 完成记录(补充:中文 title + 事务修复)
+
+```
+完成时间: 2026-07-19(补充修复)
+关键 Bug 修复(开发中):
+  5. 中文 title 500 根因:DocGenerator.create 内部用 PDF 标准字体绘制 title,
+     标准字体不支持中文 -> 抛 IOException
+     修复:create/blank 和 from-images 端点传英文占位 title 给 createDocument,
+     然后 doc.setTitle(中文 title) + updateDocument
+  6. @RequestBody Map 中文 body 解析:Jackson ISO-8859-1 默认编码
+     修复:create/blank 改用 HttpServletRequest 手动读 body + UTF-8 解码
+  7. replacePdfBytes 的 updateDocument 未持久化 filePath:
+     createDocument 事务内的托管实体被覆盖
+     修复:createBlankPdf 端点 replacePdfBytes 后重新 getDocument + setFilePath + updateDocument
+
+最终 E2E 验证(11/11 通过):
+  [✓] A1 折叠按钮 12px 两侧
+  [✓] A2 两侧对齐
+  [✓] A3 canvas 可滚动
+  [✓] A4 OCR 开启 is-text-visible (22 tokens)
+  [✓] A5 OCR 关闭
+  [✓] A6 编辑模式 OcrLayer 隐藏
+  [✓] A7 编辑 banner 显示
+  [✓] B1 创建空白 PDF (docId=175, 中文 title)
+  [✓] B2 区间拆分 zip (1133 bytes)
+  [✓] B3 批量提取 pdf (729 bytes)
+  [✓] B4 空白 PDF 可加载 (3 页缩略图)
+```
