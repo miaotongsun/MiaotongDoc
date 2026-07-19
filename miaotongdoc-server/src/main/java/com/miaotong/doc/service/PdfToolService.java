@@ -1323,4 +1323,127 @@ public class PdfToolService {
             throw new BusinessException("密文应用失败: " + e.getMessage());
         }
     }
+
+    // ==================== Phase 13.12-B: PDF 创建 + Zip 批量操作 ====================
+
+    /**
+     * 创建空白 PDF:多页同尺寸,A4/A5/Letter 或自定义 pt
+     * @param pages 页数(>=1)
+     * @param widthPt 页面宽度(磅,1 pt = 1/72 inch)
+     * @param heightPt 页面高度(磅)
+     */
+    public byte[] createBlankPdf(int pages, float widthPt, float heightPt) {
+        if (pages < 1) throw new BusinessException("页数至少为 1");
+        if (widthPt <= 0 || heightPt <= 0) throw new BusinessException("页面尺寸必须 > 0");
+        try (PDDocument doc = new PDDocument()) {
+            PDRectangle size = new PDRectangle(widthPt, heightPt);
+            for (int i = 0; i < pages; i++) {
+                PDPage page = new PDPage(size);
+                doc.addPage(page);
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            doc.save(baos);
+            log.info("创建空白 PDF: pages={}, size={}x{}pt", pages, widthPt, heightPt);
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.error("创建空白 PDF 失败", e);
+            throw new BusinessException("创建空白 PDF 失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 图片转 PDF:每图 1 页,自动 fit 到页(A4 595x842 pt)居中
+     */
+    public byte[] createFromImages(List<byte[]> images) {
+        if (images == null || images.isEmpty()) throw new BusinessException("至少需要 1 张图片");
+        PDRectangle pageSize = new PDRectangle(PDRectangle.A4.getWidth(), PDRectangle.A4.getHeight());
+        try (PDDocument doc = new PDDocument()) {
+            for (int i = 0; i < images.size(); i++) {
+                byte[] imgBytes = images.get(i);
+                PDPage page = new PDPage(pageSize);
+                doc.addPage(page);
+                PDImageXObject pdImage = PDImageXObject.createFromByteArray(doc, imgBytes, "page_" + i + ".png");
+                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                    // 等比 fit 居中
+                    float scale = Math.min(pageSize.getWidth() / pdImage.getWidth(), pageSize.getHeight() / pdImage.getHeight());
+                    float w = pdImage.getWidth() * scale;
+                    float h = pdImage.getHeight() * scale;
+                    float x = (pageSize.getWidth() - w) / 2f;
+                    float y = (pageSize.getHeight() - h) / 2f;
+                    cs.drawImage(pdImage, x, y, w, h);
+                }
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            doc.save(baos);
+            log.info("创建图片 PDF: count={}", images.size());
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.error("图片转 PDF 失败", e);
+            throw new BusinessException("图片转 PDF 失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 按页码区间拆分:输入 "1-3,5,7-9" → 多个 PDF 字节
+     */
+    public List<byte[]> splitByRanges(Long documentId, String ranges) {
+        Document doc = documentService.getDocument(documentId);
+        validatePdf(doc);
+        List<int[]> segments = parseRanges(ranges, doc);
+        if (segments.isEmpty()) throw new BusinessException("页码范围解析为空");
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            List<byte[]> result = new ArrayList<>();
+            try (PDDocument source = Loader.loadPDF(pdfBytes)) {
+                int totalPages = source.getNumberOfPages();
+                for (int[] seg : segments) {
+                    if (seg[0] < 1 || seg[1] > totalPages || seg[0] > seg[1]) {
+                        log.warn("跳过无效区间: {} - {} (总 {} 页)", seg[0], seg[1], totalPages);
+                        continue;
+                    }
+                    int from = seg[0] - 1, to = seg[1]; // PDDocument.extract 用 [from, to)
+                    byte[] part = extractPages(documentId, java.util.stream.IntStream.rangeClosed(seg[0], seg[1]).boxed().toList());
+                    result.add(part);
+                }
+            }
+            log.info("区间拆分 PDF: docId={}, ranges={}, segments={}", documentId, ranges, result.size());
+            return result;
+        } catch (Exception e) {
+            log.error("区间拆分失败", e);
+            throw new BusinessException("区间拆分失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 批量提取选中页面,返回单个 PDF
+     */
+    public byte[] extractPagesBatch(Long documentId, List<Integer> pages) {
+        return extractPages(documentId, pages);
+    }
+
+    /**
+     * 解析 "1-3,5,7-9" 格式为 [start, end] 段
+     */
+    private List<int[]> parseRanges(String ranges, Document doc) {
+        List<int[]> result = new ArrayList<>();
+        if (ranges == null || ranges.isBlank()) return result;
+        for (String seg : ranges.split(",")) {
+            seg = seg.trim();
+            if (seg.isEmpty()) continue;
+            try {
+                if (seg.contains("-")) {
+                    String[] parts = seg.split("-");
+                    int from = Integer.parseInt(parts[0].trim());
+                    int to = Integer.parseInt(parts[1].trim());
+                    if (from <= to) result.add(new int[]{from, to});
+                } else {
+                    int p = Integer.parseInt(seg);
+                    result.add(new int[]{p, p});
+                }
+            } catch (NumberFormatException e) {
+                log.warn("无效区间片段: {}", seg);
+            }
+        }
+        return result;
+    }
 }

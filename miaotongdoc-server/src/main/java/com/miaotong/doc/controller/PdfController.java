@@ -913,4 +913,125 @@ public class PdfController {
         headers.setContentDisposition(ContentDisposition.attachment().filename("redacted.pdf").build());
         return new ResponseEntity<>(result, headers, HttpStatus.OK);
     }
+
+    // ==================== Phase 13.12-B: 创建 PDF + 拆分 zip + 批量 ====================
+
+    /**
+     * 创建空白 PDF:指定页数 + 尺寸
+     * POST /api/pdf/create/blank { pages, width, height, title }
+     */
+    @PostMapping("/create/blank")
+    public ResponseEntity<Map<String, Object>> createBlankPdf(
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        int pages = body.get("pages") instanceof Number n ? n.intValue() : 1;
+        float widthPt = body.get("width") instanceof Number w ? w.floatValue() : 595f;
+        float heightPt = body.get("height") instanceof Number h ? h.floatValue() : 842f;
+        byte[] pdfBytes = pdfToolService.createBlankPdf(pages, widthPt, heightPt);
+
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        com.miaotong.doc.dto.CreateDocumentRequest req = new com.miaotong.doc.dto.CreateDocumentRequest();
+        req.setDocType("pdf");
+        req.setTitle(body.get("title") != null ? body.get("title").toString() : "新建空白文档");
+        com.miaotong.doc.entity.Document doc = documentService.createDocument(req, userId);
+
+        // createDocument 已通过 DocGenerator 默认占位落盘,这里用 replacePdfBytes 覆盖为我们的真实字节
+        pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-blank");
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("docId", doc.getId());
+        resp.put("title", doc.getTitle());
+        resp.put("pages", pages);
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 图片转 PDF(multipart,files[]):每图 1 页 A4 居中
+     * POST /api/pdf/create/from-images (multipart)
+     */
+    @PostMapping(value = "/create/from-images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> createFromImages(
+            @RequestParam(value = "files", required = false) List<org.springframework.web.multipart.MultipartFile> files,
+            @RequestParam(value = "title", required = false) String title,
+            HttpServletRequest httpRequest) throws java.io.IOException {
+        if (files == null || files.isEmpty()) throw new BusinessException("至少需要 1 张图片");
+        List<byte[]> images = new ArrayList<>();
+        for (org.springframework.web.multipart.MultipartFile f : files) {
+            images.add(f.getBytes());
+        }
+        byte[] pdfBytes = pdfToolService.createFromImages(images);
+
+        Long userId = (Long) httpRequest.getAttribute("userId");
+        com.miaotong.doc.dto.CreateDocumentRequest req = new com.miaotong.doc.dto.CreateDocumentRequest();
+        req.setDocType("pdf");
+        req.setTitle(title != null ? title : "图片合集");
+        com.miaotong.doc.entity.Document doc = documentService.createDocument(req, userId);
+
+        pdfToolService.replacePdfBytes(doc.getId(), pdfBytes, "create-from-images");
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("docId", doc.getId());
+        resp.put("title", doc.getTitle());
+        resp.put("pages", images.size());
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 按页码区间拆分,返回 zip(每段一个 PDF)
+     * POST /api/pdf/{id}/split-by-ranges { ranges: "1-3,5,7-9" }
+     */
+    @PostMapping("/{id}/split-by-ranges")
+    public ResponseEntity<byte[]> splitByRanges(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body) throws java.io.IOException {
+        String ranges = body.getOrDefault("ranges", "");
+        List<byte[]> parts = pdfToolService.splitByRanges(id, ranges);
+        byte[] zip = buildZip(parts, "part");
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("application/zip"));
+        headers.setContentDisposition(ContentDisposition.attachment().filename("split.zip").build());
+        return new ResponseEntity<>(zip, headers, HttpStatus.OK);
+    }
+
+    /**
+     * 批量提取页面为单个 PDF(按页序号 list)
+     * POST /api/pdf/{id}/extract-pages-batch { pages: [1,3,5] }
+     */
+    @PostMapping("/{id}/extract-pages-batch")
+    public ResponseEntity<byte[]> extractPagesBatch(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> raw = (List<Number>) body.get("pages");
+        List<Integer> pages = new ArrayList<>();
+        if (raw != null) for (Number n : raw) pages.add(n.intValue());
+        byte[] pdfBytes = pdfToolService.extractPagesBatch(id, pages);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment().filename("extracted.pdf").build());
+        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+    }
+
+    /**
+     * 把多份 PDF 字节打成 zip(服务端一次性,前端不组装)
+     */
+    private byte[] buildZip(List<byte[]> pdfList, String baseName) throws java.io.IOException {
+        java.io.ByteArrayOutputStream zipBaos = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(zipBaos)) {
+            for (int i = 0; i < pdfList.size(); i++) {
+                String name = String.format("%s_%02d.pdf", baseName, i + 1);
+                zos.putNextEntry(new java.util.zip.ZipEntry(name));
+                zos.write(pdfList.get(i));
+                zos.closeEntry();
+            }
+        }
+        return zipBaos.toByteArray();
+    }
+
+    private Long getCurrentUserId() {
+        org.springframework.security.core.Authentication auth =
+            org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getDetails() instanceof String) return 1L;
+        try { return Long.parseLong(auth.getName()); } catch (Exception e) { return 1L; }
+    }
 }

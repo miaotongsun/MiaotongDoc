@@ -345,6 +345,56 @@ export const pdfApi = {
       { responseType: 'blob' as any },
     )
   },
+
+  /**
+   * Phase 13.12-B: 创建空白 PDF
+   * POST /api/pdf/create/blank { pages, width, height, title }
+   */
+  createBlank(pages: number, width: number, height: number, title?: string) {
+    return api.post<any, { docId: number; title: string; pages: number }>(
+      `/pdf/create/blank`,
+      { pages, width, height, title: title || '新建空白文档' },
+    )
+  },
+
+  /**
+   * Phase 13.12-B: 图片转 PDF(multipart)
+   * POST /api/pdf/create/from-images
+   */
+  createFromImages(files: File[], title?: string) {
+    const formData = new FormData()
+    files.forEach(f => formData.append('files', f))
+    if (title) formData.append('title', title)
+    return api.post<any, { docId: number; title: string; pages: number }>(
+      `/pdf/create/from-images`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } as any },
+    )
+  },
+
+  /**
+   * Phase 13.12-B: 区间拆分 zip 下载
+   * POST /api/pdf/{id}/split-by-ranges { ranges: "1-3,5,7-9" }
+   */
+  splitByRanges(docId: number, ranges: string) {
+    return api.post<any, Blob>(
+      `/pdf/${docId}/split-by-ranges`,
+      { ranges },
+      { responseType: 'blob' as any },
+    )
+  },
+
+  /**
+   * Phase 13.12-B: 批量提取页面为单个 PDF
+   * POST /api/pdf/{id}/extract-pages-batch { pages: [1,3,5] }
+   */
+  extractPagesBatch(docId: number, pages: number[]) {
+    return api.post<any, Blob>(
+      `/pdf/${docId}/extract-pages-batch`,
+      { pages },
+      { responseType: 'blob' as any },
+    )
+  },
 }
 
 // ==================== Phase 2 类型扩展 ====================

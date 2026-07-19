@@ -1851,3 +1851,42 @@ PDF 编辑器 V3 全部交付完成。
 遗留:
   - ribbon OCR 切换按钮的视觉反馈(hover/active 状态)在 RibbonBtn 默认样式中,如果需要更明显可定制 class
   - canvas 滚动条样式仅 webkit 内核生效,Firefox 用默认样式
+
+### 阶段 B 完成记录
+
+```
+完成时间: 2026-07-19
+改动文件:
+  - miaotongdoc-server/.../service/PdfToolService.java (+110 行)
+    · createBlankPdf(pages, widthPt, heightPt): 用 PDDocument + PDRectangle + addPage
+    · createFromImages(List<byte[]>): 每图 1 页 A4 居中,PDImageXObject.createFromByteArray(doc, bytes, name)
+    · splitByRanges(docId, ranges): "1-3,5,7-9" 解析为 [[1,3],[5,5],[7,9]],逐段调 extractPages
+    · extractPagesBatch(docId, pages): 复用现有 extractPages
+    · parseRanges(ranges, doc): 正则切分,NumberFormatException 容错
+  - miaotongdoc-server/.../controller/PdfController.java (+90 行)
+    · POST /api/pdf/create/blank: JSON body,replacePdfBytes 落盘
+    · POST /api/pdf/create/from-images: multipart files[],每图 1 页
+    · POST /api/pdf/{id}/split-by-ranges: 返回 application/zip
+    · POST /api/pdf/{id}/extract-pages-batch: 返回 application/pdf
+    · buildZip(pdfList, baseName): ZipOutputStream 服务端打包
+    · getCurrentUserId 改用 httpRequest.getAttribute("userId")
+  - miaotongdoc-web/src/api/pdf.ts (+50 行)
+    · createBlank / createFromImages / splitByRanges / extractPagesBatch
+
+关键 Bug 修复(开发中):
+  1. PDImageXObject.createFromByteArray 签名是 (PDDocument, byte[], String) - 漏第 3 参文件名
+  2. PDPageContentStream 构造需 (PDDocument, PDPage) - 不是 (PDPage)
+  3. catch (IOException) 改 catch (Exception) - try-with-resources 的 close 也抛
+  4. 500 错误根因:Spring 默认 ISO-8859-1 解析 body,中文 title 字节非法 -> 前端必须 Content-Type: application/json; charset=utf-8
+
+验证结果:
+  [✓] POST /create/blank {pages:3, width:595, height:842, title:"test"} -> docId=169
+  [✓] POST /create/from-images (2 张 1x1 png) -> docId + pages=2
+  [✓] POST /split-by-ranges {ranges:"1-2,3"} -> application/zip, 1134 bytes
+  [✓] POST /extract-pages-batch {pages:[1,2]} -> application/pdf, 729 bytes
+  [✓] vue-tsc 类型 0 error(npm run build 通过)
+
+遗留:
+  - Node http 模块默认 chunked 传输导致 Spring 解析 JSON 失败(测试脚本问题,实际前端 axios 正常)
+  - from-images 测试用 1x1 png,实际图片需真实尺寸验证 fit 居中
+```
