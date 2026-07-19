@@ -91,6 +91,9 @@ RUN sed -i 's/proxy_read_timeout[[:space:]]*300s/proxy_read_timeout 900s/g' ${ED
 RUN echo 'access_log /var/log/onlyoffice/documentserver/nginx.access.log;' >> /etc/nginx/includes/http-common.conf
 
 # 添加 AI Proxy 反向代理 - 将 ai-proxy 请求转发到后端 Spring Boot
+# upstream 块（必须放在 http 上下文，conf.d 自动被 nginx.conf 的 http 块 include）
+COPY config/nginx/ds-aiproxy-upstream.conf /etc/nginx/conf.d/ds-aiproxy-upstream.conf
+# location 块（放在 server 上下文）
 COPY config/nginx/ds-aiproxy.conf /etc/nginx/includes/ds-aiproxy.conf
 RUN sed -i '/^}/i\    include /etc/nginx/includes/ds-aiproxy.conf;' /etc/onlyoffice/documentserver/nginx/ds.conf || \
     echo 'include /etc/nginx/includes/ds-aiproxy.conf;' >> /etc/onlyoffice/documentserver/nginx/ds.conf

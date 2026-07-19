@@ -52,7 +52,7 @@ check_prerequisites() {
 create_data_dirs() {
     log_info "创建数据目录..."
 
-    mkdir -p data/{documents,pgdata,minio,rabbitmq,editor,editor-cache}
+    mkdir -p data/{documents,pgdata,minio,rabbitmq,editor,editor-cache,redis,yjs}
     mkdir -p data/logs/{server,nginx,postgres,editor,editor2,editor3,redis,rabbitmq,minio}
 
     log_info "数据目录创建完成"
@@ -68,23 +68,42 @@ build_images() {
     log_info "镜像构建完成"
 }
 
-# 启动服务
+# 分阶段启动服务（按依赖顺序，避免 Flyway V9 等需要 editor 先启动的坑）
 start_services() {
-    log_info "启动服务..."
+    log_info "按依赖顺序分阶段启动服务..."
 
     # 创建数据目录
     create_data_dirs
 
-    # 启动所有服务
-    docker compose up -d
+    # 阶段 A: 基础设施（postgres/redis/elasticsearch/minio）
+    log_info "[阶段 A] 启动基础设施..."
+    docker compose up -d postgres redis elasticsearch minio
+    wait_for_healthy "postgres" "redis" "elasticsearch" "minio"
 
-    # 等待服务启动
-    log_info "等待服务启动..."
-    sleep 10
+    # 阶段 B: RabbitMQ
+    log_info "[阶段 B] 启动 RabbitMQ..."
+    docker compose up -d rabbitmq
+    wait_for_healthy "rabbitmq"
 
-    # 检查服务状态
-    check_health
+    # 阶段 C: OnlyOffice 编辑器（会创建 task_result 表，供 Flyway V9 使用）
+    log_info "[阶段 C] 启动 OnlyOffice 编辑器..."
+    docker compose up -d editor editor2 editor3
+    log_info "等待编辑器初始化（约 1-2 分钟）..."
+    sleep 60
+    wait_for_healthy "editor"
 
+    # 阶段 D: 后端 web-server（执行 Flyway 迁移）
+    log_info "[阶段 D] 启动后端 web-server..."
+    docker compose up -d web-server
+    log_info "等待 Flyway 迁移完成..."
+    wait_for_healthy "web-server"
+
+    # 阶段 E: yjs-server + nginx
+    log_info "[阶段 E] 启动 yjs + nginx..."
+    docker compose up -d yjs-server nginx
+    wait_for_healthy "nginx"
+
+    # 最终状态
     log_info "部署完成！"
     echo ""
     echo "访问地址:"
@@ -95,17 +114,37 @@ start_services() {
     echo ""
 }
 
-# 停止服务
+# 等待指定服务 healthy(超时 5 分钟)
+wait_for_healthy() {
+    local timeout=300
+    local interval=10
+    local elapsed=0
+    for svc in "$@"; do
+        log_info "等待 $svc healthy..."
+        while ! docker compose ps "$svc" 2>/dev/null | grep -q "(healthy)"; do
+            if [ $elapsed -ge $timeout ]; then
+                log_warn "$svc 未在 ${timeout}s 内 healthy，继续执行（可能是已启动或 unhealthy 但可运行）"
+                break
+            fi
+            sleep $interval
+            elapsed=$((elapsed + interval))
+        done
+        elapsed=0  # 重置给下一个服务
+    done
+}
+
+# 停止服务（保留容器，不丢失数据）
 stop_services() {
-    log_info "停止服务..."
-    docker compose down
+    log_info "停止服务（保留容器和数据）..."
+    docker compose stop --timeout 60
     log_info "服务已停止"
 }
 
 # 重启服务
 restart_services() {
     log_info "重启服务..."
-    docker compose restart
+    docker compose stop --timeout 60
+    docker compose up -d
     log_info "服务已重启"
 }
 
