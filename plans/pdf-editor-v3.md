@@ -1919,3 +1919,33 @@ PDF 编辑器 V3 全部交付完成。
   [✓] B3 批量提取 pdf (729 bytes)
   [✓] B4 空白 PDF 可加载 (3 页缩略图)
 ```
+
+## 三十七、Phase 13.12 - 阶段 C 完成记录(2026-07-19, PdfCreateDialog)
+
+```
+完成时间: 2026-07-19
+改动文件:
+  - miaotongdoc-web/src/components/PdfCreateDialog.vue(新建,~330 行)
+    · 2 tab:空白 PDF + 图片转 PDF
+    · 空白:页数 input + 纸张 select(A4/A5/Letter/Legal/自定义 pt)+ title + 预览
+    · 图片:拖拽/点击上传 + 缩略图列表 + 移除 + title
+    · 提交调 pdfApi.createBlank / createFromImages,跳转 /editor/{docId}
+  - miaotongdoc-web/src/views/Home.vue(+8 行)
+    · 顶部加"创建 PDF"按钮(Document icon)
+    · showCreatePdf state + handlePdfCreated handler
+
+验证结果(8/8 通过):
+  [✓] C1 创建 PDF 按钮可见
+  [✓] C2 对话框打开
+  [✓] C3 默认空白 PDF tab
+  [✓] C4 空白表单完整(页数 + 纸张 + title + 预览)
+  [✓] C5 图片转 PDF tab + 上传区
+  [✓] C6 创建后跳转 /editor/176
+  [✓] C7 新 PDF 加载(2 页缩略图)
+  [✓] C8 中文 title 保留("C阶段测试文档")
+  [✓] vue-tsc 类型 0 error
+
+遗留:
+  - 图片转 PDF 真实图片上传未 E2E 测(用 1x1 png 验证 API 已通过,阶段 B)
+  - 路由 /pdf/create 未独立实现(用 Home 入口 + 对话框模式,更轻量)
+```
