@@ -231,7 +231,12 @@
       "Bash(curl -sI http://localhost/)",
       "Bash(curl -s http://localhost:9004/actuator/health/liveness)",
       "Bash(curl -s http://localhost:9004/actuator/health/readiness)",
-      "Read(//c/Users/tiany/AppData/Local/Temp/pdf-e2e/**)"
+      "Read(//c/Users/tiany/AppData/Local/Temp/pdf-e2e/**)",
+      "Bash(cp target/miaotongdoc.jar /d/tiany/stycode/MiaotongDoc/MiaotongDoc-Docker/app/server/miaotongdoc.jar)",
+      "Bash(node /c/Users/tiany/AppData/Local/Temp/pdf-e2e/verify-stageAB.js)",
+      "Read(//c/Users/tiany/**)",
+      "Bash(npm root *)",
+      "Read(//c/Users/tiany/AppData/Roaming/npm/node_modules/**)"
     ],
     "additionalDirectories": [
       "\\tmp",
