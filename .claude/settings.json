@@ -236,7 +236,8 @@
       "Bash(node /c/Users/tiany/AppData/Local/Temp/pdf-e2e/verify-stageAB.js)",
       "Read(//c/Users/tiany/**)",
       "Bash(npm root *)",
-      "Read(//c/Users/tiany/AppData/Roaming/npm/node_modules/**)"
+      "Read(//c/Users/tiany/AppData/Roaming/npm/node_modules/**)",
+      "mcp__codegraph__codegraph_context"
     ],
     "additionalDirectories": [
       "\\tmp",
