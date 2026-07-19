@@ -244,6 +244,7 @@
                   :page-raw-height="pageRawHeight"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
+                  :show-text="showOcrOverlay"
                 />
               </template>
             </PdfCanvas>
@@ -1614,7 +1615,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   /* 创建独立 stacking context,确保子项 z-index 生效 */
   isolation: isolate;
   z-index: 0;
-  overflow: hidden;
+  /* Phase 13.12: 改 overflow-x:hidden + overflow-y:visible
+     让绝对定位的折叠按钮(left:-x)溢出可见,不再被裁切 */
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 
 /* ==================== 中央画布 ==================== */
@@ -1622,6 +1626,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   background: linear-gradient(180deg, #E8EEF5 0%, #E2E8F0 100%);
   overflow-y: auto;
   overflow-x: auto;  /* Phase 11.5 Q2: 超宽画布水平滚动,不裁切 */
+  /* Phase 13.12: scrollbar-gutter 始终为滚动条预留空间,
+     避免滚动条出现/消失时内容跳动,改善垂直滚动条可见性 */
+  scrollbar-gutter: stable;
   padding: var(--space-8) var(--space-12);  /* Q2: 上下对称 32px,去底部 64px 浪费 */
   height: 100%;
   min-height: 0;
@@ -1633,6 +1640,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   /* Phase 11.5 Q2: 不用 contain:strict(会让子元素 canvas 尺寸为 0)
      改用 overscroll-behavior 防滚动穿透即可 */
   overscroll-behavior: contain;
+}
+
+/* Phase 13.12: 自定义滚动条样式,确保始终可见(深色细条) */
+.pdf-canvas-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.pdf-canvas-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pdf-canvas-area::-webkit-scrollbar-thumb {
+  background: rgba(64, 158, 255, 0.35);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.pdf-canvas-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(64, 158, 255, 0.6);
+  background-clip: padding-box;
+  border: 2px solid transparent;
 }
 
 /* 双页对照 */

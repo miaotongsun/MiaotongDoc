@@ -194,19 +194,6 @@ const bottomActions: RailAction[] = [
   transition: width 200ms ease;
 }
 
-/* Phase 11.7: 折叠态 - 只显示 rail 条,缩到 14px,蓝色主题 */
-.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) {
-  width: 14px;
-  padding: 0;
-  background: var(--color-primary);
-}
-
-.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) .pdf-rail-group,
-.pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) .pdf-rail-divider,
-.pdf-tools-rail:has(.pdf-rail-toggle.is-collapsed) .pdf-rail-spacer {
-  display: none;
-}
-
 /* Phase 13.10: 折叠态 - 缩到 14px,去掉蓝条(用透明背景,不突兀) */
 .pdf-tools-rail:has(.pdf-tools-rail-toggle.is-collapsed) {
   width: 14px;
@@ -220,13 +207,13 @@ const bottomActions: RailAction[] = [
   display: none;
 }
 
-/* Phase 13.10: 折叠按钮重设计 - 简单矩形长条,不放大,hover 整条颜色加深 */
+/* Phase 13.12: 折叠按钮 - 加宽 12px(改善点击命中),z-index 50 跨 grid cell 可见 */
 .pdf-tools-rail-toggle {
   position: absolute;
-  left: -8px;
+  left: -6px;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 12px;
   border-radius: 0;
   background: var(--color-border);
   border: none;
@@ -235,15 +222,13 @@ const bottomActions: RailAction[] = [
   align-items: center;
   justify-content: center;
   color: var(--color-foreground-3);
-  z-index: 10;
+  z-index: 50;
   transition: background 180ms ease, color 180ms ease;
   padding: 0;
   box-shadow: none;
 }
 
 .pdf-tools-rail-toggle:hover {
-  width: 8px;
-  left: -8px;
   background: var(--color-primary);
   color: #fff;
   box-shadow: none;
@@ -255,10 +240,14 @@ const bottomActions: RailAction[] = [
 }
 
 .pdf-tools-rail-toggle.is-collapsed:hover {
-  width: 8px;
-  left: -8px;
   background: var(--color-primary);
   color: #fff;
+}
+
+/* 折叠按钮内箭头 SVG 视觉居中(可选,目前无箭头但保留以备复用) */
+.pdf-tools-rail-toggle .rail-icon {
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.1));
 }
 
 .pdf-tools-rail-toggle .rail-icon {

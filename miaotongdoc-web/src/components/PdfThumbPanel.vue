@@ -222,10 +222,10 @@ onBeforeUnmount(() => {
 /* Phase 13.10: 折叠按钮重设计 - 简单矩形长条,不放大,hover 整条颜色加深 */
 .pdf-thumb-collapse-rail {
   position: absolute;
-  right: -8px;
+  right: -6px;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 12px;
   border-radius: 0;
   background: var(--color-border);
   border: none;
@@ -234,15 +234,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   color: var(--color-foreground-3);
-  z-index: 10;
+  z-index: 50;
   transition: background 180ms ease, color 180ms ease;
   padding: 0;
   box-shadow: none;
 }
 
 .pdf-thumb-collapse-rail:hover {
-  width: 8px;
-  right: -8px;
   background: var(--color-primary);
   color: #fff;
   box-shadow: none;
@@ -254,8 +252,6 @@ onBeforeUnmount(() => {
 }
 
 .pdf-thumb-collapse-rail.is-collapsed:hover {
-  width: 8px;
-  right: -8px;
   background: var(--color-primary);
   color: #fff;
 }

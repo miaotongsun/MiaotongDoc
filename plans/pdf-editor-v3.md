@@ -1710,3 +1710,144 @@ PDF 编辑器 V3 全部交付完成。
 
 - "CONFIDENTIAL" 斜水印 OCR 识别为超大块(PaddleOCR 对斜文字限制,非 bug)
 - OCR token 跨 token 选择受限(每个 token 独立,无法跨 token 选)
+
+---
+
+## 三十四、Phase 13.12 - OCR 切换 + 折叠按钮修复 + PDF 重组(2026-07-18,规划中)
+
+> **状态**:📋 规划完成 / ⏳ 开发分阶段进行,每阶段完成后 append 完成记录
+
+### Context(4 个独立问题,必须一并解决)
+
+1. **OCR 识别后画布"两份识别数据"**
+   - `PdfOcrLayer.vue` 的 `:show-text` prop 未传给模板,半透明文字始终渲染
+   - `PdfEditor.vue:146/241` 的 v-if 缺 `activeTool !== 'textEdit'`,文本编辑下 OcrLayer 仍渲染 → 编辑区文字乱
+   - 缺一个明确的"识别前 ↔ 识别后"切换入口(Ribbon 加按钮)
+
+2. **折叠按钮 + 滚动条问题**
+   - **2a 折叠按钮太细**:当前 `width:8px`,用户反馈"钥匙太细",需要加宽到 12-14px 增加点击命中区
+   - **2b 编辑区下拉条消失**:之前 Phase 11.5 改 `overflow:hidden` 时把 canvas-area 垂直滚动条也裁掉了,需改回 `overflow-x:hidden; overflow-y:auto`(只保留水平裁切)
+   - **2c 右侧折叠按钮不显示**:`.pdf-editor-body` 的 `overflow:hidden` + `isolation:isolate` 把 ToolsRail 内 `left:-8px` 折叠按钮裁掉
+   - **2d 重复 CSS**:`PdfToolsRail.vue:198-221` 13.10 改动后留下未清理的重复块
+
+3. **PDF 重组 4 子任务**(用户核心需求,大量缺失)
+   - 后端缺:`createBlankPdf` / `createFromImages` 方法和 Controller 端点
+   - 前端缺:拆分 UI / 创建 PDF UI / 缩略图多选 / 批量操作 / 合并调序 + 预览 + 下载
+
+### 实施阶段(分 6 阶段,每阶段独立交付验证)
+
+| 阶段 | 内容 | 预计 | Critical Files |
+|------|------|------|----------------|
+| **A** | OCR 切换开关 + 折叠按钮修复(2a/2b/2c/2d 全治) | ~2.5h | `PdfOcrLayer.vue`、`PdfEditor.vue` (L146/L241/L1607/L1214)、`PdfRibbon.vue`、`PdfToolsRail.vue`、`PdfThumbPanel.vue` |
+| **B** | 后端 createBlankPdf / createFromImages + batch-export + split + Controller + 前端 pdfApi + zip 工具 | ~2.5h | `PdfToolService.java`、`PdfController.java`、`api/pdf.ts` |
+| **C** | 新建 `PdfCreateDialog.vue`(图转 PDF + 空白新建) + 路由 `/pdf/create` | ~3h | `PdfCreateDialog.vue`(新)、`router/index.ts` |
+| **D** | 新建 `PdfReorganizePanel.vue` 集成进 PdfRightPanel 新 tab(组织页面 + 合并 + 拆分 + 创建 PDF 入口) | ~6h | `PdfReorganizePanel.vue`(新)、`PdfRightPanel.vue`、`MergeDialog.vue` |
+| **E** | 缩略图多选 checkbox + shift 区间 + 拖拽调序精修 + 批量操作 | ~3h | `PdfThumbPanel.vue`、`PdfReorganizePanel.vue` |
+| **F** | E2E Playwright + 文档更新 + 提交(6 个 commit) | ~2h | `tests/e2e/pdf-reorganize.spec.ts`(新)、`README.md` |
+
+### 阶段 A 折叠按钮细节修复(本轮重点)
+
+| 子项 | 改法 |
+|------|------|
+| 2a 加宽 | `.pdf-thumb-collapse-rail` / `.pdf-tools-rail-toggle` `width: 8px → 12px`,`right/left: -8px → -6px`(整体往外挪 2px) |
+| 2b 滚动条 | `PdfEditor.vue:1214-1233` `.pdf-canvas-area` `overflow: hidden` → `overflow-x: hidden; overflow-y: auto` |
+| 2c 折叠显示 | `.pdf-editor-body` `overflow: hidden` → `overflow-x: hidden; overflow-y: visible` + 折叠按钮 `z-index: 50` 跨 grid cell |
+| 2d 清理 | 删 `PdfToolsRail.vue:198-221` 重复 CSS 块 |
+| 验证 | 两侧折叠按钮可见(12px 宽),canvas 垂直滚动条出现,不影响 PdfRightPanel 5 tab 显示 |
+
+### 关键技术决策(已确定)
+
+| 项 | 决策 |
+|----|------|
+| 默认 `showOcrOverlay` | **false**(纯原图,符合"识别前"语义) |
+| 编辑模式 OcrLayer | **整层 v-if 隐藏**,不用 opacity(根除"两份数据") |
+| Zip 打包 | **服务端 ZipOutputStream** 一次性,前端不组装 |
+| 拆分模式 b 输入 | 字符串解析 `1-3,5`,正则 `^(\d+)(?:-(\d+))?$`,后端批 extract |
+| 多选状态 | `Set<number>` + shift 区间,放 ReorganizePanel,emit 给缩略图 |
+| 调序 UI | `vuedraggable`(项目已有依赖) |
+| 类型 gate | `npm run build`(vue-tsc 严格)不可绕过 |
+| 折叠按钮宽度 | **12px(从 8px 加宽,改善点击命中)** |
+
+### Verification(每阶段结束必跑)
+
+1. **A**:`npm run build` 过;OCR 开关切换对比;编辑模式 OcrLayer 不渲染;**两侧折叠按钮 12px 可见**;**canvas 垂直滚动条出现**;不影响 PdfRightPanel
+2. **B**:curl `POST /api/pdf/create/blank` 返回 docId 可加载;POST /create/from-images 含图片 → docId;zip 下载
+3. **C**:前端上传 3 图 → 生成 PDF → 跳 `/editor/{docId}` 看到 3 页;空白 PDF 自定义尺寸正确
+4. **D**:多选 5 页 → 批量导出 → 下载 zip 5 文件;合并 2 PDF → 预览正确;拆分 "1-3,5" → 2 文件 zip
+5. **E**:缩略图拖拽顺序提交后,后端 `/reorder` 保存顺序生效;shift 点击 1→5 选中 5 个
+6. **F**:Playwright 全流程绿;`vue-tsc` 类型 0 error
+
+---
+
+## 三十五、Phase 13.12 - 阶段 A 完成记录(2026-07-18, OCR 切换 + 折叠按钮 + 滚动条)
+
+> **状态**:⏳ 待填写
+
+### 完成后补全格式
+
+```
+完成时间:
+代码 commit:
+改动文件:
+验证结果:
+  - [ ] canvas 滚动条出现
+  - [ ] 折叠按钮 12px 可见(左右对称)
+  - [ ] OCR 切换生效(开/关对比)
+  - [ ] 编辑模式 OcrLayer 不渲染
+  - [ ] vue-tsc 类型 0 error
+遗留:
+```
+
+## 三十六、Phase 13.12 - 阶段 B 完成记录(2026-07-18, 后端创建 PDF + zip)
+
+> **状态**:⏳ 待填写
+
+## 三十七、Phase 13.12 - 阶段 C 完成记录(2026-07-18, PdfCreateDialog)
+
+> **状态**:⏳ 待填写
+
+## 三十八、Phase 13.12 - 阶段 D 完成记录(2026-07-18, PdfReorganizePanel)
+
+> **状态**:⏳ 待填写
+
+## 三十九、Phase 13.12 - 阶段 E 完成记录(2026-07-18, 多选 + 拖拽)
+
+> **状态**:⏳ 待填写
+
+## 四十、Phase 13.12 - 阶段 F 完成记录(2026-07-18, E2E + 文档)
+
+> **状态**:⏳ 待填写
+
+### 阶段 A 完成记录
+
+```
+完成时间: 2026-07-18
+改动文件:
+  - miaotongdoc-web/src/components/PdfEditor.vue (+25 / -5 行)
+    · L1607-1626: .pdf-editor-body overflow-x:hidden + overflow-y:visible
+    · L1623: .pdf-canvas-area scrollbar-gutter:stable + 自定义滚动条样式
+    · L146/241: :show-text="showOcrOverlay" 显式传给 PdfOcrLayer
+  - miaotongdoc-web/src/components/PdfOcrLayer.vue (+10 / -2 行)
+    · 模板根 div 加 'is-text-visible': showText(已存在)
+    · 新 CSS: .is-text-visible .pdf-ocr-text { color: rgba(20,30,50,0.55) }
+  - miaotongdoc-web/src/components/PdfToolsRail.vue (+8 / -23 行)
+    · 删 13.10 残留重复 CSS 块(198-208)
+    · 折叠按钮 width:8px -> 12px,right:-8px -> left:-6px,z-index:50
+    · 删除 hover width 放大(保持 12px,只改 background)
+  - miaotongdoc-web/src/components/PdfThumbPanel.vue (+4 / -6 行)
+    · 折叠按钮 width:8px -> 12px,right:-8px -> -6px,z-index:50
+    · 删除 hover width 放大
+
+验证结果:
+  [✓] canvas 滚动条(overflowY:auto + scrollbar-gutter:stable,scrollHeight=6238>clientHeight=713)
+  [✓] 折叠按钮 12px 可见左右两侧(w=12,top=159,bottom=872 完全对称)
+  [✓] OCR 切换生效:
+       - 默认:layer is-selectable only,文字 transparent
+       - 开启:is-selectable + is-text-visible,文字 rgba(20,30,50,0.55)
+  [✓] 编辑模式 OcrLayer 不渲染(layer=false,banner=true)
+  [✓] vue-tsc 类型 0 error(npm run build 通过)
+  [✓] 视觉对比:根除"两份识别数据" — 选择工具下只有半透明文字(可复制),不会重叠
+
+遗留:
+  - ribbon OCR 切换按钮的视觉反馈(hover/active 状态)在 RibbonBtn 默认样式中,如果需要更明显可定制 class
+  - canvas 滚动条样式仅 webkit 内核生效,Firefox 用默认样式

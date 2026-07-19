@@ -119,6 +119,21 @@ function tokenStyle(tok: OcrToken) {
   color: var(--color-primary, #3b6fe8);
 }
 
+/* Phase 13.12: showText=true 时(用户开"识别后"显示),文字半透明覆盖在原图上,
+   showText=false(默认)或纯选择模式下文字透明 */
+.pdf-ocr-layer.is-text-visible .pdf-ocr-text {
+  color: rgba(20, 30, 50, 0.55);
+}
+.pdf-ocr-layer.is-text-visible .pdf-ocr-token {
+  background: rgba(59, 111, 232, 0.08);
+}
+.pdf-ocr-layer.is-text-visible.is-selectable .pdf-ocr-text {
+  color: rgba(20, 30, 50, 0.55);
+}
+.pdf-ocr-layer.is-text-visible.is-selectable .pdf-ocr-token:hover .pdf-ocr-text {
+  color: var(--color-foreground, #303133);
+}
+
 .pdf-ocr-text {
   display: block;
   width: 100%;
