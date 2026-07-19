@@ -371,14 +371,14 @@ async function fetchLatestLlmConfig(force) {
 					const name = providerKeys[i];
 					const p = data.providers[name];
 					if (!p) continue;
-					if (!AI.Providers[name]) AI.Providers[name] = {};
+					if (!AI.Providers[name] || !AI.Providers[name].createInstance) AI.Providers[name] = AI.createProviderInstance(name, p.url || "", p.key || "", "");
 					if (p.url) AI.Providers[name].url = p.url;
 					if (p.key) AI.Providers[name].key = p.key;
 					if (Array.isArray(p.models)) AI.Providers[name].models = p.models;
 					// 兼容性：保证有一个名为 "OpenAI" 的 provider（取第一个作为默认）
 					if (!AI.Providers.OpenAI && i === 0) {
-						AI.Providers.OpenAI = Object.assign({}, AI.Providers[name]);
-						AI.Providers.OpenAI.name = "OpenAI";
+						AI.Providers.OpenAI = AI.createProviderInstance("OpenAI", p.url || "", p.key || "", "");
+						if (Array.isArray(p.models)) AI.Providers.OpenAI.models = p.models;
 					}
 				}
 			}
