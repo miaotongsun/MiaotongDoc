@@ -37,18 +37,17 @@
       <div v-show="activeTab === 'home'" class="pdf-ribbon-row">
         <RibbonGroup label="文件">
           <RibbonBtn icon="save" label="保存" @click="$emit('save')" />
+          <RibbonBtn icon="share" label="另存为" @click="$emit('save-as-new')" />
           <RibbonBtn icon="print" label="打印" @click="$emit('print')" />
+          <RibbonBtn icon="export" label="导出" @click="$emit('export-menu')" />
         </RibbonGroup>
         <RibbonGroup label="分享">
           <RibbonBtn icon="share" label="复制链接" @click="$emit('share')" />
           <RibbonBtn icon="signature" label="发送签署" @click="$emit('send-sign')" />
-          <RibbonBtn icon="signature" label="签名" @click="$emit('place-signature')" />
-          <RibbonBtn icon="menu" label="保护" @click="$emit('protect')" />
         </RibbonGroup>
-        <RibbonGroup label="AI">
-          <RibbonBtn icon="ai" label="AI 助手" @click="$emit('open-ai')" />
-          <RibbonBtn icon="vqa" label="OCR 快速" @click="$emit('ocr-recognize', 'mobile')" />
-          <RibbonBtn icon="vqa" label="OCR 高精度" @click="$emit('ocr-recognize', 'server')" />
+        <RibbonGroup label="保护">
+          <RibbonBtn icon="menu" label="加密" @click="$emit('protect')" />
+          <RibbonBtn icon="menu" label="密文遮盖" @click="$emit('redact')" />
         </RibbonGroup>
       </div>
 
@@ -99,6 +98,10 @@
             aria-label="自定义图章文字"
           />
         </RibbonGroup>
+        <RibbonGroup label="表单">
+          <RibbonBtn icon="panelForm" label="填表单" :active="rightPanel === 'form'" @click="$emit('fill-form')" />
+          <RibbonBtn icon="signature" label="签名" @click="$emit('place-signature')" />
+        </RibbonGroup>
         <RibbonGroup label="颜色" v-if="showColorRow">
           <button
             v-for="c in colorPalette"
@@ -114,21 +117,30 @@
 
       <!-- Page -->
       <div v-show="activeTab === 'page'" class="pdf-ribbon-row">
-        <RibbonGroup label="操作">
-          <RibbonBtn icon="merge" label="合并 PDF" @click="$emit('page-merge', $event)" />
-          <RibbonBtn icon="extract" label="提取选中页" :disabled="!hasSelection" @click="$emit('page-extract', $event)" />
-          <RibbonBtn icon="rotateAll" label="旋转全部" @click="$emit('page-rotate-all', $event)" />
-        </RibbonGroup>
-        <RibbonGroup label="插入">
-          <RibbonBtn icon="insert" label="空白页" @click="$emit('page-insert')" />
+        <RibbonGroup label="整理">
+          <RibbonBtn icon="organize" label="组织页面" :active="rightPanel === 'reorganize'" @click="$emit('toggle-panel', 'reorganize')" />
+          <RibbonBtn icon="insert" label="插入空白" @click="$emit('page-insert')" />
           <RibbonBtn icon="insertFile" label="从文件插入" @click="$emit('page-insert-from-file')" />
+        </RibbonGroup>
+        <RibbonGroup label="旋转">
+          <RibbonBtn icon="rotate" label="旋转当前页" @click="$emit('rotate-current')" />
+          <RibbonBtn icon="rotateAll" label="全部旋转" @click="$emit('page-rotate-all')" />
+        </RibbonGroup>
+        <RibbonGroup label="拆合">
+          <RibbonBtn icon="merge" label="合并" @click="$emit('page-merge')" />
+          <RibbonBtn icon="extract" label="拆分" @click="$emit('split-pdf')" />
+          <RibbonBtn icon="extract" label="提取当前页" @click="$emit('page-extract')" />
+        </RibbonGroup>
+        <RibbonGroup label="裁剪">
+          <RibbonBtn icon="crop" label="裁剪页" @click="$emit('crop-page')" />
         </RibbonGroup>
         <RibbonGroup label="装饰">
           <RibbonBtn icon="watermark" label="水印" @click="$emit('watermark')" />
+          <RibbonBtn icon="watermark" label="去水印" @click="$emit('remove-watermark')" />
           <RibbonBtn icon="header" label="页眉页脚" @click="$emit('header-footer')" />
         </RibbonGroup>
-        <RibbonGroup label="导出">
-          <RibbonBtn icon="export" label="导出" @click="$emit('export-menu')" />
+        <RibbonGroup label="优化">
+          <RibbonBtn icon="export" label="压缩" @click="$emit('compress')" />
         </RibbonGroup>
       </div>
 
@@ -161,6 +173,43 @@
           <RibbonBtn icon="vqa" label="OCR 叠加" :active="showOcrOverlay" @click="$emit('toggle-ocr-overlay')" />
         </RibbonGroup>
       </div>
+
+      <!-- AI -->
+      <div v-show="activeTab === 'ai'" class="pdf-ribbon-row">
+        <RibbonGroup label="助手">
+          <RibbonBtn icon="ai" label="AI 对话" @click="$emit('open-ai')" />
+          <RibbonBtn icon="ai" label="页摘要" @click="$emit('ai-summarize')" />
+          <RibbonBtn icon="ai" label="翻译选区" @click="$emit('ai-translate')" />
+          <RibbonBtn icon="ai" label="全文摘要" @click="$emit('ai-full-summary')" />
+        </RibbonGroup>
+        <RibbonGroup label="视觉">
+          <RibbonBtn icon="vqa" label="框选问答" @click="$emit('ai-vqa')" />
+          <RibbonBtn icon="vqa" label="识别图片说明" @click="$emit('ai-image-desc')" />
+        </RibbonGroup>
+        <RibbonGroup label="文档">
+          <RibbonBtn icon="ai" label="合同条款抽取" @click="$emit('ai-extract-terms')" />
+          <RibbonBtn icon="ai" label="OCR 结果优化" @click="$emit('ai-optimize-ocr')" />
+          <RibbonBtn icon="ai" label="智能重写" @click="$emit('ai-rewrite')" />
+          <RibbonBtn icon="ai" label="续写生成" @click="$emit('ai-generate')" />
+        </RibbonGroup>
+        <RibbonGroup label="目录">
+          <RibbonBtn icon="panelOutline" label="智能目录" @click="$emit('ai-auto-outline')" />
+          <RibbonBtn icon="panelOutline" label="查看大纲" :active="rightPanel === 'outline'" @click="$emit('ai-view-outline')" />
+        </RibbonGroup>
+        <RibbonGroup label="提取">
+          <RibbonBtn icon="ai" label="智能提取" @click="$emit('ai-extract-structured')" />
+          <RibbonBtn icon="export" label="提取图片" @click="$emit('extract-images')" />
+          <RibbonBtn icon="ai" label="关键词" @click="$emit('ai-keywords')" />
+        </RibbonGroup>
+        <RibbonGroup label="识别">
+          <RibbonBtn icon="vqa" label="OCR 快速" @click="$emit('ocr-recognize', 'mobile')" />
+          <RibbonBtn icon="vqa" label="OCR 高精度" @click="$emit('ocr-recognize', 'server')" />
+        </RibbonGroup>
+        <RibbonGroup label="批注">
+          <RibbonBtn icon="ai" label="AI 批注建议" @click="$emit('ai-annotate')" />
+          <RibbonBtn icon="ai" label="纠错" @click="$emit('ai-proofread')" />
+        </RibbonGroup>
+      </div>
     </div>
   </header>
 </template>
@@ -171,9 +220,9 @@ import RibbonGroup from './RibbonGroup.vue'
 import RibbonBtn from './RibbonBtn.vue'
 import type { AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
 
-type RibbonTab = 'home' | 'edit' | 'page' | 'view'
+type RibbonTab = 'home' | 'edit' | 'page' | 'view' | 'ai'
 type ViewMode = 'single' | 'continuous' | 'facing'
-type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | 'form' | null
+type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | 'form' | 'reorganize' | null
 
 const props = defineProps<{
   activeTab: RibbonTab
@@ -196,7 +245,7 @@ const emit = defineEmits<{
   (e: 'select-color', color: string): void
   (e: 'set-view-mode', mode: ViewMode): void
   (e: 'cycle-view-mode'): void
-  (e: 'toggle-panel', panel: 'outline' | 'search' | 'info' | 'annotations'): void
+  (e: 'toggle-panel', panel: 'outline' | 'search' | 'info' | 'annotations' | 'form' | 'reorganize'): void
   /** Phase 13.9: 切换 OCR 叠加层 */
   (e: 'toggle-ocr-overlay'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
@@ -207,6 +256,13 @@ const emit = defineEmits<{
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void
   (e: 'page-insert' | 'page-insert-from-file'): void
   (e: 'watermark' | 'header-footer' | 'export-menu'): void
+  /** Phase 13.23: 新增功能按钮 */
+  (e: 'save-as-new' | 'export-menu' | 'redact' | 'compress' | 'remove-watermark'): void
+  (e: 'fill-form' | 'rotate-current' | 'crop-page' | 'split-pdf'): void
+  (e: 'ai-summarize' | 'ai-translate' | 'ai-full-summary' | 'ai-rewrite' | 'ai-generate'): void
+  (e: 'ai-vqa' | 'ai-image-desc' | 'ai-extract-terms' | 'ai-optimize-ocr' | 'ai-extract-structured'): void
+  (e: 'ai-auto-outline' | 'ai-keywords' | 'ai-annotate' | 'ai-proofread' | 'ai-recognize-status' | 'ai-view-outline'): void
+  (e: 'extract-images'): void
   /** Phase 10.3: 用户改了图章文字 */
   (e: 'update:stampText', text: string): void
 }>()
@@ -216,10 +272,12 @@ const tabs = [
   { id: 'edit' as const, label: '编辑' },
   { id: 'page' as const, label: '页面' },
   { id: 'view' as const, label: '视图' },
+  { id: 'ai' as const, label: 'AI' },
 ]
 
 const editTools = [
   { id: 'select' as AnnotationTool, label: '选择', icon: 'select', shortcut: 'V' },
+  { id: 'move' as AnnotationTool, label: '手型', icon: 'hand', shortcut: 'M' },
   { id: 'textEdit' as AnnotationTool, label: '文本', icon: 'text', shortcut: 'T' },
   { id: 'highlight' as AnnotationTool, label: '高亮', icon: 'highlight', shortcut: 'H' },
   { id: 'comment' as AnnotationTool, label: '评论', icon: 'comment', shortcut: 'C' },

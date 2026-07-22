@@ -15,6 +15,7 @@
     :title="title"
     width="520px"
     :close-on-click-modal="false"
+    custom-class="pdf-dialog page-ops-dialog"
     @close="onClose"
   >
     <el-tabs v-model="activeTab" class="pdf-page-ops-tabs">
@@ -27,12 +28,7 @@
               <el-radio :value="1">第 {{ currentPage }} 页之后</el-radio>
             </el-radio-group>
           </el-form-item>
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="空白页将基于原文档首页尺寸创建"
-          />
+          <div class="pdf-ops-hint">空白页将基于原文档首页尺寸创建</div>
         </el-form>
       </el-tab-pane>
 
@@ -114,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { pdfApi } from '@/api/pdf'
 
@@ -155,7 +151,15 @@ const hf = ref({
   target: 0,
 })
 
-const title = '页面操作'
+const title = computed(() => {
+  const map: Record<string, string> = {
+    insertBlank: '插入空白页',
+    crop: '裁剪页面',
+    watermark: '添加水印',
+    headerFooter: '页眉页脚',
+  }
+  return map[activeTab.value] || '页面操作'
+})
 
 watch(() => props.modelValue, (v) => {
   visible.value = v
@@ -215,6 +219,14 @@ function allPages(): number[] {
 
 <style scoped>
 .pdf-page-ops-tabs {
-  min-height: 320px;
+  min-height: 220px;
 }
+.pdf-ops-hint {
+  margin-top: 4px;
+  padding-left: 100px;
+  font-size: 12px;
+  color: var(--color-foreground-3, #909399);
+  line-height: 1.5;
+}
+
 </style>

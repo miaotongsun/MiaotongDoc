@@ -102,6 +102,11 @@ export const pdfApi = {
     return api.delete<any, PageOpResult>(`/pdf/${docId}/pages/${pageNum}`)
   },
 
+  /** Phase 13.12-D: 批量删除页面(service 层降序删除避免索引偏移) */
+  deletePagesBatch(docId: number, pages: number[]) {
+    return api.post<any, PageOpResult>(`/pdf/${docId}/pages/delete-batch`, { pages })
+  },
+
   /** 提取页面(Phase 3:原子化,提取为新文件替换当前文档) */
   extractPages(docId: number, data: PdfPageOperationRequest) {
     return api.post<any, PageOpResult>(`/pdf/${docId}/pages/extract`, data)
@@ -237,6 +242,27 @@ export const pdfApi = {
   },
 
   /**
+   * Phase 13.25: 应用文本格式修改(字号/颜色/粗/斜/下划线/高亮)持久化
+   * 后端: POST /api/pdf/{id}/text-format
+   * payload: { pageNumber, ops: [{ range:{x,y,width,height}, format:{fontSize?,color?,bold?,italic?,underline?,highlight?} }] }
+   * 返回: { success, filePath }
+   */
+  applyTextFormat(
+    docId: number,
+    ops: Array<{
+      pageNumber: number
+      range: { x: number; y: number; width: number; height: number }
+      format: Partial<{ fontSize: number; color: string; bold: boolean; italic: boolean; underline: boolean; highlight: string }>
+    }>,
+  ) {
+    const pageNumber = ops[0]?.pageNumber ?? 1
+    return api.post<any, { success: boolean; filePath?: string; message?: string }>(
+      `/pdf/${docId}/text-format`,
+      { pageNumber, ops },
+    )
+  },
+
+  /**
    * 加载已有文字编辑(前端重新打开后可恢复编辑状态)
    * 后端: GET /api/pdf/{id}/text-edits
    * 返回: { edits: [...], count }
@@ -335,6 +361,30 @@ export const pdfApi = {
   },
 
   /**
+   * Phase 13.26: 签名 in-place 嵌入(落盘 + 返回 filePath,不下载)
+   * POST /api/pdf/{id}/signature/in-place
+   * 返回: { success, filePath, message }
+   */
+  embedSignatureInPlace(docId: number, data: PdfSignatureRequest) {
+    return api.post<any, { success: boolean; filePath: string; message?: string }>(
+      `/pdf/${docId}/signature/in-place`,
+      data,
+    )
+  },
+
+  /**
+   * Phase 13.26: 表单填充 in-place(落盘 + 返回 filePath,不下载)
+   * POST /api/pdf/{id}/form-fields/fill-in-place
+   * 返回: { success, filePath, message }
+   */
+  fillFormFieldsInPlace(docId: number, values: Record<string, string>) {
+    return api.post<any, { success: boolean; filePath: string; message?: string }>(
+      `/pdf/${docId}/form-fields/fill-in-place`,
+      { values },
+    )
+  },
+
+  /**
    * Phase 12.4: 应用密文(绘制黑色矩形覆盖)
    * POST /api/pdf/{id}/redact
    */
@@ -395,6 +445,30 @@ export const pdfApi = {
       { responseType: 'blob' as any },
     )
   },
+
+  /** Phase 13.23: 去水印 */
+  removeWatermark(docId: number, mode: 'annotation' | 'cover' = 'annotation') {
+    return api.post<any, PageOpResult>(`/pdf/${docId}/watermark/remove`, { mode })
+  },
+
+  /** Phase 13.23: 智能目录(AI 生成 + 写入 PDF outline) */
+  autoOutline(docId: number) {
+    return api.post<any, { success: boolean; outline: Array<{ title: string; page: number; level: number }>; filePath?: string; error?: string }>(
+      `/pdf/${docId}/ai/auto-outline`, {},
+    )
+  },
+
+  /** Phase 13.23: 智能提取(文字+表格+图片+结构化 JSON) */
+  extractStructured(docId: number) {
+    return api.post<any, { success: boolean; text: string; tables: string; imagesCount: number; structuredJson: string; error?: string }>(
+      `/pdf/${docId}/ai/extract-structured`, {},
+    )
+  },
+
+  /** Phase 13.23: 提取嵌入图片 zip */
+  extractImages(docId: number) {
+    return api.get<any, Blob>(`/pdf/${docId}/extract-images`, { responseType: 'blob' as any })
+  },
 }
 
 // ==================== Phase 2 类型扩展 ====================
@@ -416,6 +490,8 @@ export interface PdfTextPosition {
   font: string
   /** OCR 置信度 0-1(Phase 11.4 PaddleOCR 字段,后端 fallback 路径可能缺失) */
   confidence?: number
+  /** Phase 13.22: 原文字真实颜色 #RRGGBB(后端从 graphics state rg/RG 指令解析) */
+  color?: string
   /** 所属页码 */
   pageNum: number
   /** 页面原始宽度 */
@@ -445,6 +521,10 @@ export interface PdfTextEdit {
   originalX?: number
   /** modify 类型:原位置 Y */
   originalY?: number
+  /** Phase 13.22: modify 精确覆盖原 token 宽度(后端用此值替代估算) */
+  width?: number
+  /** Phase 13.22: 原 token 字体名(后端用此找原字体;缺则 fallback 中文/Helvetica) */
+  font?: string
 }
 
 /**

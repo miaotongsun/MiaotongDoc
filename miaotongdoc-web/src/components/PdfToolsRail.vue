@@ -79,8 +79,10 @@ import type { AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
 
 const props = defineProps<{
   activeTool: AnnotationTool
-  rightPanel: 'outline' | 'search' | 'info' | 'annotations' | null
+  rightPanel: 'outline' | 'search' | 'info' | 'annotations' | 'form' | 'reorganize' | null
   aiVisible: boolean
+  /** Phase 13.21: 组织页面全屏视图是否打开(高亮 rail 按钮) */
+  organizeOpen?: boolean
   /** Phase 11.6: 工具栏是否折叠(隐藏按钮区,只留 rail) */
   collapsed?: boolean
 }>()
@@ -93,6 +95,7 @@ const emit = defineEmits<{
   (e: 'send-sign'): void
   (e: 'open-ai'): void
   (e: 'toggle-panel', panel: 'outline' | 'annotations'): void
+  (e: 'organize'): void
   (e: 'toggle-collapse'): void
 }>()
 
@@ -106,6 +109,7 @@ type RailAction = {
 
 const topActions: RailAction[] = [
   { id: 'export', label: '导出 PDF', icon: 'export', handler: () => emit('export') },
+  { id: 'organize', label: '组织页面', icon: 'organize', handler: () => emit('organize'), active: () => !!props.organizeOpen },
   { id: 'print', label: '打印', icon: 'print', handler: () => emit('print') },
   { id: 'share', label: '分享', icon: 'share', handler: () => emit('share') },
   { id: 'send-sign', label: '发送签署', icon: 'signature', handler: () => emit('send-sign') },

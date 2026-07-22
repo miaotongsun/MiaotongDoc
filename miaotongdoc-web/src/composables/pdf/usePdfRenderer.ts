@@ -157,6 +157,9 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
       textLayerEl.innerHTML = ''
       textLayerEl.style.width = canvasEl.width + 'px'
       textLayerEl.style.height = canvasEl.height + 'px'
+      // Phase 13.23: pdfjs 4.x TextLayer 依赖 --scale-factor 定位 span,
+      // 不设会导致 span 堆左上角、与 canvas 文字位置不一致(视觉重叠/错位)
+      textLayerEl.style.setProperty('--scale-factor', String(scale.value))
       const textContent = await page.getTextContent()
       if (textContent.items.length > 0) {
         const lib = await ensurePdfjs()
@@ -164,8 +167,36 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
           textContentSource: textContent,
           container: textLayerEl,
           viewport,
+          // 关键:不传 pageWidth/pageHeight 时 pdfjs 走百分比分支但分母 undefined → 0 → 堆左上角
+          // 传 pageWidth/Height 强制走 calc(*--scale-factor) 像素分支,span 按 PDF 坐标 × scale 精确定位
+          pageWidth: viewport.width,
+          pageHeight: viewport.height,
         })
         await textLayer.render()
+        // Phase 13.23: pdfjs 4.x TextLayer span 顶 = baseline - ascent(字顶),
+        // canvas 文字"实际可见顶"在 em-box 顶 = baseline + fontSize(因为字形渲染到 em-box)。
+        // 差值 ≈ 0.22*fontSize(0.78 ascender 比例),把每个 span top 下移 0.22em 让顶对齐 canvas 文字实际可见顶。
+        // 注意:inline transform 已被 pdfjs 设为 scaleX(宽度调整),不能直接覆盖。
+        // 改 style.top 增加 0.22*fontSize 像素偏移(读取 fontSize 解析)。
+        const spans = textLayerEl.querySelectorAll('span')
+        spans.forEach((sp: HTMLElement) => {
+          // Phase 13.24: 显式 contenteditable=false 阻止 Chrome 把 span 当成可编辑元素,
+          // 否则选中时会弹"字号 B/I/U + 颜色"浮动工具栏(Chrome 默认 contenteditable 行为)。
+          // -webkit-user-modify: read-only 在 Chrome 不生效,这是唯一可靠的方案。
+          sp.setAttribute('contenteditable', 'false')
+          const m = sp.style.fontSize.match(/([\d.]+)px/)
+          if (m) {
+            const fs = parseFloat(m[1])
+            const curTop = sp.style.top
+            // 把 top 从百分比转回像素再加偏移
+            const topMatch = curTop.match(/(-?[\d.]+)%/)
+            if (topMatch) {
+              const topPct = parseFloat(topMatch[1])
+              const topPx = (topPct / 100) * viewport.height
+              sp.style.top = `${((topPx - fs * 0.16) / viewport.height * 100).toFixed(2)}%`
+            }
+          }
+        })
       }
     }
     cleanupHiddenCanvases()
@@ -200,12 +231,31 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
       textLayerEl.innerHTML = ''
       textLayerEl.style.width = Math.ceil(viewport.width) + 'px'
       textLayerEl.style.height = Math.ceil(viewport.height) + 'px'
+      textLayerEl.style.setProperty('--scale-factor', String(scale.value))
       const textLayer = new (lib as any).TextLayer({
         textContentSource: textContent,
         container: textLayerEl,
         viewport,
+        pageWidth: viewport.width,
+        pageHeight: viewport.height,
       })
       await textLayer.render()
+      // Phase 13.23: 同 renderPage,下移 0.22em 让 span 顶 = canvas 文字实际可见顶
+      const spans = textLayerEl.querySelectorAll('span')
+      spans.forEach((sp: HTMLElement) => {
+        // Phase 13.24: 阻止 Chrome contenteditable 浮动工具栏
+        sp.setAttribute('contenteditable', 'false')
+        const m = sp.style.fontSize.match(/([\d.]+)px/)
+        if (m) {
+          const fs = parseFloat(m[1])
+          const topMatch = sp.style.top.match(/(-?[\d.]+)%/)
+          if (topMatch) {
+            const topPct = parseFloat(topMatch[1])
+            const topPx = (topPct / 100) * viewport.height
+            sp.style.top = `${((topPx - fs * 0.16) / viewport.height * 100).toFixed(2)}%`
+          }
+        }
+      })
     } catch (e) {
       console.error(`[renderer] renderOcrTextLayer(${pageNum}) failed:`, e)
     }

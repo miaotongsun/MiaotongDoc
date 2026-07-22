@@ -274,6 +274,32 @@ public class PdfController {
     }
 
     /**
+     * Phase 13.12-D: 批量删除页面
+     * POST /api/pdf/{id}/pages/delete-batch { pages: [1,3,5] }
+     * service 层已按降序删除避免索引偏移
+     */
+    @PostMapping("/{id}/pages/delete-batch")
+    public ResponseEntity<Map<String, Object>> deletePagesBatch(
+            @PathVariable Long id,
+            @RequestBody Map<String, List<Integer>> body,
+            HttpServletRequest httpRequest) {
+        List<Integer> pages = body.get("pages");
+        if (pages == null || pages.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false, "message", "pages 不能为空"));
+        }
+        byte[] result = pdfToolService.deletePages(id, pages);
+        String newFilePath = pdfToolService.replacePdfBytes(id, result, "delete_pages_batch");
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已删除 " + pages.size() + " 页",
+            "filePath", newFilePath,
+            "deletedPages", pages.size()
+        ));
+    }
+
+    /**
      * 提取页面(Phase 3:原子化)
      */
     @PostMapping("/{id}/pages/extract")
@@ -396,6 +422,64 @@ public class PdfController {
             "message", "已添加水印",
             "bustUrl", newBytes != null ? System.currentTimeMillis() : null
         ));
+    }
+
+    /**
+     * Phase 13.23: 去水印
+     * POST /api/pdf/{id}/watermark/remove { mode: "annotation"|"cover" }
+     */
+    @PostMapping("/{id}/watermark/remove")
+    public ResponseEntity<Map<String, Object>> removeWatermark(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        String mode = body.getOrDefault("mode", "annotation").toString();
+        byte[] newBytes = pdfToolService.removeWatermark(id, mode);
+        String newFilePath = pdfToolService.replacePdfBytes(id, newBytes, "remove-watermark");
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "去水印完成",
+            "filePath", newFilePath
+        ));
+    }
+
+    /**
+     * Phase 13.23: 智能目录(AI 生成 + 写入 PDF outline)
+     * POST /api/pdf/{id}/ai/auto-outline
+     */
+    @PostMapping("/{id}/ai/auto-outline")
+    public ResponseEntity<Map<String, Object>> autoOutline(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        Map<String, Object> result = pdfToolService.autoOutline(id);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Phase 13.23: 智能提取(文字+表格+图片+结构化 JSON)
+     * POST /api/pdf/{id}/ai/extract-structured
+     */
+    @PostMapping("/{id}/ai/extract-structured")
+    public ResponseEntity<Map<String, Object>> extractStructured(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        Map<String, Object> result = pdfToolService.extractStructured(id);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Phase 13.23: 提取嵌入图片 zip
+     * GET /api/pdf/{id}/extract-images
+     */
+    @GetMapping("/{id}/extract-images")
+    public ResponseEntity<byte[]> extractImages(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        byte[] zip = pdfToolService.extractImagesZip(id);
+        return ResponseEntity.ok()
+            .header("Content-Type", "application/zip")
+            .header("Content-Disposition", "attachment; filename=\"pdf-images.zip\"")
+            .body(zip);
     }
 
     /**
@@ -561,6 +645,43 @@ public class PdfController {
         } catch (Exception e) {
             log.error("保存 PDF 文字编辑失败: docId={}", id, e);
             throw new BusinessException("保存编辑失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 13.25: 应用文本格式修改(字号/颜色/粗/斜/下划线/高亮)持久化
+     * POST /api/pdf/{id}/text-format
+     * body: { pageNumber, ops: [{ range:{x,y,width,height}, format:{fontSize?,color?,bold?,italic?,underline?,highlight?} }] }
+     */
+    @PostMapping("/{id}/text-format")
+    public ResponseEntity<Map<String, Object>> applyTextFormat(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+
+        try {
+            Number pageNumNum = (Number) body.get("pageNumber");
+            int pageNumber = pageNumNum != null ? pageNumNum.intValue() : 1;
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> ops = (List<Map<String, Object>>) body.get("ops");
+            if (ops == null || ops.isEmpty()) {
+                throw new BusinessException("格式操作列表为空");
+            }
+
+            String filePath = pdfToolService.applyTextFormat(id, pageNumber, ops);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "filePath", filePath,
+                    "message", "已应用 " + ops.size() + " 处格式修改"
+            ));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("应用 PDF 文本格式失败: docId={}", id, e);
+            throw new BusinessException("应用格式失败: " + e.getMessage());
         }
     }
 
@@ -876,6 +997,29 @@ public class PdfController {
     }
 
     /**
+     * Phase 13.26: 表单填充 in-place(落盘 + 返回 filePath,不下载)
+     */
+    @PostMapping("/{id}/form-fields/fill-in-place")
+    public ResponseEntity<Map<String, Object>> fillFormFieldsInPlace(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, String> values = (Map<String, String>) body.get("values");
+            byte[] result = pdfToolService.fillFormFields(id, values);
+            String filePath = pdfToolService.replacePdfBytes(id, result, "form-fill");
+            return ResponseEntity.ok(Map.of("success", true, "filePath", filePath, "message", "表单已填充并保存"));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("表单 in-place 填充失败: docId={}", id, e);
+            throw new BusinessException("表单填充失败: " + e.getMessage());
+        }
+    }
+
+    /**
      * Phase 12.3: 嵌入签名图片
      * 接收 { image: base64, page, x, y, width, height }
      * 返回新 PDF 字节
@@ -895,6 +1039,34 @@ public class PdfController {
         headers.setContentType(MediaType.APPLICATION_PDF);
         headers.setContentDisposition(ContentDisposition.attachment().filename("signed.pdf").build());
         return new ResponseEntity<>(result, headers, HttpStatus.OK);
+    }
+
+    /**
+     * Phase 13.26: 签名 in-place 嵌入(落盘 + 返回 filePath,不下载)
+     * 前端拿 filePath 后 reload 文档,签名直接显示在当前页
+     */
+    @PostMapping("/{id}/signature/in-place")
+    public ResponseEntity<Map<String, Object>> embedSignatureInPlace(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        try {
+            String imageBase64 = (String) body.get("image");
+            int page = body.get("page") instanceof Number ? ((Number) body.get("page")).intValue() : 1;
+            double x = body.get("x") instanceof Number ? ((Number) body.get("x")).doubleValue() : 0;
+            double y = body.get("y") instanceof Number ? ((Number) body.get("y")).doubleValue() : 0;
+            double width = body.get("width") instanceof Number ? ((Number) body.get("width")).doubleValue() : 120;
+            double height = body.get("height") instanceof Number ? ((Number) body.get("height")).doubleValue() : 40;
+            byte[] result = pdfToolService.embedSignature(id, imageBase64, page, x, y, width, height);
+            String filePath = pdfToolService.replacePdfBytes(id, result, "signature");
+            return ResponseEntity.ok(Map.of("success", true, "filePath", filePath, "message", "签名已嵌入文档"));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("签名 in-place 嵌入失败: docId={}", id, e);
+            throw new BusinessException("签名嵌入失败: " + e.getMessage());
+        }
     }
 
     /**

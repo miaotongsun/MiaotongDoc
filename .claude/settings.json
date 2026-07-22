@@ -237,12 +237,18 @@
       "Read(//c/Users/tiany/**)",
       "Bash(npm root *)",
       "Read(//c/Users/tiany/AppData/Roaming/npm/node_modules/**)",
-      "mcp__codegraph__codegraph_context"
+      "mcp__codegraph__codegraph_context",
+      "Bash(cp -r dist/* ../MiaotongDoc-Docker/app/web/dist/)",
+      "Read(//d/tiany/stycode/**)",
+      "Read(//c/Windows/Fonts/**)",
+      "Bash(mkdir -p /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts && cp /c/Windows/Fonts/msyh.ttc /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts/NotoSansSC-Regular.ttf && ls -la /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts/)",
+      "Read(//d/tiany/stycode/Miaotongdoc-web/src/components/PdfTextEditorLayer.vue/miaotongdoc-web/src/components/**)"
     ],
     "additionalDirectories": [
       "\\tmp",
       "d:\\tiany\\stycode\\MiaotongDoc\\miaotongdoc-server\\target\\classes\\com\\miaotong\\doc\\service",
-      "C:\\Users\\tiany\\AppData\\Local\\Temp\\pdf-e2e"
+      "C:\\Users\\tiany\\AppData\\Local\\Temp\\pdf-e2e",
+      "C:\\Windows\\Fonts"
     ]
   },
   "hooks": {

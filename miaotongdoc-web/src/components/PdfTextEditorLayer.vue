@@ -109,6 +109,11 @@ function tokenStyle(token: PdfTextPosition) {
     height: `${h}px`,
     fontSize: `${fs}px`,
     lineHeight: `${h}px`,
+    // Phase 13.22: 原文字色(默认黑);中文 fallback system-ui
+    color: token.color || '#000000',
+    fontFamily: /[一-鿿]/.test(token.text || '')
+      ? 'system-ui, "Noto Sans SC", sans-serif'
+      : 'inherit',
   }
 }
 
@@ -214,29 +219,30 @@ watch(
 
 .pdf-edit-token {
   pointer-events: auto;
-  border: 1px dashed var(--color-primary);
+  /* Phase 13.22: 默认透明边框+无背景(只显示原文字 + 原字色),hover 才显虚线 */
+  border: 1px solid transparent;
   border-radius: 2px;
   padding: 0 2px;
   margin: 0;
   display: inline-block;
-  font-family: var(--font-sans);
-  color: var(--color-foreground);
-  background: rgba(64, 158, 255, 0.08);
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
   cursor: text;
   outline: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  user-select: text;
+  user-select: none; /* Phase 13.22: 文字层不接 selection(选区由 pdfjs TextLayer 提供) */
   transition: border-color var(--duration-fast) var(--ease-out),
     background var(--duration-fast) var(--ease-out);
 }
 
 .pdf-edit-token:hover,
 .pdf-edit-token.is-hover {
-  border-style: solid;
+  border-style: dashed;
   border-color: var(--color-primary);
-  background: rgba(64, 158, 255, 0.18);
+  background: rgba(64, 158, 255, 0.12);
   z-index: 1;
 }
 

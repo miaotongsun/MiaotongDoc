@@ -29,6 +29,7 @@ import { computed } from 'vue'
 const ICONS: Record<string, string> = {
   // ===== 编辑工具 =====
   select:    'M3 3l7 17 2-8 8-2L3 3z',
+  hand:      'M8 13V5a1.5 1.5 0 0 1 3 0v6m0-1V4a1.5 1.5 0 0 1 3 0v6m0-1V5a1.5 1.5 0 0 1 3 0v6m0-2V7a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-2a6 6 0 0 1-5-3l-3-5a1.5 1.5 0 0 1 2.5-1.5L8 13z',
   text:      'M4 7V4h16v3M12 4v16M9 20h6',
   highlight: 'M9 11l-6 6v4h4l6-6m-4-4l5-5 4 4-5 5m-4-4l4 4',
   comment:   'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
@@ -75,6 +76,8 @@ const ICONS: Record<string, string> = {
   more:      'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   panel:     'M3 3h18v18H3zM15 3v18',
   rotateAll: 'M3 12a9 9 0 1 0 9-9M3 5v7h7M21 12a9 9 0 0 1-9 9M21 19v-7h-7',
+  organize:  'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+  crop:      'M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14',
   // ===== Phase 10: 形状工具图标 =====
   rectangle:    'M4 5h16v14H4z',
   ellipse:      'M12 5a8 4 0 1 0 0 14 8 4 0 1 0 0-14',

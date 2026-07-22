@@ -77,6 +77,8 @@ const props = defineProps<{
   currentPage: number
   /** 文件名(用于下载) */
   filename?: string
+  /** Phase 13.21: 弹窗展开方向,'left' 时向左展开(右侧工具栏用) */
+  anchorSide?: 'left' | 'right'
 }>()
 
 const emit = defineEmits<{
@@ -88,7 +90,12 @@ const busy = ref(false)
 
 const position = computed(() => {
   if (!props.anchor) return { top: '48px', left: '50%' }
-  return { top: `${props.anchor.y + 8}px`, left: `${props.anchor.x}px` }
+  const top = `${props.anchor.y + 8}px`
+  // anchorSide='left':anchor.x 为按钮右边缘,菜单向左展开(用 right 定位)
+  if (props.anchorSide === 'left') {
+    return { top, right: `${window.innerWidth - props.anchor.x}px`, left: 'auto' }
+  }
+  return { top, left: `${props.anchor.x}px` }
 })
 
 function triggerDownload(blob: Blob, defaultName: string) {

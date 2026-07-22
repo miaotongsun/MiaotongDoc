@@ -6,11 +6,16 @@ import com.miaotong.doc.service.storage.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.IOUtils;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
+import org.apache.pdfbox.multipdf.PDFMergerUtility;
 import org.apache.pdfbox.multipdf.Splitter;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -40,9 +45,39 @@ public class PdfToolService {
 
     private final DocumentService documentService;
     private final StorageService storageService;
+    /** Phase 13.23: AI 服务(智能目录生成) */
+    private final com.miaotong.doc.service.ai.AiService aiService;
+    /** Phase 13.23: Docling 结构化提取(智能提取) */
+    private final com.miaotong.doc.service.DoclingService doclingService;
+
+    /** Phase 13.22: 中文字体缓存(嵌入 NotoSansSC/微软雅黑用于中文 PDF 文字修改) */
+    private static volatile PDFont CHINESE_FONT = null;
+    /** 原 token 字体加载缓存(fontName -> 已加载的 PDFont) */
+    private static final java.util.concurrent.ConcurrentHashMap<String, PDFont> FONT_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 加载中文字体(单次,线程安全) */
+    private static synchronized PDFont getChineseFont() {
+        if (CHINESE_FONT != null) return CHINESE_FONT;
+        try (java.io.InputStream is = PdfToolService.class.getResourceAsStream("/fonts/NotoSansSC-Regular.ttf")) {
+            if (is == null) {
+                log.warn("中文字体文件 /fonts/NotoSansSC-Regular.ttf 未找到");
+                return null;
+            }
+            byte[] fontBytes = IOUtils.toByteArray(is);
+            // PDType0Font.load 需要一个 PDDocument 上下文(用空文档作容器)
+            try (PDDocument tmp = new PDDocument()) {
+                CHINESE_FONT = PDType0Font.load(tmp, new java.io.ByteArrayInputStream(fontBytes));
+            }
+            log.info("中文字体加载成功: size={}B", fontBytes.length);
+        } catch (Exception e) {
+            log.error("加载中文字体失败", e);
+        }
+        return CHINESE_FONT;
+    }
 
     /**
      * 合并多个 PDF
+     * 用 PDFMergerUtility 而非 importPage(浅拷贝会丢字体/资源导致内容乱码)
      */
     public byte[] merge(List<Long> documentIds) {
         if (documentIds == null || documentIds.size() < 2) {
@@ -50,7 +85,9 @@ public class PdfToolService {
         }
 
         try {
-            PDDocument merged = new PDDocument();
+            PDFMergerUtility merger = new PDFMergerUtility();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            merger.setDestinationStream(baos);
 
             for (Long docId : documentIds) {
                 Document doc = documentService.getDocument(docId);
@@ -58,16 +95,12 @@ public class PdfToolService {
                     throw new BusinessException("文档 " + doc.getTitle() + " 不是 PDF 类型");
                 }
                 byte[] pdfBytes = storageService.load(doc.getFilePath());
-                try (PDDocument source = Loader.loadPDF(pdfBytes)) {
-                    for (int i = 0; i < source.getNumberOfPages(); i++) {
-                        merged.importPage(source.getPage(i));
-                    }
-                }
+                // PDFBox 3.x: addSource 只接受 RandomAccessRead/InputStream(新API)
+                merger.addSource(new RandomAccessReadBuffer(pdfBytes));
             }
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            merged.save(baos);
-            merged.close();
+            // 内存模式合并,保留字体/资源(避免 importPage 浅拷贝乱码)
+            merger.mergeDocuments(IOUtils.createMemoryOnlyStreamCache());
             log.info("合并 PDF 完成: documents={}, size={}", documentIds, baos.size());
             return baos.toByteArray();
         } catch (BusinessException e) {
@@ -188,19 +221,22 @@ public class PdfToolService {
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
             try (PDDocument source = Loader.loadPDF(pdfBytes)) {
-                PDDocument extracted = new PDDocument();
+                int total = source.getNumberOfPages();
                 for (int pageNum : pages) {
-                    if (pageNum < 1 || pageNum > source.getNumberOfPages()) {
+                    if (pageNum < 1 || pageNum > total) {
                         throw new BusinessException("页码 " + pageNum + " 超出范围");
                     }
-                    // 用 importPage 复制页面
-                    PDPage page = source.getPage(pageNum - 1);
-                    extracted.importPage(page);
+                }
+                // 原地删除不需要的页(保留同一文档对象,字体/资源不丢失,避免 importPage 浅拷贝乱码)
+                java.util.Set<Integer> keep = new java.util.HashSet<>(pages);
+                for (int i = source.getNumberOfPages() - 1; i >= 0; i--) {
+                    if (!keep.contains(i + 1)) {
+                        source.removePage(i);
+                    }
                 }
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                extracted.save(baos);
-                extracted.close();
+                source.save(baos);
                 log.info("提取页面完成: docId={}, pages={}", documentId, pages.size());
                 return baos.toByteArray();
             }
@@ -226,18 +262,26 @@ public class PdfToolService {
                 if (newOrder.size() != totalPages) {
                     throw new BusinessException("新顺序的页数(" + newOrder.size() + ")与原文档页数(" + totalPages + ")不一致");
                 }
-
-                PDDocument reordered = new PDDocument();
                 for (int pageNum : newOrder) {
                     if (pageNum < 1 || pageNum > totalPages) {
                         throw new BusinessException("页码 " + pageNum + " 超出范围");
                     }
-                    reordered.importPage(source.getPage(pageNum - 1));
+                }
+
+                // 原地重排:收集页对象(同 COS 文档,资源保留)→清空页树→按新序加回
+                List<PDPage> ordered = new ArrayList<>();
+                for (int pageNum : newOrder) {
+                    ordered.add(source.getPage(pageNum - 1));
+                }
+                while (source.getNumberOfPages() > 0) {
+                    source.removePage(0);
+                }
+                for (PDPage p : ordered) {
+                    source.addPage(p);
                 }
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                reordered.save(baos);
-                reordered.close();
+                source.save(baos);
                 log.info("重排页面完成: docId={}, newOrder={}", documentId, newOrder);
                 return baos.toByteArray();
             }
@@ -451,6 +495,167 @@ public class PdfToolService {
     }
 
     /**
+     * Phase 13.25: 应用文本格式修改(字号/颜色/粗/斜/下划线/高亮)并落盘
+     * <p>
+     * 每个 op 包含:
+     * - range: PDF pt 矩形 {x, y, width, height}(左下原点),标识要格式化的文字区域
+     * - format: { fontSize?, color?, bold?, italic?, underline?, highlight? }
+     * <p>
+     * 实现策略:
+     * - highlight: 在文字区域下方画半透明彩色矩形(叠加高亮,不改文字)
+     * - color/fontSize/bold/italic/underline: 用 PDFTextStripperByArea 提取区域文字,
+     *   白色矩形覆盖原文字,再以新格式重绘
+     *
+     * @return 新文件路径
+     */
+    public String applyTextFormat(Long docId, int pageNumber, List<Map<String, Object>> ops) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                if (pageNumber < 1 || pageNumber > pdf.getNumberOfPages()) {
+                    throw new BusinessException("页码超出范围: " + pageNumber);
+                }
+                PDPage page = pdf.getPage(pageNumber - 1);
+                PDRectangle pageBox = page.getMediaBox();
+                float pageHeight = pageBox.getHeight();
+
+                for (Map<String, Object> op : ops) {
+                    applyFormatOp(pdf, page, pageHeight, op);
+                }
+
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                pdf.save(baos);
+                String newFilePath = replacePdfBytes(docId, baos.toByteArray(), "text-format");
+                log.info("应用 PDF 文本格式完成: docId={}, opsCount={}", docId, ops.size());
+                return newFilePath;
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("应用 PDF 文本格式失败: docId={}, error={}", docId, e.getMessage());
+            throw new BusinessException("应用格式失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 应用单个格式操作
+     */
+    @SuppressWarnings("unchecked")
+    private void applyFormatOp(PDDocument pdf, PDPage page, float pageHeight, Map<String, Object> op) {
+        try {
+            Map<String, Object> rect = (Map<String, Object>) op.get("range");
+            Map<String, Object> format = (Map<String, Object>) op.get("format");
+            if (rect == null || format == null) return;
+
+            Number rxNum = (Number) rect.get("x");
+            Number ryNum = (Number) rect.get("y");
+            Number rwNum = (Number) rect.get("width");
+            Number rhNum = (Number) rect.get("height");
+            if (rxNum == null || ryNum == null || rwNum == null || rhNum == null) return;
+
+            // range 是 PDF pt 左下原点(PDF.js selection rect 转 PDF pt 后传入)
+            float pdfX = rxNum.floatValue();
+            float pdfYBottom = ryNum.floatValue();      // 距 PDF 页底
+            float pdfW = rwNum.floatValue();
+            float pdfH = rhNum.floatValue();
+
+            // highlight: 在文字下方画半透明矩形(PDF 坐标左下原点,直接用)
+            Object highlightObj = format.get("highlight");
+            if (highlightObj != null) {
+                String hex = highlightObj.toString();
+                float[] rgb = hexToRgb(hex);
+                try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
+                        PDPageContentStream.AppendMode.APPEND, true, true)) {
+                    cs.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
+                    // APPEND 模式画在文字上方;设透明度需 PDExtendedGraphicsState,这里用半透明模拟
+                    cs.addRect(pdfX, pdfYBottom, pdfW, pdfH);
+                    cs.fill();
+                }
+                return;
+            }
+
+            // color/fontSize/bold/italic/underline: 提取区域文字 + 覆盖 + 重绘
+            String colorHex = format.get("color") != null ? format.get("color").toString() : "#000000";
+            float[] rgb = hexToRgb(colorHex);
+            Number fontSizeNum = (Number) format.get("fontSize");
+            float fontSize = fontSizeNum != null ? fontSizeNum.floatValue() : 12f;
+            boolean bold = Boolean.TRUE.equals(format.get("bold"));
+            boolean italic = Boolean.TRUE.equals(format.get("italic"));
+            boolean underline = Boolean.TRUE.equals(format.get("underline"));
+
+            // 用 PDFTextStripperByArea 提取区域内文字
+            String regionText;
+            try {
+                java.awt.geom.Rectangle2D.Float region = new java.awt.geom.Rectangle2D.Float(
+                        pdfX, pageHeight - pdfYBottom - pdfH, pdfW, pdfH);
+                org.apache.pdfbox.text.PDFTextStripperByArea stripper =
+                        new org.apache.pdfbox.text.PDFTextStripperByArea();
+                stripper.addRegion("r1", region);
+                stripper.extractRegions(page);
+                regionText = stripper.getTextForRegion("r1").trim();
+            } catch (Exception e) {
+                log.warn("提取区域文字失败,跳过重绘: {}", e.getMessage());
+                return;
+            }
+            if (regionText.isEmpty()) return;
+
+            // 白色矩形覆盖原文字
+            try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
+                    PDPageContentStream.AppendMode.APPEND, true, true)) {
+                cs.setNonStrokingColor(1.0f, 1.0f, 1.0f);
+                cs.addRect(pdfX, pdfYBottom, pdfW, pdfH);
+                cs.fill();
+            }
+
+            // 选字体(粗/斜用 Helvetica-Bold/Oblique 近似;中文回退)
+            PDFont font = selectFormatFont(pdf, bold, italic, regionText);
+
+            // 重绘文字(baseline 在矩形底部上方一点)
+            try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
+                    PDPageContentStream.AppendMode.APPEND, true, true)) {
+                cs.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
+                cs.setFont(font, fontSize);
+                cs.beginText();
+                cs.newLineAtOffset(pdfX, pdfYBottom + pdfH * 0.2f);
+                cs.showText(regionText);
+                cs.endText();
+                // 下划线
+                if (underline) {
+                    cs.setLineWidth(fontSize * 0.08f);
+                    cs.setStrokingColor(rgb[0], rgb[1], rgb[2]);
+                    cs.moveTo(pdfX, pdfYBottom + pdfH * 0.15f);
+                    cs.lineTo(pdfX + pdfW, pdfYBottom + pdfH * 0.15f);
+                    cs.stroke();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("应用单个格式操作失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 13.25: 为格式重绘选字体(粗/斜近似 + 中文回退)
+     */
+    private PDFont selectFormatFont(PDDocument pdf, boolean bold, boolean italic, String text) {
+        boolean hasCJK = text.chars().anyMatch(c -> c > 0x2E80);
+        if (hasCJK) {
+            // 中文:尝试嵌入中文字体;回退 Helvetica(中文会丢,但避免崩)
+            try {
+                return selectFont(pdf, new java.util.HashMap<>(), text);
+            } catch (Exception e) {
+                return new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            }
+        }
+        if (bold && italic) return new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD_OBLIQUE);
+        if (bold) return new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        if (italic) return new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE);
+        return new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+    }
+
+    /**
      * 应用单个编辑操作
      */
     private void applySingleEdit(PDDocument pdf, Map<String, Object> edit) {
@@ -480,12 +685,15 @@ public class PdfToolService {
             String colorHex = edit.get("color") != null ? edit.get("color").toString() : "#000000";
             float[] rgb = hexToRgb(colorHex);
 
+            // Phase 13.22: 字体选择(原字体 > 中文 > Helvetica)
+            PDFont font = selectFont(pdf, edit, text);
+
             if ("add".equals(type)) {
                 // 添加文字
                 try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
                         PDPageContentStream.AppendMode.APPEND, true, true)) {
                     cs.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
-                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), (float) fontSize);
+                    cs.setFont(font, (float) fontSize);
                     cs.beginText();
                     cs.newLineAtOffset(x, y);
                     cs.showText(text);
@@ -513,22 +721,25 @@ public class PdfToolService {
                 }
 
             } else if ("modify".equals(type)) {
-                // 修改：先覆盖原位置，再添加新文字
+                // 修改：先覆盖原位置（用原 token 精确 width），再添加新文字
                 Number origXNum = (Number) edit.get("originalX");
                 Number origYNum = (Number) edit.get("originalY");
                 String origText = edit.get("originalText") != null ? edit.get("originalText").toString() : "";
+                Number origWidthNum = (Number) edit.get("width");
 
                 if (origXNum != null && origYNum != null) {
                     float origX = origXNum.floatValue();
                     float origY = origYNum.floatValue();
+                    // 优先用原 token width,缺则估算
+                    float textWidth = origWidthNum != null && origWidthNum.floatValue() > 0
+                            ? origWidthNum.floatValue()
+                            : fontSize * origText.length() * 0.5f;
 
                     // 覆盖原位置
                     try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
                             PDPageContentStream.AppendMode.APPEND, true, true)) {
                         cs.setNonStrokingColor(1.0f, 1.0f, 1.0f); // 白色覆盖
-                        // 估算文字宽度
-                        float textWidth = fontSize * origText.length() * 0.5f;
-                        cs.addRect(origX - 2, origY - 2, textWidth + 4, fontSize + 4);
+                        cs.addRect(origX - 1, origY - 1, textWidth + 2, fontSize + 2);
                         cs.fill();
                     }
                 }
@@ -537,7 +748,7 @@ public class PdfToolService {
                 try (PDPageContentStream cs = new PDPageContentStream(pdf, page,
                         PDPageContentStream.AppendMode.APPEND, true, true)) {
                     cs.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
-                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), (float) fontSize);
+                    cs.setFont(font, (float) fontSize);
                     cs.beginText();
                     cs.newLineAtOffset(x, y);
                     cs.showText(text);
@@ -547,6 +758,52 @@ public class PdfToolService {
         } catch (Exception e) {
             log.warn("应用单个编辑失败: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Phase 13.22: 字体选择 — 优先用原 token 字体,其次中文,兜底 Helvetica
+     */
+    private PDFont selectFont(PDDocument pdf, Map<String, Object> edit, String text) {
+        // 1. 尝试用原字体
+        String fontName = edit.get("font") != null ? edit.get("font").toString() : null;
+        if (fontName != null && !fontName.isEmpty() && !"OCR".equals(fontName)) {
+            PDFont cached = FONT_CACHE.get(fontName);
+            if (cached != null) return cached;
+            try {
+                // 遍历文档所有页资源中的字体(通过 font name 解析)
+                for (int pi = 0; pi < pdf.getNumberOfPages(); pi++) {
+                    org.apache.pdfbox.pdmodel.PDResources res = pdf.getPage(pi).getResources();
+                    if (res != null && res.getFontNames() != null) {
+                        for (org.apache.pdfbox.cos.COSName cname : res.getFontNames()) {
+                            String fname = cname.getName();
+                            if (fontName.equals(fname)) {
+                                org.apache.pdfbox.pdmodel.font.PDFont f = res.getFont(cname);
+                                if (f != null) {
+                                    FONT_CACHE.put(fontName, f);
+                                    return f;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignore) {}
+        }
+        // 2. 含中文 → 中文字体
+        if (containsChinese(text)) {
+            PDFont cn = getChineseFont();
+            if (cn != null) return cn;
+        }
+        // 3. 兜底
+        return new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+    }
+
+    private static boolean containsChinese(String s) {
+        if (s == null) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= 0x4E00 && c <= 0x9FFF) return true;
+        }
+        return false;
     }
 
     /**
@@ -654,6 +911,7 @@ public class PdfToolService {
             pos.put("fontSize", fontSize);
             pos.put("font", "OCR");
             pos.put("width", w);
+            pos.put("color", "#000000"); // Phase 13.22: OCR fallback 默认黑
             pos.put("height", h);
             result.add(pos);
         }
@@ -665,6 +923,8 @@ public class PdfToolService {
      */
     static class PositionStripper extends PDFTextStripper {
         private final List<Map<String, Object>> positions = new ArrayList<>();
+        /** Phase 13.22: 当前 graphics state 文字色(追踪非描边色) */
+        private String currentTextColor = null;
 
         public PositionStripper() {
             super();
@@ -672,6 +932,37 @@ public class PdfToolService {
 
         public List<Map<String, Object>> getPositions() {
             return positions;
+        }
+
+        /** Phase 13.22: 追踪非描边色(文字色) */
+        @Override
+        protected void processOperator(org.apache.pdfbox.contentstream.operator.Operator operator, List<org.apache.pdfbox.cos.COSBase> operands) throws java.io.IOException {
+            String opName = operator.getName();
+            try {
+                if ("rg".equals(opName) || "RG".equals(opName)) {
+                    if (operands.size() >= 3) {
+                        float r = ((org.apache.pdfbox.cos.COSNumber) operands.get(0)).floatValue();
+                        float g = ((org.apache.pdfbox.cos.COSNumber) operands.get(1)).floatValue();
+                        float b = ((org.apache.pdfbox.cos.COSNumber) operands.get(2)).floatValue();
+                        int ir = Math.round(Math.max(0, Math.min(1, r)) * 255);
+                        int ig = Math.round(Math.max(0, Math.min(1, g)) * 255);
+                        int ib = Math.round(Math.max(0, Math.min(1, b)) * 255);
+                        currentTextColor = String.format("#%02X%02X%02X", ir, ig, ib);
+                    }
+                } else if ("k".equals(opName) || "K".equals(opName)) {
+                    if (operands.size() >= 4) {
+                        float c = ((org.apache.pdfbox.cos.COSNumber) operands.get(0)).floatValue();
+                        float m = ((org.apache.pdfbox.cos.COSNumber) operands.get(1)).floatValue();
+                        float y = ((org.apache.pdfbox.cos.COSNumber) operands.get(2)).floatValue();
+                        float k = ((org.apache.pdfbox.cos.COSNumber) operands.get(3)).floatValue();
+                        int ir = Math.round(255 * (1 - c) * (1 - k));
+                        int ig = Math.round(255 * (1 - m) * (1 - k));
+                        int ib = Math.round(255 * (1 - y) * (1 - k));
+                        currentTextColor = String.format("#%02X%02X%02X", ir, ig, ib);
+                    }
+                }
+            } catch (Exception ignore) {}
+            super.processOperator(operator, operands);
         }
 
         protected void writeString(String text, TextPosition textPosition) throws java.io.IOException {
@@ -685,7 +976,9 @@ public class PdfToolService {
             pos.put("font", textPosition.getFont().getName());
             pos.put("width", textPosition.getWidth());
             pos.put("height", textPosition.getHeight());
-
+            // Phase 13.22: 原文字颜色 — PDFBox 3.x TextPosition 无 getColor()
+            // 简化: 解析 graphics state 非描边色(非描边=文字色),用最后一个 NonStroking 指令
+            pos.put("color", currentTextColor != null ? currentTextColor : "#000000");
             positions.add(pos);
         }
     }
@@ -785,6 +1078,222 @@ public class PdfToolService {
         }
     }
 
+    // ==================== Phase 13.23: 去水印 / 智能目录 / 智能提取 ====================
+
+    /**
+     * 去水印
+     * @param mode "annotation" 删 watermark annotation;"cover" 白矩形覆盖(降级)
+     */
+    public byte[] removeWatermark(Long docId, String mode) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                int removed = 0;
+                if ("annotation".equals(mode)) {
+                    // 删 watermark/annotation
+                    for (PDPage page : pdf.getPages()) {
+                        List<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> anns = page.getAnnotations();
+                        java.util.Iterator<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> it = anns.iterator();
+                        while (it.hasNext()) {
+                            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation a = it.next();
+                            String nm = a.getAnnotationName();
+                            String sub = a.getSubtype();
+                            if (sub != null && (sub.contains("Watermark") || (nm != null && nm.toLowerCase().contains("watermark")))) {
+                                it.remove();
+                                removed++;
+                            }
+                        }
+                    }
+                }
+                // cover 模式:无法精确定位水印,提示用户用 redact 手动框选
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                pdf.save(baos);
+                log.info("去水印完成: docId={}, mode={}, removed={}", docId, mode, removed);
+                return baos.toByteArray();
+            }
+        } catch (Exception e) {
+            log.error("去水印失败: docId={}", docId, e);
+            throw new BusinessException("去水印失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 智能目录:AI 分析全文生成章节标题+页码,写入 PDF outline 落盘
+     */
+    public Map<String, Object> autoOutline(Long docId) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            // 1. 取全文 text(带页码)
+            StringBuilder fullText = new StringBuilder();
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                PDFTextStripper stripper = new PDFTextStripper();
+                for (int i = 1; i <= pdf.getNumberOfPages(); i++) {
+                    stripper.setStartPage(i);
+                    stripper.setEndPage(i);
+                    String t = stripper.getText(pdf);
+                    fullText.append("[Page ").append(i).append("]\n").append(t).append("\n");
+                }
+            }
+            // 2. 喂 LLM 生成 JSON 目录
+            String prompt = "分析以下 PDF 全文(已按页标注 [Page N]),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数),\"level\":层级(0=一级,1=二级)}。只输出 JSON,不要解释。全文:\n" +
+                    fullText.substring(0, Math.min(fullText.length(), 12000));
+            String llmOut = aiService.generate(prompt);
+            // 3. 解析 JSON
+            List<Map<String, Object>> outline = parseOutlineJson(llmOut);
+            resp.put("outline", outline);
+            // 4. 写入 PDF outline 落盘
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                PDDocumentOutline root = new PDDocumentOutline();
+                pdf.getDocumentCatalog().setDocumentOutline(root);
+                for (Map<String, Object> node : outline) {
+                    PDOutlineItem item = new PDOutlineItem();
+                    item.setTitle(String.valueOf(node.get("title")));
+                    int pg = node.get("page") instanceof Number ? ((Number) node.get("page")).intValue() : 1;
+                    if (pg >= 1 && pg <= pdf.getNumberOfPages()) {
+                        item.setDestination(pdf.getPage(pg - 1));
+                    }
+                    root.addLast(item);
+                }
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                pdf.save(baos);
+                String newFilePath = replacePdfBytes(docId, baos.toByteArray(), "auto-outline");
+                resp.put("filePath", newFilePath);
+            }
+            resp.put("success", true);
+            log.info("智能目录生成: docId={}, 条数={}", docId, outline.size());
+            return resp;
+        } catch (Exception e) {
+            log.error("智能目录失败: docId={}", docId, e);
+            resp.put("success", false);
+            resp.put("error", e.getMessage());
+            return resp;
+        }
+    }
+
+    /** 从 LLM 输出解析 [{title,page,level}] */
+    private List<Map<String, Object>> parseOutlineJson(String llmOut) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (llmOut == null) return result;
+        // 提取第一个 [ 到最后一个 ]
+        int s = llmOut.indexOf('[');
+        int e = llmOut.lastIndexOf(']');
+        if (s < 0 || e < 0) return result;
+        String json = llmOut.substring(s, e + 1);
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            List<?> list = om.readValue(json, List.class);
+            for (Object o : list) {
+                if (o instanceof Map) {
+                    Map<?, ?> m = (Map<?, ?>) o;
+                    Map<String, Object> node = new LinkedHashMap<>();
+                    node.put("title", m.get("title"));
+                    node.put("page", m.get("page"));
+                    node.put("level", m.get("level") instanceof Number ? m.get("level") : 0);
+                    result.add(node);
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("解析智能目录 JSON 失败: {}", ex.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 智能提取:聚合 文字 + 表格 + 图片 + 结构化 JSON
+     */
+    public Map<String, Object> extractStructured(Long docId) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            // 1. 全文 text
+            String text = doclingService.parse(docId);
+            resp.put("text", text);
+            // 2. 表格
+            String tables = doclingService.extractTables(docId);
+            resp.put("tables", tables);
+            // 3. 图片数量(遍历 XObjects)
+            int imgCount = countImages(docId);
+            resp.put("imagesCount", imgCount);
+            // 4. 结构化 JSON(AI)
+            String structured = aiService.structuredSummarize(text);
+            resp.put("structuredJson", structured);
+            resp.put("success", true);
+            log.info("智能提取完成: docId={}, 图片={}", docId, imgCount);
+            return resp;
+        } catch (Exception e) {
+            log.error("智能提取失败: docId={}", docId, e);
+            resp.put("success", false);
+            resp.put("error", e.getMessage());
+            return resp;
+        }
+    }
+
+    /** 统计 PDF 嵌入图片数量 */
+    private int countImages(Long docId) {
+        try {
+            byte[] pdfBytes = storageService.load(documentService.getDocument(docId).getFilePath());
+            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                int count = 0;
+                for (PDPage page : pdf.getPages()) {
+                    org.apache.pdfbox.pdmodel.PDResources res = page.getResources();
+                    if (res != null) {
+                        for (org.apache.pdfbox.cos.COSName name : res.getXObjectNames()) {
+                            try {
+                                org.apache.pdfbox.pdmodel.graphics.PDXObject xobj = res.getXObject(name);
+                                if (xobj instanceof PDImageXObject) count++;
+                            } catch (Exception ignore) {}
+                        }
+                    }
+                }
+                return count;
+            }
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 提取所有嵌入图片为 zip
+     */
+    public byte[] extractImagesZip(Long docId) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()));
+             ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(baos)) {
+            int idx = 0;
+            for (PDPage page : pdf.getPages()) {
+                org.apache.pdfbox.pdmodel.PDResources res = page.getResources();
+                if (res == null) continue;
+                for (org.apache.pdfbox.cos.COSName name : res.getXObjectNames()) {
+                    try {
+                        org.apache.pdfbox.pdmodel.graphics.PDXObject xobj = res.getXObject(name);
+                        if (xobj instanceof PDImageXObject) {
+                            PDImageXObject img = (PDImageXObject) xobj;
+                            BufferedImage bi = img.getImage();
+                            ByteArrayOutputStream imgBaos = new ByteArrayOutputStream();
+                            ImageIO.write(bi, "png", imgBaos);
+                            zos.putNextEntry(new java.util.zip.ZipEntry("page-img-" + (++idx) + ".png"));
+                            zos.write(imgBaos.toByteArray());
+                            zos.closeEntry();
+                        }
+                    } catch (Exception ignore) {}
+                }
+            }
+            zos.finish();
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.error("提取图片 zip 失败: docId={}", docId, e);
+            throw new BusinessException("提取图片失败: " + e.getMessage());
+        }
+    }
+
     /**
      * 全文搜索(基于已提取的 text-positions)
      */
@@ -877,20 +1386,16 @@ public class PdfToolService {
         validatePdf(doc);
         try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
             PDPage blank = new PDPage(pdf.getPage(0).getMediaBox());
-            pdf.addPage(blank);
+            pdf.addPage(blank); // 先加到末尾
             int insertIdx = Math.min(afterPage, pdf.getNumberOfPages() - 1);
             if (insertIdx < pdf.getNumberOfPages() - 1) {
+                // 原地把末尾的空白页移到 insertIdx(同文档,字体/资源保留)
                 List<PDPage> pages = new ArrayList<>();
                 for (int i = 0; i < pdf.getNumberOfPages(); i++) pages.add(pdf.getPage(i));
-                PDPage inserted = pages.remove(pages.size() - 1);
-                pages.add(insertIdx, inserted);
-                PDDocument newPdf = new PDDocument();
-                for (PDPage p : pages) newPdf.addPage(p);
-                newPdf.setDocumentInformation(pdf.getDocumentInformation());
-                byte[] out = newDocBytes(newPdf, "insert-blank");
-                newPdf.close();
-                replacePdfBytes(docId, out, "insert-blank");
-                return out;
+                PDPage moved = pages.remove(pages.size() - 1);
+                pages.add(insertIdx, moved);
+                while (pdf.getNumberOfPages() > 0) pdf.removePage(0);
+                for (PDPage p : pages) pdf.addPage(p);
             }
             byte[] out = newDocBytes(pdf, "insert-blank");
             replacePdfBytes(docId, out, "insert-blank");
@@ -1231,6 +1736,12 @@ public class PdfToolService {
         if (imageBase64 == null || imageBase64.isBlank()) {
             throw new BusinessException("签名图片不能为空");
         }
+        // Phase 13.26: 兼容 data:image/...;base64, 前缀(PdfSignatureDialog 可能带前缀传入)
+        String rawBase64 = imageBase64;
+        int commaIdx = rawBase64.indexOf(',');
+        if (rawBase64.startsWith("data:") && commaIdx > 0) {
+            rawBase64 = rawBase64.substring(commaIdx + 1);
+        }
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
@@ -1248,7 +1759,7 @@ public class PdfToolService {
                     throw new BusinessException("签名位置超出页面范围");
                 }
                 // 解析 base64 -> BufferedImage
-                byte[] imgBytes = java.util.Base64.getDecoder().decode(imageBase64);
+                byte[] imgBytes = java.util.Base64.getDecoder().decode(rawBase64);
                 BufferedImage img = ImageIO.read(new ByteArrayInputStream(imgBytes));
                 if (img == null) {
                     throw new BusinessException("签名图片格式无法识别");

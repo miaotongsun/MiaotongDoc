@@ -158,6 +158,9 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
           ...(e.originalText ? { originalText: e.originalText } : {}),
           ...(e.originalX !== undefined ? { originalX: e.originalX } : {}),
           ...(e.originalY !== undefined ? { originalY: e.originalY } : {}),
+          // Phase 13.22: 透传原 token 宽度/字体,后端精确覆盖 + 选原字体
+          ...(e.width !== undefined ? { width: e.width } : {}),
+          ...(e.font ? { font: e.font } : {}),
         }))
 
         await pdfApi.applyTextEdits(targetId, payload)
@@ -301,10 +304,13 @@ export function usePdfTextEditor(options: UsePdfTextEditorOptions) {
       x: input.position.x,
       y: input.position.y,
       fontSize: input.position.fontSize || 12,
-      color: input.color || '#000000',
+      color: input.color || input.position.color || '#000000',
       originalText: input.position.text,
       originalX: input.position.x,
       originalY: input.position.y,
+      // Phase 13.22: 透传原 token 宽度 + 字体,后端精确覆盖 + 选原字体
+      width: input.position.width,
+      font: input.position.font,
       state: 'editing',
     }
 

@@ -21,6 +21,7 @@ import type { PdfAnnotation, PdfAnnotationRect } from './usePdfCollaborate'
 
 export type AnnotationTool =
   | 'select'
+  | 'move'
   | 'highlight'
   | 'comment'
   | 'draw'
@@ -95,6 +96,9 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   const drawPoints = ref<number[]>([])
   const pendingRect = ref<PendingRect | null>(null)
   const pendingCommentRect = ref<PendingRect | null>(null)
+  // Phase 13.25: 橡皮擦跟手光标(画布像素 + 页码)
+  const eraserCursor = ref<{ x: number; y: number; pageNumber: number } | null>(null)
+  const eraserRadius = 15
 
   // 评论弹窗
   const showCommentDialog = ref(false)
@@ -161,12 +165,21 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   }
 
   // ===== 鼠标交互（高亮 / 评论 / 画笔） =====
+  // Phase 13.25: 加 scale + pageRawHeight 参数,存储改 PDF pt(左下原点),
+  //               解决 zoom 后标注漂移问题。预览仍用画布像素。
 
-  function onMouseDown(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
-    if (!checkEdit() || activeTool.value === 'select') return
+  function onMouseDown(
+    e: MouseEvent,
+    page: number,
+    annotationLayerEl: HTMLDivElement | DOMRect | undefined,
+    scale: number,
+    pageRawHeight: number,
+  ) {
+    if (!checkEdit() || activeTool.value === 'select' || activeTool.value === 'move') return
     const pos = getRelPos(e, page, annotationLayerEl)
     if (activeTool.value === 'eraser') {
-      eraseAt(pos.x, pos.y, page)
+      eraseAt(pos.x, pos.y, page, scale, pageRawHeight)
+      eraserCursor.value = { x: pos.x, y: pos.y, pageNumber: page }
       return
     }
     // vqa / highlight / comment / 形状 / 下划线 / 删除线 都用矩形框选：mousedown 起一个 pendingRect
@@ -192,11 +205,22 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     }
   }
 
-  function onMouseMove(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
+  function onMouseMove(
+    e: MouseEvent,
+    page: number,
+    annotationLayerEl: HTMLDivElement | DOMRect | undefined,
+    scale: number,
+    pageRawHeight: number,
+  ) {
     if (!checkEdit()) return
+    if (activeTool.value === 'move') return  // Phase 13.26: 手型工具由 PdfEditor pan 逻辑接管
     const pos = getRelPos(e, page, annotationLayerEl)
-    if (activeTool.value === 'eraser' && e.buttons === 1) {
-      eraseAt(pos.x, pos.y, page)
+    if (activeTool.value === 'eraser') {
+      // Phase 13.25: 跟手光标 + 按下时连续擦除
+      eraserCursor.value = { x: pos.x, y: pos.y, pageNumber: page }
+      if (e.buttons === 1) {
+        eraseAt(pos.x, pos.y, page, scale, pageRawHeight)
+      }
       return
     }
     // vqa / highlight / comment / shape tools / underline / strikethrough 都跟随鼠标调整矩形
@@ -211,27 +235,36 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       activeTool.value === 'underline' ||
       activeTool.value === 'strikethrough'
     if (isRectTool && pendingRect.value) {
-      pendingRect.value.x = pos.x
-      pendingRect.value.y = pos.y
-      pendingRect.value.width = pos.x - pendingRect.value.startX
-      pendingRect.value.height = pos.y - pendingRect.value.startY
+      // Phase 13.25: 即时归一化(Math.min/Math.abs) -> SVG <rect> 永远正宽高,
+      //               向左/上拖动时预览不再消失
+      const sx = pendingRect.value.startX
+      const sy = pendingRect.value.startY
+      pendingRect.value = {
+        ...pendingRect.value,
+        x: Math.min(sx, pos.x),
+        y: Math.min(sy, pos.y),
+        width: Math.abs(pos.x - sx),
+        height: Math.abs(pos.y - sy),
+      }
     } else if (activeTool.value === 'draw' && isDrawing.value) {
       drawPoints.value.push(pos.x, pos.y)
     }
   }
 
-  function onMouseUp(e: MouseEvent, page: number, annotationLayerEl: HTMLDivElement | DOMRect | undefined) {
+  function onMouseUp(
+    e: MouseEvent,
+    page: number,
+    annotationLayerEl: HTMLDivElement | DOMRect | undefined,
+    scale: number,
+    pageRawHeight: number,
+  ) {
     if (!checkEdit()) return
     // vqa 由 PdfEditor.vue 的 onAnnotationMouseUp 接管（需要截图上传 AI）
     if (activeTool.value === 'vqa') {
       // 把矩形归一化（正宽高）后留在 pendingRect 里，外层会读取
       if (pendingRect.value) {
         const r = pendingRect.value
-        const x = Math.min(r.startX, r.x)
-        const y = Math.min(r.startY, r.y)
-        const w = Math.abs(r.width)
-        const h = Math.abs(r.height)
-        pendingRect.value = { ...r, x, y, width: w, height: h }
+        pendingRect.value = { ...r, x: Math.min(r.startX, r.x), y: Math.min(r.startY, r.y), width: Math.abs(r.width), height: Math.abs(r.height) }
       }
       return
     }
@@ -249,19 +282,26 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       const w = Math.abs(r.width)
       const h = Math.abs(r.height)
       if (w > 8 && h > 4) {
-        const rect: PdfAnnotationRect = {
-          x: Math.min(r.startX, r.x), y: Math.min(r.startY, r.y),
-          width: w, height: h,
+        // Phase 13.25: 转换为 PDF pt(左下原点)持久化,解决 zoom 后漂移
+        // canvasX/scale = PDF pt X;Y 翻转:pdfY = pageRawHeight - canvasBottom/scale
+        const canvasLeft = Math.min(r.startX, r.x)
+        const canvasTop = Math.min(r.startY, r.y)
+        const pdfRect: PdfAnnotationRect = {
+          x: canvasLeft / scale,
+          y: pageRawHeight - (canvasTop + h) / scale,
+          width: w / scale,
+          height: h / scale,
         }
         if (activeTool.value === 'comment') {
-          pendingCommentRect.value = { ...r, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          // comment 用画布像素 rect 给弹窗定位(pendingCommentRect 仅 UI 用)
+          pendingCommentRect.value = { ...r, x: canvasLeft, y: canvasTop, width: w, height: h }
           editingComment.value = ''
           showCommentDialog.value = true
         } else {
           add({
             type: activeTool.value as any,
             pageNumber: page,
-            rect,
+            rect: pdfRect,
             color: activeColor.value,
             strokeWidth: 2,
           })
@@ -271,17 +311,27 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     } else if (activeTool.value === 'draw' && isDrawing.value) {
       isDrawing.value = false
       if (drawPoints.value.length >= 4) {
+        // Phase 13.25: 画笔点也转 PDF pt
+        const pdfPoints: number[] = []
+        for (let i = 0; i < drawPoints.value.length; i += 2) {
+          pdfPoints.push(drawPoints.value[i] / scale)
+          pdfPoints.push((pageRawHeight - drawPoints.value[i + 1] / scale))
+        }
         add({
           type: 'draw', pageNumber: page,
-          color: activeColor.value, points: [...drawPoints.value],
+          color: activeColor.value, points: pdfPoints,
         })
       }
       drawPoints.value = []
     } else if (activeTool.value === 'stamp') {
-      // stamp - 点击放置,默认 120x40 居中
+      // stamp - 点击放置,默认 120x40 pt 居中(转 PDF pt)
       const pos2 = getRelPos(e, page, annotationLayerEl)
-      const w = 120, h = 40
-      const rect: PdfAnnotationRect = { x: pos2.x - w / 2, y: pos2.y - h / 2, width: w, height: h }
+      const w = 120 / scale, h = 40 / scale  // 画布像素 -> PDF pt
+      const rect: PdfAnnotationRect = {
+        x: (pos2.x / scale) - w / 2,
+        y: (pageRawHeight - pos2.y / scale) - h / 2,
+        width: w, height: h,
+      }
       add({
         type: 'stamp',
         pageNumber: page,
@@ -289,6 +339,9 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
         color: activeColor.value,
         stampText: stampText.value,
       })
+    }
+    if (activeTool.value === 'eraser') {
+      eraserCursor.value = null
     }
   }
 
@@ -301,23 +354,32 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     }
     isDrawing.value = false
     drawPoints.value = []
+    eraserCursor.value = null
   }
 
   // ===== 橡皮擦命中检测 =====
-  function eraseAt(x: number, y: number, page: number): void {
+  // Phase 13.25: 标注改 PDF pt 存储,橡皮擦命中测试需把鼠标画布像素转 PDF pt 再比对
+  function eraseAt(canvasX: number, canvasY: number, page: number, scale: number, pageRawHeight: number): void {
+    const pdfX = canvasX / scale
+    const pdfY = pageRawHeight - canvasY / scale
+    const tolPdf = 8 / scale  // 8px 容差转 PDF pt
     const toDelete: string[] = []
     for (const ann of annotations.value) {
       if (ann.pageNumber !== page) continue
       if (ann.rect) {
         const r = ann.rect
-        if (x >= r.x - 5 && x <= r.x + r.width + 5 && y >= r.y - 5 && y <= r.y + r.height + 5) {
+        // PDF rect 是左下原点,但 x/left 和 width 同向;Y 用 pdfY 比对 [r.y, r.y+height]
+        if (pdfX >= r.x - tolPdf && pdfX <= r.x + r.width + tolPdf &&
+            pdfY >= r.y - tolPdf && pdfY <= r.y + r.height + tolPdf) {
           toDelete.push(ann.id)
           continue
         }
       }
       if (ann.points) {
+        // points 已是 PDF pt
+        const tol = 15 / scale
         for (let i = 0; i < ann.points.length; i += 2) {
-          if (Math.abs(ann.points[i] - x) < 15 && Math.abs(ann.points[i + 1] - y) < 15) {
+          if (Math.abs(ann.points[i] - pdfX) < tol && Math.abs(ann.points[i + 1] - pdfY) < tol) {
             toDelete.push(ann.id)
             break
           }
@@ -448,6 +510,9 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     pendingCommentRect,
     showCommentDialog,
     editingComment,
+    // Phase 13.25: 橡皮擦跟手光标
+    eraserCursor,
+    eraserRadius,
     // computed
     currentDrawPath,
     rectPreviewStyle,

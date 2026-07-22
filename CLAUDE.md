@@ -645,9 +645,9 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 ### 更新前端
 
 > **构建规范**(2026-07-18):
-> - **生产部署/CI**:用 `npm run build`(= `vue-tsc && vite build`,含类型检查,内网隔离部署必用)
-> - **本地快速调试**:用 `npx vite build`(跳过 vue-tsc,10-20s 出 bundle)
+> - **部署**:用 `npm run build`(= `vue-tsc && vite build`,含类型检查,内网隔离部署必用)
 > - **内网部署最佳实践**:外网构建 dist 产物带入内网 Docker 镜像,内网不构建(避免依赖 devDependencies)
+> - **拷贝前必清 dist**(2026-07-19):拷贝新构建产物前,必须先清空 Docker 部署目录 `app/web/dist/`,避免旧版本残留文件(如已删除的 chunk/asset)污染新部署
 
 ```bash
 # 1. 进入前端目录
@@ -659,10 +659,13 @@ npm install
 # 3. 构建生产版本(类型检查 + 打包)
 npm run build
 
-# 4. 将构建产物复制到 Docker 部署目录
+# 4. 清理 Docker 部署目录中的旧 dist（避免旧文件残留污染新部署）
+rm -rf ../MiaotongDoc-Docker/app/web/dist/*
+
+# 5. 将构建产物复制到 Docker 部署目录
 cp -r dist/* ../MiaotongDoc-Docker/app/web/dist/
 
-# 5. 重启 Nginx 容器加载新静态资源
+# 6. 重启 Nginx 容器加载新静态资源
 cd ../MiaotongDoc-Docker
 docker compose restart nginx
 ```
@@ -750,8 +753,8 @@ docker compose logs -f web-server | grep -i flyway
 ### 完整部署流程
 
 ```bash
-# 1. 更新前端
-cd miaotongdoc-web && npm run build && cp -r dist/* ../MiaotongDoc-Docker/app/web/dist/
+# 1. 更新前端（拷贝前先清空部署目录 dist,避免旧文件残留）
+cd miaotongdoc-web && npm run build && rm -rf ../MiaotongDoc-Docker/app/web/dist/* && cp -r dist/* ../MiaotongDoc-Docker/app/web/dist/
 
 # 2. 更新后端
 cd ../miaotongdoc-server && mvn clean package -DskipTests && cp target/miaotongdoc.jar ../MiaotongDoc-Docker/app/server/

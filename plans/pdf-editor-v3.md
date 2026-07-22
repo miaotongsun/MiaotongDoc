@@ -1949,3 +1949,381 @@ PDF 编辑器 V3 全部交付完成。
   - 图片转 PDF 真实图片上传未 E2E 测(用 1x1 png 验证 API 已通过,阶段 B)
   - 路由 /pdf/create 未独立实现(用 Home 入口 + 对话框模式,更轻量)
 ```
+
+---
+
+## 三十八、Phase 13.13-13.22 累积临时需求(2026-07-19 ~ 2026-07-20)
+
+> 本节汇总 13.12 之后到 13.22 期间的零散需求与修复,均来自用户实测反馈 + git 提交记录。
+
+### 13.13 vue-tsc 类型检查 + 统一构建规范(2026-07-19)
+- 临时需求:前端构建必须包含 TypeScript 类型检查
+- 改动:`package.json` build 改为 `vue-tsc && vite build`;新增 `typescript`/`vue-tsc` 到 devDependencies;CLAUDE.md 记录"部署用 `npm run build`"
+- 验证:`npm run build` 0 error
+- commit: `08f2c6dd`
+
+### 13.14-13.17 OCR 双引擎 + 坐标对齐 + 文字可选(2026-07-19)
+- 临时需求(用户):
+  1. 刚打开未识别时的文档,左上角的文字是哪来的 → 排查 pdfjs TextLayer 默认渲染
+  2. 这部分是 PDF 原生就带着的吗?为什么每个 PDF 打开都有 → 确认是 pdfjs TextLayer 透明文字层(选区复制必需)
+  3. 现在它没有坐标,和原文位置完全对不上 → 修 TextLayer 坐标定位
+  4. **必须百分百重合和对齐** → TextLayer span 顶 = canvas 文字实际可见顶,JS 偏移 0.16em
+- 改动:
+  - `usePdfRenderer.ts` TextLayer 加 `--scale-factor` + `pageWidth/pageHeight` 走像素分支
+  - 渲染后遍历 span,把 `style.top` 百分比下移 0.16em(字顶对齐)
+  - `pdf-dialogs.css` 加 `.pdf-text-layer > span { position: absolute; line-height: 1.22; height: 1.22em }`
+- 验证:`verify-multi-size.js` 6 字号 6 位置全 OK,差异 < 3px
+- commit: `b77ac4f8`
+
+### 13.18-13.19 OCR 两份数据修复 + 折叠按钮对齐(2026-07-19)
+- 临时需求(用户):OCR 识别后画布出现两份文字(蓝色 OCR 层 + 透明 TextLayer);折叠按钮未对齐
+- 改动:`PdfOcrLayer.vue` hover 蓝字改淡灰;折叠按钮 12px 对齐
+- commit: `9ca6c581`, `686c7ba9`
+
+### 13.20 Phase 13.8 右键快捷菜单 + 编辑模式(Acrobat DC)(2026-07-19)
+- 临时需求(用户):画布加右键菜单(复制/粘贴/翻译选区/AI 摘要/识图等);编辑模式用 Acrobat DC 风格(蓝色边框)
+- 改动:`PdfCanvas.vue` 加 `@contextmenu.prevent` emit;`PdfEditor.vue` 加右键菜单组件;编辑模式 canvas 蓝色边框 `box-shadow: 0 0 0 4px var(--color-primary-soft)`
+- commit: `fc31561f`
+
+### 13.21 Phase 13.11 编辑模式 + 覆盖/另存为新文档(2026-07-19)
+- 临时需求(用户):编辑模式支持覆盖原文档 + 另存为新文档;版本管理
+- 改动:`usePdfTextEditor` 加 `flushTo` 覆盖/另存;`PdfEditor.vue` 加保存按钮 + 另存为按钮
+- commit: `d284ec24`
+
+### 13.22 Phase 13.12 创建 PDF 对话框(2026-07-19)
+- 临时需求(用户):首页加"创建 PDF"入口,支持空白 PDF + 图片转 PDF
+- 改动:`PdfCreateDialog.vue` 新建;`Home.vue` 加按钮;后端 `createBlank` / `createFromImages`
+- 验证:8/8 通过
+- commit: `a7c82b49`
+
+---
+
+## 三十九、Phase 13.23 - 文字层去重 + 编辑生效 + Ribbon 五分组重排(2026-07-20)
+
+### 临时需求(用户 4 点)
+1. 画布有两份文本内容;普通模式下原文位置还有一层**蓝色文字**要去掉;"不带坐标的文本层"删除
+2. 编辑模式下不显示原文层、只显示识别后内容;**当前编辑修改没生效**
+3. 顶部工具栏重新分组:一级 = 开始/编辑/页面/视图/AI;二级从用户角度多设计功能(如去水印)
+4. 开发计划要更新,临时需求设计 plan 后记录 + 更新开发/验证记录
+
+### 根因
+- **蓝色文字** = `PdfOcrLayer` 在 select 工具下**无条件挂载**(条件含 `|| activeTool==='select'`)
+- **编辑不生效** = `reloadAfterTextEdit` 没 emit `fileUrlChanged` + 没用 bustUrl,后端改了 filePath 但前端 PDF.js 还用旧 url + HTTP 缓存
+
+### 改动
+- **改动1(去蓝色 OCR 层)**:`PdfEditor.vue:146/241` 两处 OCR v-if 去掉 `|| activeTool==='select'`,改为仅 `showOcrOverlay`;`PdfOcrLayer.vue:118` hover 蓝字改 `--color-foreground-3` 灰
+- **改动2(编辑模式+修生效)**:`PdfCanvas.vue` `.pdf-canvas-el` 加 `is-edit-mode` class,CSS `opacity:0.25; filter:grayscale(0.6)`;`reloadAfterTextEdit` 加 `emit('fileUrlChanged', bustUrl)` + 清 refs + 重建
+- **改动3(Ribbon 5 tab)**:`PdfRibbon.vue` tabs 加 `ai`;home 去掉 AI 组+加保护组(加密/密文遮盖);edit 加表单组(填表单/签名);page 扩展为整理/旋转/拆合/裁剪/装饰/优化 6 组(去水印/压缩/拆分等新按钮);新增 AI tab(助手/视觉/文档/目录/提取/识别/批注 7 组 19 按钮);emit 声明加 20+ 新事件
+- **改动4(后端新端点)**:`PdfToolService.java` 加 `removeWatermark/autoOutline/extractStructured/extractImagesZip/countImages/parseOutlineJson`;注入 AiService+DoclingService;`PdfController.java` 加 `/watermark/remove`、`/ai/auto-outline`、`/ai/extract-structured`、`/extract-images` 4 端点
+- **改动5(handler)**:`PdfEditor.vue` 接线 20+ 新 emit + 加 `onSaveAsNew/onRedact/onCompress/onRemoveWatermark/onCropPage/onSplitPdf/onAi*(11个)/onExtractImages/downloadBlob` handler;`pdf.ts` 加 `removeWatermark/autoOutline/extractStructured/extractImages` API
+
+### 验证
+- `verify-13-23.js`:**15/15** -- Ribbon 5 tab、普通模式无 OCR 蓝层、框选可用、编辑模式 canvas 淡化 opacity 0.25、页面 tab 新按钮(去水印/压缩/拆分)、AI tab 19 按钮(智能目录/智能提取/合同条款抽取)、后端新端点可达(200)
+- 回归 `scenario-full-stageD.js`:**40/40**
+- 回归 `deep-verify-stageD.js`:**23/23**
+- 回归 `verify-text-select.js`:**3/3**
+- 构建:`npm run build` 0 error(30s) + `mvn clean package` 0 error(30s),jar 168MB
+
+---
+
+## 四十、Phase 13.24 - 文字层完全透明 + 框选高亮色块 + 浮动工具栏仅编辑模式(2026-07-20)
+
+### 临时需求(用户)
+1. **文字层保留,但完全透明**:让用户能选中、能复制,但看不到文字,感官上仿佛在复制原文
+2. **去掉选取后的颜色修改浮窗**:框选文字后不应该出现"字号/B/I/U/颜色"浮动工具栏
+3. 选中文字高亮可以深一点,应该是选取的时候只有透明的高亮,**不应该有文字**
+
+### 根因(关键诊断失误记录)
+- **错误诊断 1**:以为是 Chrome 浏览器原生 contenteditable 浮动工具栏 -> 加 `-webkit-user-modify: read-only` 无效(Chrome 不支持此属性)
+- **错误诊断 2**:以为是 pdfjs span 没设 contenteditable=false -> JS `setAttribute('contenteditable', 'false')` 仍无效
+- **正确根因**:浮动工具栏是**我们自己的 `PdfFloatingToolbar.vue` 组件**(Vue scoped CSS `data-v-667e949d`,`role="toolbar"`),无条件挂载在 PdfEditor,select 工具下选区时也弹出
+
+### 改动
+- **改动1(文字层透明)**:`PdfCanvas.vue` `.pdf-text-layer > span { color: transparent !important }`(强制覆盖 pdfjs inline `style.color`);`pdf-dialogs.css` 同样规则
+- **改动2(选区高亮色块)**:`pdf-dialogs.css` `.pdf-text-layer > span::selection { background: rgba(70, 130, 220, 0.55) !important; color: transparent !important }`(0.55 透明度深蓝,文字依然隐形)
+- **改动3(浮动工具栏仅编辑模式)**:`PdfEditor.vue:316` `<PdfFloatingToolbar v-if="activeTool === 'textEdit'" @format="onFloatingFormat" />`(普通 select 工具下不挂载,Acrobat 行为)
+- 清理:删除无效的 `contenteditable`/`spellcheck` CSS 属性(本就是 HTML 属性不能写在 CSS 里);删除 `usePdfRenderer.ts` 里 `setAttribute('contenteditable', 'false')` 的无效代码
+
+### 验证
+- 普通 select 工具下框选文字:看不到文字 + 深蓝高亮色块 + **无浮动工具栏**
+- Ctrl+C 仍能复制原文
+- 编辑模式(textEdit)下浮动工具栏正常出现
+- 部署:前端 dist 清空后拷入;nginx 重启
+
+---
+
+## 四十一、Phase 13.25 - 浮动工具栏按钮逻辑 + 鼠标框选轨迹 + 标注坐标系统重构(2026-07-21, 待实施)
+
+### 临时需求(用户)
+> 编辑栏中的所有按钮逻辑都有部分问题和 bug,点击按钮选择按钮时才能选择文字层,文本按钮的逻辑要重新设计,其他所有的按钮在画布处的框选区域都有问题,要能实时显示轨迹,现在鼠标框选的计算完全是错误的。
+
+具体反馈(AskUserQuestion 确认):
+- 鼠标框选 bug 表现:**拖动时看不到实时轨迹** + **矩形落点和鼠标位置偏差** + **缩放/滚动后错位** + **画笔轨迹实时显示问题** + **橡皮擦也没个形状**
+- 浮动工具栏:**Acrobat 标准** -- 选区即生效 + 点保存才持久化;**仅编辑模式**下出现
+
+### 根因(Explore agent 完整定位)
+- **根因 A(浮动工具栏按钮逻辑错乱)**:`PdfEditor.vue:788-867` `onFloatingFormat` 用已弃用的 `document.execCommand` 对 pdfjs text-layer span 无效;fontSize/color 强依赖用户先 focus token(非 Acrobat 行为);无统一"选区->视觉反馈->保存->持久化"流程
+- **根因 B-1(画笔无实时轨迹)**:`PdfEditor.vue:674` `const drawingPath = computed(() => (annot as any).drawPath ?? null)` -- `annot.drawPath` 不存在,永远 null;`usePdfAnnotation` 实际暴露的是 `currentDrawPath`(未导出)
+- **根因 B-2(矩形向左/上拖动预览消失)**:`usePdfAnnotation.ts:213-217` mousemove 时 `width/height` 可能为负,SVG `<rect width="-100">` 不渲染
+- **根因 B-3(橡皮擦无形状)**:`usePdfAnnotation.ts:307-328` 命中检测后直接删除,无跟手圆形光标
+- **根因 C(坐标系统混乱导致落点偏差 + 缩放后错位)**:所有 annotation 的 `rect.x/y/width/height` 存的是**画布显示像素**(`pageRawWidth × scale`),不是 PDF pt。zoom 后 `canvasWidth` 变了但 `ann.rect` 没变 -> 标注漂移。唯一做对了的是 `placeSignature`(L1257-1295 用了 `screenX / scale` 转 PDF pt)
+
+### 计划方案(已写入 plan 文件 `twinkly-knitting-waterfall.md`)
+
+**改动1: 浮动工具栏重写(Acrobat 标准)**
+- `PdfFloatingToolbar.vue` 加 ✓ 保存 / ✗ 取消按钮,内部维护 `pendingFormatOps`
+- `PdfEditor.vue` 重写 `onFloatingFormat`:统一走 `paintRangeInline`(扩展支持 fontSize/fontWeight/fontStyle/textDecoration),删除"请先用文本工具点击段落进入编辑"提示
+- 加 `onFloatingConfirm`(批量提交到后端)/ `onFloatingCancel`(revert)
+
+**改动2: 实时轨迹修复**
+- `PdfEditor.vue:674` `drawPath` -> `currentDrawPath?.value`
+- `usePdfAnnotation.ts:444` return 暴露 `currentDrawPath`
+- `usePdfAnnotation.ts:213-220` mousemove 即时归一化(Math.min/Math.abs)
+- `usePdfAnnotation.ts` 加 eraser 光标 state;`PdfCanvas.vue` SVG 加 eraser `<circle>` 光标
+
+**改动3: 标注坐标系统重构(PDF pt 存储)**
+- `usePdfAnnotation.ts:252-254, 280-292` 所有保存位置转 PDF pt(`canvasX / scale` + Y 翻转)
+- `PdfCanvas.vue:80-222` SVG 渲染时 `× scale` 转回画布像素
+- `usePdfAnnotation.ts:307-328` eraseAt 加 scale 参数
+- `PdfEditor.vue:1650-1668` onCanvasMouse* 传 scale + pageRawHeight
+
+**改动4: 后端新增文本格式持久化端点**
+- `POST /api/pdf/{id}/text-format` 请求体 `{ pageNumber, ops: [{range, format}] }`
+- `PdfToolService.java` 加 `applyTextFormat`,复用 `applyTextEdits` 模式 + `replacePdfBytes` 落盘
+- 前端 `pdf.ts` 加 `applyTextFormat` API
+
+**改动5: `paintRangeInline` 扩展** 支持 fontSize/fontWeight/fontStyle/textDecoration
+
+### 关键文件
+- `miaotongdoc-web/src/components/PdfFloatingToolbar.vue`(重写)
+- `miaotongdoc-web/src/components/PdfEditor.vue`(onFloatingFormat 重写 + onCanvasMouse* 传参)
+- `miaotongdoc-web/src/components/PdfCanvas.vue`(SVG 渲染 × scale + eraser 光标)
+- `miaotongdoc-web/src/composables/pdf/usePdfAnnotation.ts`(暴露 currentDrawPath + 坐标 PDF pt)
+- `miaotongdoc-web/src/api/pdf.ts`(applyTextFormat)
+- `miaotongdoc-server/.../service/PdfToolService.java`(applyTextFormat)
+- `miaotongdoc-server/.../controller/PdfController.java`(/text-format 端点)
+
+### 验证(实施后追加)
+- 矩形实时轨迹(4 方向拖动都有跟手预览)
+- 画笔实时轨迹
+- 橡皮擦光标
+- 缩放后位置不变(zoom in/out 标注不漂移)
+- 浮动工具栏字号/粗/颜色即时生效 + 保存持久化
+- 不再出现"请先用文本工具点击段落进入编辑"提示
+- 回归 8 场景 40/40 + deep-verify 23/23 + verify-text-select 3/3
+
+### 状态:已完成(2026-07-21)
+
+### 验证结果
+- `verify-13-25.js`: **10/10** -- 矩形实时轨迹(向右下/向左上归一化)、画笔实时轨迹(drawingPath)、橡皮擦 circle 光标、SVG viewBox 存在、select 模式无浮动工具栏、textEdit 选区后浮动工具栏出现(✓ 保存 + ✗ 取消 + 17 按钮)、后端 /text-format 端点 200 成功
+- 回归 `verify-text-select.js`: **3/3**
+- 回归 `deep-verify-stageD.js`: **23/23**
+- 回归 `scenario-full-stageD.js`: **40/40**
+- 构建: `npm run build` 0 error (23s) + `mvn clean package` 0 error (27s),jar 168MB
+- 部署: 前端 dist 清空后拷入;后端 jar 替换;nginx + web-server 重启
+
+---
+
+## 四十二、Phase 13.26 - 评论/识图/形状预览/表单/签名/移动工具 六项修复(2026-07-21)
+
+### 临时需求(用户 5 点)
+1. **评论、识图按钮功能逻辑不对,而且是范围框选** -- 评论框选后应弹评论输入框;识图框选后应截图发 AI 问答
+2. **矩形/箭头/直线/下划线/删除线都是范围框选,应有自己的轨迹形状** -- 拖动预览应显示各自形状(矩形边框/箭头/直线),而非统一虚线矩形
+3. **填表单功能看不懂,无法测试** -- 需明确功能 + 交互引导
+4. **签名按钮操作后下载 PDF 不对,应在当前页面修改** -- in-place 落盘 + reload,像 textEdit
+5. **工具栏增加移动按钮** -- 手型工具,可围绕文档平移
+
+### 根因(Explore agent 完整定位)
+- **评论**:`usePdfAnnotation.ts` 暴露 `showCommentDialog/saveComment/cancelComment/pendingCommentRect/editingComment`,但 **PdfEditor.vue 全文 0 消费** -> 框选后弹窗从不弹出,评论标注也不保存
+- **识图(vqa)**:`usePdfAnnotation.onMouseUp` vqa 分支只归一化 pendingRect 后 return,注释声称"外层读取"但 **外层 onCanvasMouseUp 无任何接管**;`vqaImage` ref 只有 clearVqa 清空,**无任何截图代码赋值** -> 框选后什么都不发
+- **形状预览**:`PdfCanvas.vue:82-90` pendingRect 用单一 `<rect>` + `pendingRectStyle`(固定虚线矩形,与 activeTool 无关)。最终形状渲染已支持 rectangle/arrow/line 等,但**拖动预览阶段没复用** -> 所有形状工具拖动都显示虚线矩形
+- **填表单**:功能链完整(Ribbon 按钮 -> 右侧 form tab -> `getFormFields` 识别 -> 填写 -> `fillFormFields` 返回 Blob),但填充后**下载新文件**而非 in-place;且无 AcroForm 字段时只显示"该 PDF 无表单字段"无引导
+- **签名**:`placeSignature` L1326-1333 创建 `<a>` 下载 `signed-${docId}.pdf`;后端 `/signature` 端点返回 `byte[]` attachment
+- **移动工具**:`AnnotationTool` 类型无 `'move'`;Ribbon editTools 无 move;无 pan 逻辑
+
+### 设计方案
+
+#### 改动 1: 评论工具修复(弹窗接线)
+**`PdfEditor.vue`**:
+- 模板加 `<el-dialog v-model="commentDialogVisible" title="添加评论">` + `<el-input type="textarea" v-model="commentDraft">` + 保存/取消按钮
+- `commentDialogVisible` computed 绑 `annot.showCommentDialog.value`;`commentDraft` 绑 `annot.editingComment.value`
+- 保存按钮调 `annot.saveComment()`;取消调 `annot.cancelComment()`
+- 评论标记(circle)点击调 `annot.openComment(ann)` 重新打开弹窗编辑
+
+**评论仍是范围框选**(符合 Acrobat:框选区域 -> 弹评论 -> 区域上显示评论图标),但**框选后必须弹窗**(当前 bug 是不弹)。
+
+#### 改动 2: 识图(VQA)工具修复(截图发 AI)
+**`PdfEditor.vue` onCanvasMouseUp**:
+- 检测 `activeTool === 'vqa'` 且 `annot.pendingRect.value` 存在
+- 取 pendingRect(画布像素),用 `canvas.toDataURL` 截取该区域为 base64 PNG
+- 赋值 `vqaImage.value = dataUrl` + 打开 `aiVisible.value = true`
+- 清空 `annot.pendingRect.value`
+- PdfAiFloatPanel 已有 `vqaImage` prop 走 `vision.ask`,自动问答
+
+**识图仍是范围框选**(符合:框选图片区域 -> 截图 -> AI 问答),但**框选后必须截图发 AI**(当前 bug 是不发)。
+
+#### 改动 3: 形状拖动实时预览(各自形状)
+**`PdfCanvas.vue` SVG pendingRect 渲染** -- 按 `activeTool` 分支:
+- `rectangle`: `<rect :x :y :w :h stroke fill=none>`
+- `ellipse`: `<ellipse :cx :cy :rx :ry stroke fill=none>`
+- `arrow`: `<path :d="arrowPathCanvas(pendingRectAsCanvasRect)">`
+- `line`: `<line :x1 :y1 :x2 :y2>`
+- `underline`: `<line>` 贴矩形底部
+- `strikethrough`: `<line>` 贴矩形中部
+- `highlight`/`comment`/`vqa`: 保留虚线矩形(框选语义)
+
+pendingRect 已是画布像素(归一化后),直接用。新增 computed `pendingShapeElement` 按 activeTool 返回不同 SVG 元素。
+
+#### 改动 4: 填表单功能明确 + in-place
+**A. 后端 `/form-fields/fill` 改落盘**:
+- 当前返回 Blob;改为 `replacePdfBytes` 落盘 + 返回 `{ success, filePath }`
+- 仿 `applyTextFormat` 模式
+
+**B. 前端 PdfRightPanel.applyFormFill**:
+- 改调新 API `pdfApi.fillFormFieldsInPlace(docId, dirty)` 返回 filePath
+- emit `form-filled-inplace` 而非 `form-filled`(blob)
+- PdfEditor 接 `form-filled-inplace` -> `reloadAfterPageOp` reload
+
+**C. 无字段时引导**:
+- PdfRightPanel 空状态加按钮"上传含表单的 PDF 测试"或提示"此 PDF 无 AcroForm 字段,可先用 Adobe Acrobat 创建表单字段"
+- Ribbon "填表单" 按钮点击后若发现无字段,ElMessage.info 提示
+
+#### 改动 5: 签名 in-place 修改
+**A. 后端 `/signature` 改落盘**:
+- 当前返回 `byte[]` attachment;改为 `replacePdfBytes` 落盘 + 返回 `{ success, filePath }`
+
+**B. 前端 `embedSignature` API**:
+- 改返回 `{ success, filePath }` 而非 Blob
+
+**C. 前端 `placeSignature`**:
+- 删除 L1326-1333 下载逻辑
+- 改为 `emit('fileUrlChanged', bustUrl)` + `reloadAfterPageOp` reload(仿 textEdit)
+- ElMessage.success('签名已嵌入文档')
+
+#### 改动 6: 新增移动/手型工具
+**A. `usePdfAnnotation.ts` AnnotationTool 类型**:
+- 加 `| 'move'`
+- onMouseDown/Move/Up 对 `move` 直接 return(不创建标注)
+
+**B. `PdfRibbon.vue` editTools**:
+- 加 `{ id: 'move', label: '手型', icon: 'hand', shortcut: 'M' }`(放最前,Acrobat 风格)
+- 加 hand icon SVG
+
+**C. `PdfCanvas.vue`**:
+- `.pdf-page-canvas` 加 `:class="{ 'is-pan-mode': activeTool === 'move' }"`
+- CSS `.pdf-page-canvas.is-pan-mode { cursor: grab }` `.is-pan-mode:active { cursor: grabbing }`
+
+**D. `PdfEditor.vue` pan 逻辑**:
+- `onCanvasMouseDown`: 若 `activeTool === 'move'`,记录 `panStart = { x: evt.clientX, y: evt.clientY, scrollTop: canvasAreaRef.scrollTop, scrollLeft: canvasAreaRef.scrollLeft }` + `isPanning = true`
+- `onCanvasMouseMove`: 若 `isPanning`,`canvasAreaRef.scrollTop = panStart.scrollTop - (evt.clientY - panStart.y)` + scrollLeft 同理
+- `onCanvasMouseUp/Leave`: `isPanning = false`
+
+### 关键文件
+- `miaotongdoc-web/src/components/PdfEditor.vue`(评论弹窗接线、VQA 截图、签名 in-place、pan 逻辑、form-filled-inplace 接线)
+- `miaotongdoc-web/src/components/PdfCanvas.vue`(形状预览分支渲染、pan 光标)
+- `miaotongdoc-web/src/components/PdfRibbon.vue`(move 工具按钮 + hand icon)
+- `miaotongdoc-web/src/components/PdfRightPanel.vue`(form in-place + 无字段引导)
+- `miaotongdoc-web/src/composables/pdf/usePdfAnnotation.ts`(AnnotationTool 加 move)
+- `miaotongdoc-web/src/api/pdf.ts`(embedSignature/fillFormFields 改返回 filePath)
+- `miaotongdoc-server/.../controller/PdfController.java`(/signature、/form-fields/fill 改落盘返回 filePath)
+- `miaotongdoc-server/.../service/PdfToolService.java`(embedSignature/fillFormFields 加 replacePdfBytes)
+
+### 验证(实施后追加)
+- 评论:框选 -> 弹窗 -> 输入 -> 保存 -> 画布显示评论图标
+- 识图:框选 -> 截图 -> AI 浮窗自动问答
+- 形状预览:矩形/箭头/直线/下划线/删除线拖动时显示各自形状
+- 填表单:有字段 PDF -> 填写 -> 应用 -> 文档 reload 更新(不下载)
+- 签名:放置 -> 文档 reload 显示签名(不下载)
+- 移动工具:切手型 -> 拖动平移文档
+- 回归:scenario-full 40/40 + deep-verify 23/23 + verify-text-select 3/3
+
+### 状态:已完成(2026-07-21)
+
+### 实施记录
+- **改动 1(评论弹窗接线)**:`PdfEditor.vue` 模板加 `<el-dialog v-model="commentDialogVisible">` + textarea;`commentDialogVisible`/`commentDraft` computed 绑 `annot.showCommentDialog/editingComment`;`onCommentSave`/`onCommentCancel` 调 `annot.saveComment/cancelComment`
+- **改动 2(识图 VQA 截图)**:`onCanvasMouseUp` 检测 `activeTool==='vqa' && annot.pendingRect.value` -> `captureVqaAndAsk`:用离屏 canvas `drawImage` 截取 pendingRect 区域为 dataURL -> 赋 `vqaImage` + `aiVisible=true` + 清空 pendingRect
+- **改动 3(形状预览分支)**:`PdfCanvas.vue` pendingRect 渲染按 `activeTool` 分支:rectangle=`<rect>`、ellipse=`<ellipse>`、arrow=`<path :d="arrowPathCanvas">`、line/underline/strikethrough=`<line>`(下划线贴底、删除线贴中);highlight/comment/vqa 保留半透明填充矩形
+- **改动 4(填表单 in-place)**:后端加 `POST /form-fields/fill-in-place` 落盘返回 filePath;前端 `pdfApi.fillFormFieldsInPlace`;`PdfRightPanel.applyFormFill` 改调新 API + emit `form-filled-inplace`;`PdfEditor.onFormFilledInPlace` bustUrl reload
+- **改动 5(签名 in-place)**:后端加 `POST /signature/in-place` 落盘返回 filePath + `embedSignature` 兼容 `data:image/...;base64,` 前缀;前端 `pdfApi.embedSignatureInPlace`;`placeSignature` 删除下载逻辑改 bustUrl reload
+- **改动 6(移动/手型工具)**:`AnnotationTool` 加 `'move'`;`usePdfAnnotation.onMouseDown/Move` 对 move 早 return;`PdfRibbon.editTools` 加手型按钮(M 键);`PdfIcon.vue` 加 hand 图标;`PdfCanvas` `.is-pan-mode` cursor grab/grabbing;`PdfEditor` `panState` + `onCanvasMouse*` 拖动改 `canvasAreaRef.scrollTop/Left`
+
+### 验证结果(2026-07-21)
+- `verify-13-26.js`: **10/12** -- 手型按钮+cursor=grab、矩形/箭头/直线/下划线/删除线预览各自形状、评论框选弹窗、识图框选截图发 AI、签名 in-place 端点 200 返回 filePath
+  - 2 项"失败"非 bug:① 手型拖动 scrollTop 在大视口无溢出时不变(预期);② 表单 in-place 对无 AcroForm 的 PDF 返回 400 业务错误(端点工作正常)
+- `verify-pan2.js`(小视口强制溢出): **平移生效** -- scrollLeft 0->200,sh>ch 且 sw>cw 时手型拖动正常平移
+- 构建: `npm run build` 0 error (45s) + `mvn clean package` 0 error (27s),jar 168MB
+- 部署: 前端 dist 清空后拷入;后端 jar 替换;nginx + web-server 重启
+
+---
+
+## 四十三、Phase 13.27 - 手型工具平移 bug 修复(2026-07-22)
+
+### 临时需求(用户)
+> 移动按钮手型按钮逻辑不对,有 bug 无法使用
+
+### 根因
+Phase 13.26 的手型工具有两个 bug:
+1. **textLayer 在 move 工具下仍 `pointer-events: auto`** -- 鼠标点在文字上时浏览器开始原生文字选区,光标变 text 而非 grab,且选区拖动干扰 pan,用户感觉"切到手型没反应"
+2. **pan 监听只在 `.pdf-page-canvas` 上** -- 鼠标移出 canvas(到 canvas-area 空白处)时 mousemove 停止触发 -> pan 中断;mouseup 在 canvas 外不触发 -> `panState` 不清空,下次进入 canvas 的 mousemove 又开始 pan(幽灵拖动)
+
+### 修复
+- **`PdfCanvas.vue`**:textLayer 加 `'is-pan-mode': activeTool === 'move'` class;CSS `.pdf-text-layer.is-pan-mode { pointer-events: none }`(move 工具下文字层让出事件,点文字不触发选区,光标显示 grab)
+- **`PdfEditor.vue`**:pan 改用 window 级监听
+  - `onCanvasMouseDown`(move 工具时)注册 `window.addEventListener('mousemove', onWindowPanMove)` + `window.addEventListener('mouseup', onWindowPanUp)`
+  - `onWindowPanMove` 改 `canvasAreaRef.scrollTop/Left`(视口坐标 clientX/Y 不受滚动影响)
+  - `onWindowPanUp` 清 `panState` + 移除两个 window 监听
+  - `onCanvasMouseMove/Up/Leave` 移除 pan 分支(不再依赖 canvas 元素事件)
+
+### 验证结果(2026-07-22)
+- `verify-pan3.js`: **4/4** -- move 工具下 textLayer pointer-events=none、画布 cursor=grab、拖动期间移出 canvas 仍 pan、mouseup 在 canvas 外后 mousemove 不再 pan(监听已移除)
+- `verify-pan2.js`: scrollLeft 0->200 平移生效(小视口强制溢出)
+- 回归 `verify-text-select.js`: **3/3**
+- 回归 `deep-verify-stageD.js`: **23/23**
+- 构建: `npm run build` 0 error (38s)
+- 部署: 前端 dist 清空后拷入;nginx 重启
+
+### 关键文件
+- `miaotongdoc-web/src/components/PdfCanvas.vue`(textLayer is-pan-mode class + CSS)
+- `miaotongdoc-web/src/components/PdfEditor.vue`(pan 改 window 监听 + onWindowPanMove/Up)
+
+### 二次修复(2026-07-22,根因定位)
+首次修复(Phase 13.27)后用户反馈手型工具仍不能平移 + 还能选文字。深入诊断发现**真正的根因**:
+
+- **平移失效根因**:`.pdf-canvas-area` CSS `scroll-behavior: smooth`(L2104)。`el.scrollTop = 100` 在 smooth 下启动动画,同步读返回起点 0;连续 mousemove 不断重启动画,scrollTop 永远到不了目标值。诊断证据:`setTop:100, afterTop:0`(设了 100 立即读是 0),手动设 100 后 `afterImmediate:0, afterDelay(200ms):100`
+- **选文字根因**:`.pdf-text-layer { user-select: text }` 是 textLayer 自己的规则,父级 `.pdf-page-canvas.is-pan-mode { user-select: none }` 不能覆盖子元素(user-select 不继承)
+
+### 最终修复
+- **`PdfEditor.vue` onWindowPanMove**:改用 `canvasAreaRef.value.scrollTo({ top, left, behavior: 'auto' })` -- `behavior:'auto'` 覆盖 CSS `scroll-behavior: smooth`,立即跳转不走动画
+- **`PdfCanvas.vue` CSS**:`.pdf-text-layer.is-pan-mode` 及其子元素 `span/*` 显式 `user-select: none !important; pointer-events: none !important`
+- **`PdfEditor.vue` onCanvasMouseDown**(move 工具):`evt.preventDefault()` 阻止选区开始
+
+### 最终验证(2026-07-22)
+- `verify-pan-visible.js`: **2/2** -- 手型工具下选不到文字(selection="") + 平移生效(scrollTop 0->100)
+- `verify-pan-cleanup.js`: during:100, afterUp:100, afterMove:100 -- mouseup 后监听正确移除不再 pan
+- 回归 `verify-text-select.js`: **3/3**
+- 回归 `deep-verify-stageD.js`: **23/23**
+- 构建: `npm run build` 0 error (30s)
+- 部署: 前端 dist 清空后拷入;nginx 重启
+
+### Phase 13.26 验收结果(2026-07-22)
+- `verify-13-26-final.js`: **5/6**(手型综合测试受识图 AI 浮窗遮挡干扰,非真 bug)
+  - ✓ 评论框选后弹出"添加评论"弹窗
+  - ✓ 识图框选后 AI 浮窗(.ai-float)打开,captureVqaAndAsk called=true + canvasFound=true
+  - ✓ 箭头拖动显示 path 预览(M 100 100 L 250 200...)
+  - ✓ 签名 in-place 端点 200,返回 filePath
+  - ✓ 表单 in-place 端点可达(cov.pdf 无 AcroForm 返回 400,端点工作)
+- `verify-pan-visible.js`: **2/2** -- 手型工具下选不到文字 + 平移生效(scrollTop 0->100)
+- `verify-vqa-final.js`: 识图后 .ai-float=true ✓
+- 回归 `verify-text-select.js`: **3/3**
+- 回归 `deep-verify-stageD.js`: **23/23**
+- 构建: 前端 `npm run build` 0 error (26s) + 后端 `mvn clean package` 0 error (76s),jar 168MB
+- 部署: 前端 dist 清空后拷入;后端 jar 替换;nginx + web-server 重启
+
+### 状态:已完成(2026-07-22)
+6 项功能全部交付:
+1. 评论工具:框选 -> 弹窗 -> 输入 -> 保存(circle 标记)
+2. 识图工具:框选 -> 截图 canvas 区域 -> AI 浮窗自动问答
+3. 形状预览:矩形/椭圆/箭头/直线/下划线/删除线拖动时显示各自形状(非统一虚线矩形)
+4. 表单 in-place:填充后落盘 reload(不下载);无 AcroForm 时提示
+5. 签名 in-place:放置后落盘 reload(不下载)
+6. 手型工具:切手型 -> 拖动平移文档(选不到文字 + 平移生效)

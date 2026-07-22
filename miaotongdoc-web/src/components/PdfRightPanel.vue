@@ -273,6 +273,8 @@ const emit = defineEmits<{
   (e: 'focus-field', field: { page: number; rect: [number, number, number, number]; name: string }): void
   /** Phase 12.2: 表单填充后下载新 PDF */
   (e: 'form-filled', blob: Blob): void
+  /** Phase 13.26: 表单 in-place 填充后通知父组件 reload */
+  (e: 'form-filled-inplace'): void
 }>()
 
 const activeTab = ref(props.initialTab || 'outline')
@@ -495,9 +497,10 @@ async function applyFormFill() {
   }
   formSaving.value = true
   try {
-    const blob = await pdfApi.fillFormFields(props.docId, dirty)
-    ElMessage.success(`已填充 ${Object.keys(dirty).length} 个字段,PDF 已下载`)
-    emit('form-filled', blob)
+    // Phase 13.26: in-place 填充(落盘 + 父组件 reload),不再下载 Blob
+    await pdfApi.fillFormFieldsInPlace(props.docId, dirty)
+    ElMessage.success(`已填充 ${Object.keys(dirty).length} 个字段并保存到文档`)
+    emit('form-filled-inplace')
   } catch (e: any) {
     console.error('[PdfRightPanel] applyFormFill failed:', e)
     ElMessage.error(e?.message || '填充失败')

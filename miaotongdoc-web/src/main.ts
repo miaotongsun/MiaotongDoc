@@ -15,6 +15,8 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import 'element-plus/dist/index.css'
 // 设计令牌(全局 CSS 变量,Fluent 风格 PDF 编辑器必需,必须在 Element Plus 之后)
 import '@/styles/pdf-tokens.css'
+// Phase 13.21: 统一弹窗样式(.pdf-dialog 类)
+import '@/styles/pdf-dialogs.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'

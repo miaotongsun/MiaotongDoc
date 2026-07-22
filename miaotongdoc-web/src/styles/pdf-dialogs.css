@@ -1,0 +1,131 @@
+/*
+  pdf-dialogs.css -- Phase 13.21 统一弹窗样式
+  直接作用于所有 el-dialog(应用内 el-dialog 均为文档操作,统一风格)
+  Element Plus 2.5+ custom-class 已弃用,改全局类选择器
+  结构: .el-overlay > .el-overlay-dialog > .el-dialog > __header/__body/__footer
+*/
+
+/* mask 半透明深色 + 轻模糊 */
+.el-overlay:has(.el-dialog) {
+  background: rgba(15, 23, 42, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.el-dialog {
+  border-radius: 10px;
+  box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  margin-top: 8vh;
+}
+
+/* header */
+.el-dialog__header {
+  margin: 0;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-divider, #e4e7ed);
+  background: var(--color-surface, #fff);
+}
+.el-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-foreground, #303133);
+}
+.el-dialog__headerbtn {
+  top: 14px;
+  right: 16px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.el-dialog__headerbtn:hover {
+  background: rgba(245, 108, 108, 0.1);
+}
+.el-dialog__headerbtn:hover .el-dialog__close {
+  color: var(--color-destructive, #f56c6c);
+}
+
+/* body */
+.el-dialog__body {
+  padding: 20px;
+  color: var(--color-foreground, #303133);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* footer */
+.el-dialog__footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--color-divider, #e4e7ed);
+  text-align: right;
+}
+.el-dialog__footer .el-button + .el-button {
+  margin-left: 10px;
+}
+.el-dialog__footer .el-button--primary {
+  background: var(--color-primary, #409eff);
+  border-color: var(--color-primary, #409eff);
+}
+.el-dialog__footer .el-button--primary:hover {
+  background: var(--color-primary-hover, #66b1ff);
+  border-color: var(--color-primary-hover, #66b1ff);
+}
+
+/* tabs inside dialog(页面操作) */
+.el-dialog .el-tabs__nav-wrap::after {
+  background: var(--color-divider, #e4e7ed);
+}
+.el-dialog .el-tabs__item {
+  font-size: 13px;
+  height: 38px;
+}
+.el-dialog .el-tabs__item.is-active {
+  color: var(--color-primary, #409eff);
+  font-weight: 600;
+}
+.el-dialog .el-tabs__active-bar {
+  background: var(--color-primary, #409eff);
+}
+
+/* form labels 紧凑 */
+.el-dialog .el-form-item__label {
+  font-size: 13px;
+  color: var(--color-foreground-2, #606266);
+}
+.el-dialog .el-input__wrapper,
+.el-dialog .el-select .el-input__wrapper,
+.el-dialog .el-textarea__inner {
+  border-radius: 6px;
+}
+
+/* ========== Phase 13.23: pdfjs TextLayer span 定位 ==========
+   关键:pdfjs 4.x TextLayer 渲染的 span 需 position:absolute 才能让
+   inline style left/top 百分比/calc(--scale-factor) 生效定位;
+   否则 span 默认 static,堆在容器顶部(0,0)。
+   写在这里(非 scoped)因为 PdfCanvas scoped CSS 的 [data-v-xxx] 属性选择器
+   无法匹配 pdfjs 动态创建的 span。 */
+.pdf-text-layer > span,
+.pdf-text-layer > br {
+  position: absolute;
+}
+/* 100% 对齐:usePdfRenderer 渲染 TextLayer 后遍历每个 span,
+   把 style.top 百分比下移 0.22em(让 span 顶 = canvas 文字实际可见顶 = em-box 顶)。
+   CSS 这里只设 line-height/height 保持稳定盒模型;top 偏移在 JS 改。 */
+.pdf-text-layer > span {
+  line-height: 1.22;
+  height: 1.22em;
+}
+/* Phase 13.24: 选区时高亮加深,选区内文字不可见(只看到色块)
+   关键:pdfjs 4.x 给每个 span 显式 style.color (黑色),父级 color:transparent 不会继承。
+   必须用属性选择器强制覆盖 inline style。同时 color: transparent 让文字隐形,
+   ::selection 反而透明 → background 用实色显示色块。 */
+.pdf-text-layer > span,
+.pdf-text-layer > span[style*="color"] {
+  color: transparent !important;
+}
+.pdf-text-layer > span::selection,
+.pdf-text-layer > span *::selection {
+  background: rgba(70, 130, 220, 0.55) !important;
+  color: transparent !important;
+}

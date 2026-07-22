@@ -28,6 +28,7 @@
 
     <div
       class="pdf-page-canvas"
+      :class="{ 'is-editing': isEditing, 'is-pan-mode': activeTool === 'move' }"
       :data-page-num="pageNum"
       @mousedown="onMouseDown"
       @mousemove="onMouseMove"
@@ -41,6 +42,7 @@
       <canvas
         ref="canvasRef"
         class="pdf-canvas-el"
+        :class="{ 'is-edit-mode': activeTool === 'textEdit' }"
         :aria-label="`PDF 第 ${pageNum} 页`"
       ></canvas>
 
@@ -48,12 +50,12 @@
       <div
         ref="textLayerRef"
         class="pdf-text-layer"
+        :class="{ 'is-edit-mode': activeTool === 'textEdit', 'is-pan-mode': activeTool === 'move' }"
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
       ></div>
 
-      <!-- 层 3: 文本编辑层(Phase 2 启用) -->
+      <!-- 层 3: 文本编辑层(Phase 2 + Phase 13.22: 默认可见文字) -->
       <div
-        v-if="activeTool === 'textEdit'"
         class="pdf-text-edit-layer"
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
       >
@@ -78,36 +80,87 @@
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
         :viewBox="`0 0 ${canvasWidth} ${canvasHeight}`"
       >
-        <!-- pending rect (drawing preview) -->
-        <rect
-          v-if="pendingRect && pendingRect.pageNumber === pageNum"
-          :x="pendingRect.x"
-          :y="pendingRect.y"
-          :width="pendingRect.width"
-          :height="pendingRect.height"
-          :style="pendingRectStyle"
-        />
+        <!-- Phase 13.26: pending rect (drawing preview) 按 activeTool 分支渲染各自形状 -->
+        <template v-if="pendingRect && pendingRect.pageNumber === pageNum">
+          <!-- 矩形:实线边框 -->
+          <rect
+            v-if="activeTool === 'rectangle'"
+            :x="pendingRect.x" :y="pendingRect.y"
+            :width="pendingRect.width" :height="pendingRect.height"
+            :stroke="activeColor" stroke-width="2" fill="none" rx="2"
+            stroke-dasharray="4 2"
+          />
+          <!-- 椭圆 -->
+          <ellipse
+            v-else-if="activeTool === 'ellipse'"
+            :cx="pendingRect.x + pendingRect.width / 2"
+            :cy="pendingRect.y + pendingRect.height / 2"
+            :rx="Math.abs(pendingRect.width / 2)"
+            :ry="Math.abs(pendingRect.height / 2)"
+            :stroke="activeColor" stroke-width="2" fill="none"
+            stroke-dasharray="4 2"
+          />
+          <!-- 箭头 -->
+          <path
+            v-else-if="activeTool === 'arrow'"
+            :d="arrowPathCanvas(toCanvasRectFromPending(pendingRect))"
+            :stroke="activeColor" stroke-width="2" fill="none"
+            stroke-linecap="round" stroke-linejoin="round"
+          />
+          <!-- 直线 -->
+          <line
+            v-else-if="activeTool === 'line'"
+            :x1="pendingRect.x" :y1="pendingRect.y"
+            :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height"
+            :stroke="activeColor" stroke-width="2" stroke-linecap="round"
+            stroke-dasharray="4 2"
+          />
+          <!-- 下划线(贴矩形底部) -->
+          <line
+            v-else-if="activeTool === 'underline'"
+            :x1="pendingRect.x" :y1="pendingRect.y + pendingRect.height - 1"
+            :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height - 1"
+            :stroke="activeColor" stroke-width="2" stroke-linecap="round"
+            stroke-dasharray="4 2"
+          />
+          <!-- 删除线(贴矩形中部) -->
+          <line
+            v-else-if="activeTool === 'strikethrough'"
+            :x1="pendingRect.x" :y1="pendingRect.y + pendingRect.height / 2"
+            :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height / 2"
+            :stroke="activeColor" stroke-width="2" stroke-linecap="round"
+            stroke-dasharray="4 2"
+          />
+          <!-- 高亮/评论/识图:保留半透明填充矩形(框选语义) -->
+          <rect
+            v-else
+            :x="pendingRect.x" :y="pendingRect.y"
+            :width="pendingRect.width" :height="pendingRect.height"
+            :style="pendingRectStyle"
+          />
+        </template>
         <!-- 渲染此页所有标注 -->
         <g v-for="ann in pageAnnotations" :key="ann.id">
+          <!-- Phase 13.25: ann.rect 存 PDF pt,渲染时 toCanvasRect 转 SVG 画布像素 + Y 翻转 -->
           <rect
             v-if="ann.type === 'highlight' && ann.rect"
-            :x="ann.rect.x"
-            :y="ann.rect.y"
-            :width="ann.rect.width"
-            :height="ann.rect.height"
+            :x="toCanvasRect(ann.rect).x"
+            :y="toCanvasRect(ann.rect).y"
+            :width="toCanvasRect(ann.rect).w"
+            :height="toCanvasRect(ann.rect).h"
             :style="highlightStyle(ann)"
           />
           <circle
             v-else-if="ann.type === 'comment' && ann.rect"
-            :cx="(ann.rect.x ?? 0) + 12"
-            :cy="(ann.rect.y ?? 0) + 12"
+            :cx="toCanvasRect(ann.rect).x + 12"
+            :cy="toCanvasRect(ann.rect).y + 12"
             r="12"
             :fill="ann.color"
             class="pdf-comment-marker"
           />
           <path
             v-else-if="ann.type === 'draw' && ann.points && ann.points.length > 1"
-            :d="drawPath(ann.points)"
+            :d="drawPathCanvas(ann.points)"
             :stroke="ann.color"
             stroke-width="2"
             fill="none"
@@ -117,10 +170,10 @@
           <!-- Phase 10: 矩形 -->
           <rect
             v-else-if="ann.type === 'rectangle' && ann.rect"
-            :x="ann.rect.x"
-            :y="ann.rect.y"
-            :width="ann.rect.width"
-            :height="ann.rect.height"
+            :x="toCanvasRect(ann.rect).x"
+            :y="toCanvasRect(ann.rect).y"
+            :width="toCanvasRect(ann.rect).w"
+            :height="toCanvasRect(ann.rect).h"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             fill="none"
@@ -129,10 +182,10 @@
           <!-- Phase 10: 椭圆 -->
           <ellipse
             v-else-if="ann.type === 'ellipse' && ann.rect"
-            :cx="ann.rect.x + ann.rect.width / 2"
-            :cy="ann.rect.y + ann.rect.height / 2"
-            :rx="Math.abs(ann.rect.width / 2)"
-            :ry="Math.abs(ann.rect.height / 2)"
+            :cx="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w / 2"
+            :cy="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2"
+            :rx="Math.abs(toCanvasRect(ann.rect).w / 2)"
+            :ry="Math.abs(toCanvasRect(ann.rect).h / 2)"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             fill="none"
@@ -140,7 +193,7 @@
           <!-- Phase 10: 箭头 -->
           <path
             v-else-if="ann.type === 'arrow' && ann.rect"
-            :d="arrowPath(ann.rect)"
+            :d="arrowPathCanvas(toCanvasRect(ann.rect))"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             fill="none"
@@ -150,10 +203,10 @@
           <!-- Phase 10: 直线 -->
           <line
             v-else-if="ann.type === 'line' && ann.rect"
-            :x1="ann.rect.x"
-            :y1="ann.rect.y"
-            :x2="ann.rect.x + ann.rect.width"
-            :y2="ann.rect.y + ann.rect.height"
+            :x1="toCanvasRect(ann.rect).x"
+            :y1="toCanvasRect(ann.rect).y"
+            :x2="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w"
+            :y2="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             stroke-linecap="round"
@@ -161,10 +214,10 @@
           <!-- Phase 10: 下划线/删除线 -->
           <line
             v-else-if="(ann.type === 'underline' || ann.type === 'strikethrough') && ann.rect"
-            :x1="ann.rect.x"
-            :y1="ann.type === 'underline' ? ann.rect.y + ann.rect.height - 1 : ann.rect.y + ann.rect.height / 2"
-            :x2="ann.rect.x + ann.rect.width"
-            :y2="ann.type === 'underline' ? ann.rect.y + ann.rect.height - 1 : ann.rect.y + ann.rect.height / 2"
+            :x1="toCanvasRect(ann.rect).x"
+            :y1="ann.type === 'underline' ? toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h - 1 : toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2"
+            :x2="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w"
+            :y2="ann.type === 'underline' ? toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h - 1 : toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2"
             :stroke="ann.color"
             stroke-width="2"
             stroke-linecap="round"
@@ -172,18 +225,18 @@
           <!-- Phase 10: 图章 -->
           <g v-else-if="ann.type === 'stamp' && ann.rect">
             <rect
-              :x="ann.rect.x"
-              :y="ann.rect.y"
-              :width="ann.rect.width"
-              :height="ann.rect.height"
+              :x="toCanvasRect(ann.rect).x"
+              :y="toCanvasRect(ann.rect).y"
+              :width="toCanvasRect(ann.rect).w"
+              :height="toCanvasRect(ann.rect).h"
               fill="none"
               :stroke="ann.color"
               stroke-width="2"
               rx="4"
             />
             <text
-              :x="ann.rect.x + ann.rect.width / 2"
-              :y="ann.rect.y + ann.rect.height / 2 + 6"
+              :x="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w / 2"
+              :y="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2 + 6"
               :fill="ann.color"
               text-anchor="middle"
               font-size="18"
@@ -193,7 +246,7 @@
             >{{ ann.stampText || 'DRAFT' }}</text>
           </g>
         </g>
-        <!-- current drawing -->
+        <!-- current drawing (画笔实时轨迹,points 是画布像素,直接用) -->
         <path
           v-if="drawingPath"
           :d="drawingPath"
@@ -202,6 +255,18 @@
           fill="none"
           stroke-linecap="round"
           stroke-linejoin="round"
+        />
+        <!-- Phase 13.25: 橡皮擦跟手光标 -->
+        <circle
+          v-if="eraserCursor && eraserCursor.pageNumber === pageNum"
+          :cx="eraserCursor.x"
+          :cy="eraserCursor.y"
+          :r="eraserRadius"
+          fill="rgba(220, 38, 38, 0.12)"
+          stroke="#DC2626"
+          stroke-width="1.5"
+          stroke-dasharray="3 2"
+          pointer-events="none"
         />
         <!-- Phase 12.1: 表单字段临时高亮矩形(4 秒) -->
         <rect
@@ -260,6 +325,10 @@ const props = defineProps<{
   formHighlight?: { x: number; y: number; w: number; h: number; name: string } | null
   /** Phase 13.8: 编辑模式(画布蓝色边框) */
   isEditing?: boolean
+  /** Phase 13.25: 橡皮擦跟手光标(画布像素 + 页码) */
+  eraserCursor?: { x: number; y: number; pageNumber: number } | null
+  /** Phase 13.25: 橡皮擦光标半径(px) */
+  eraserRadius?: number
 }>()
 
 const emit = defineEmits<{
@@ -296,6 +365,54 @@ const formHighlightBox = computed(() => {
     h: h * props.scale,
   }
 })
+
+/**
+ * Phase 13.25: 把存储的 PDF pt rect(左下原点)转成 SVG 画布像素 rect(左上原点)
+ * 用于渲染 highlight/rectangle/ellipse/arrow/line/underline/strikethrough/stamp。
+ * @param r PDF pt rect { x, y, width, height }(y 是距 PDF 页底的距离)
+ * @returns 画布像素 rect { x, y, w, h }(y 是距 SVG 顶的距离)
+ */
+function toCanvasRect(r: { x: number; y: number; width: number; height: number }) {
+  return {
+    x: r.x * props.scale,
+    y: canvasHeight.value - (r.y + r.height) * props.scale,
+    w: r.width * props.scale,
+    h: r.height * props.scale,
+  }
+}
+
+/**
+ * Phase 13.25: 画笔 path(points 已存 PDF pt,左下原点) -> SVG d 字符串(画布像素,左上原点)
+ */
+function drawPathCanvas(points: number[]): string {
+  if (!points || points.length < 4) return ''
+  const cmds: string[] = [`M ${points[0] * props.scale} ${canvasHeight.value - points[1] * props.scale}`]
+  for (let i = 2; i < points.length; i += 2) {
+    cmds.push(`L ${points[i] * props.scale} ${canvasHeight.value - points[i + 1] * props.scale}`)
+  }
+  return cmds.join(' ')
+}
+
+/** Phase 13.25: 箭头 path(SVG 画布像素坐标) */
+function arrowPathCanvas(r: { x: number; y: number; w: number; h: number }): string {
+  const x1 = r.x
+  const y1 = r.y
+  const x2 = r.x + r.w
+  const y2 = r.y + r.h
+  const angle = Math.atan2(y2 - y1, x2 - x1)
+  const headLen = 12
+  const wingAngle = Math.PI / 7
+  const w1x = x2 - headLen * Math.cos(angle - wingAngle)
+  const w1y = y2 - headLen * Math.sin(angle - wingAngle)
+  const w2x = x2 - headLen * Math.cos(angle + wingAngle)
+  const w2y = y2 - headLen * Math.sin(angle + wingAngle)
+  return `M ${x1} ${y1} L ${x2} ${y2} M ${w1x} ${w1y} L ${x2} ${y2} L ${w2x} ${w2y}`
+}
+
+/** Phase 13.26: pendingRect(画布像素,{x,y,width,height}) -> {x,y,w,h} 给 arrowPathCanvas 用 */
+function toCanvasRectFromPending(r: { x: number; y: number; width: number; height: number }) {
+  return { x: r.x, y: r.y, w: r.width, h: r.height }
+}
 
 const cardStyle = computed(() => ({
   width: canvasWidth.value + 'px',
@@ -338,34 +455,6 @@ function highlightStyle(ann: PdfAnnotation) {
     strokeWidth: 1,
     pointerEvents: 'auto' as const,
   }
-}
-
-function drawPath(points: number[]): string {
-  if (points.length < 2) return ''
-  const cmds: string[] = [`M ${points[0]} ${points[1]}`]
-  for (let i = 2; i < points.length; i += 2) {
-    cmds.push(`L ${points[i]} ${points[i + 1]}`)
-  }
-  return cmds.join(' ')
-}
-
-/**
- * 箭头路径:从矩形对角线画一条线 + 末端三角箭头
- */
-function arrowPath(rect: { x: number; y: number; width: number; height: number }): string {
-  const x1 = rect.x
-  const y1 = rect.y
-  const x2 = rect.x + rect.width
-  const y2 = rect.y + rect.height
-  const angle = Math.atan2(y2 - y1, x2 - x1)
-  const headLen = 12
-  const wingAngle = Math.PI / 7
-  // 箭头两个翼
-  const w1x = x2 - headLen * Math.cos(angle - wingAngle)
-  const w1y = y2 - headLen * Math.sin(angle - wingAngle)
-  const w2x = x2 - headLen * Math.cos(angle + wingAngle)
-  const w2y = y2 - headLen * Math.sin(angle + wingAngle)
-  return `M ${x1} ${y1} L ${x2} ${y2} M ${w1x} ${w1y} L ${x2} ${y2} L ${w2x} ${w2y}`
 }
 
 onMounted(async () => {
@@ -464,12 +553,26 @@ function onContextMenu(evt: MouseEvent) {
   user-select: text;
   margin: 0 auto;
 }
+/* Phase 13.26: 手型工具平移光标 */
+.pdf-page-canvas.is-pan-mode {
+  cursor: grab;
+  user-select: none;
+}
+.pdf-page-canvas.is-pan-mode:active {
+  cursor: grabbing;
+}
 
 .pdf-canvas-el {
   display: block;
   position: relative;
   z-index: var(--z-canvas);
   /* canvas 是替换元素,默认 width/height 属性 = 渲染尺寸 */
+}
+/* Phase 13.23: 编辑模式下淡化原文层,让编辑 token 成视觉主体 */
+.pdf-canvas-el.is-edit-mode {
+  opacity: 0.25;
+  filter: grayscale(0.6);
+  transition: opacity 200ms ease, filter 200ms ease;
 }
 
 .pdf-text-layer {
@@ -481,17 +584,43 @@ function onContextMenu(evt: MouseEvent) {
   color: transparent;
   line-height: 1;
   user-select: text;
+  /* Phase 13.22: 默认接收事件允许框选复制;textEdit 工具下让可见编辑层接管 */
   pointer-events: auto;
 }
-
-/* Phase 13.10: 选中文字去掉蓝色,改浅灰背景 + 深色文字(不影响复制) */
-.pdf-text-layer ::selection,
-.pdf-ocr-text ::selection {
-  background: rgba(59, 111, 232, 0.15);
-  color: var(--color-foreground);
+/* Phase 13.24: pdfjs 给 span 显式 inline style.color,
+   这里强制覆盖 → 文字隐形,只有 ::selection 高亮时显示色块。 */
+.pdf-text-layer > span {
+  color: transparent !important;
 }
-.pdf-text-layer ::selection {
-  background: rgba(100, 149, 237, 0.25);
+/* Phase 13.23: pdfjs 4.x TextLayer span 需 position:absolute,
+   全局 CSS 在 pdf-dialogs.css(scoped [data-v-xxx] 无法匹配 pdfjs 动态 span) */
+
+.pdf-text-layer.is-edit-mode {
+  pointer-events: none;
+}
+/* Phase 13.27: 手型工具下文字层让出事件,避免点文字触发原生选区干扰平移 */
+.pdf-text-layer.is-pan-mode {
+  pointer-events: none;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+.pdf-text-layer.is-pan-mode span,
+.pdf-text-layer.is-pan-mode * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  pointer-events: none !important;
+}
+
+/* Phase 13.10 + 13.23: 选中文字高亮改成极淡(几乎不可见),Acrobat 幽灵理念:
+   文字层完全透明,选区高亮仅微弱提示,不影响复制。
+   原色 rgba(100, 149, 237, 0.25) 太显眼 → 改为 rgba(100, 149, 237, 0.06)。
+   pdfjs TextLayer 自身有 ::selection 默认蓝灰,需 !important 覆盖。 */
+.pdf-text-layer ::selection,
+.pdf-text-layer ::selection *,
+.pdf-ocr-text ::selection,
+.pdf-ocr-text ::selection * {
+  background: rgba(100, 149, 237, 0.06) !important;
+  color: inherit !important;
 }
 
 .pdf-text-edit-layer {

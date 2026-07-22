@@ -116,7 +116,7 @@ function tokenStyle(tok: OcrToken) {
   color: transparent;
 }
 .pdf-ocr-layer.is-selectable .pdf-ocr-token:hover .pdf-ocr-text {
-  color: var(--color-primary, #3b6fe8);
+  color: var(--color-foreground-3, #909399);
 }
 
 /* Phase 13.12: showText=true 时(用户开"识别后"显示),文字半透明覆盖在原图上,

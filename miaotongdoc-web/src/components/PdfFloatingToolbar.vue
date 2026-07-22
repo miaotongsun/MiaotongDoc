@@ -93,6 +93,24 @@
           @click="onChangeHighlight(c)"
         ></button>
       </div>
+
+      <span class="pdf-ft-divider"></span>
+
+      <!-- Phase 13.25: 保存 / 取消按钮 (Acrobat 标准: 选区即生效 + 点保存才持久化) -->
+      <div class="pdf-ft-group pdf-ft-actions">
+        <button
+          class="pdf-ft-btn pdf-ft-cancel"
+          aria-label="取消格式修改"
+          title="取消"
+          @click="$emit('cancel')"
+        >✗</button>
+        <button
+          class="pdf-ft-btn pdf-ft-confirm"
+          aria-label="保存格式修改"
+          title="保存"
+          @click="$emit('confirm')"
+        >✓</button>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -107,6 +125,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'format', payload: { type: string; value?: string | number }): void
+  /** Phase 13.25: 用户点 ✓ 保存 -> 批量持久化到后端 */
+  (e: 'confirm'): void
+  /** Phase 13.25: 用户点 ✗ 取消 / ESC -> 清空待保存 ops + 隐藏 */
+  (e: 'cancel'): void
 }>()
 
 const visible = ref(false)
@@ -366,5 +388,22 @@ onUnmounted(() => {
 .pdf-ft-color-swatch.is-active,
 .pdf-ft-highlight-swatch.is-active {
   border-color: var(--color-foreground, #0f172a);
+}
+
+/* Phase 13.25: 保存/取消按钮 */
+.pdf-ft-confirm {
+  color: var(--color-success, #16a34a);
+  font-weight: 700;
+}
+.pdf-ft-confirm:hover {
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--color-success, #16a34a);
+}
+.pdf-ft-cancel {
+  color: var(--color-foreground-3, #94a3b8);
+}
+.pdf-ft-cancel:hover {
+  background: rgba(245, 108, 108, 0.1);
+  color: var(--color-destructive, #f56c6c);
 }
 </style>

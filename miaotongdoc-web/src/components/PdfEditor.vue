@@ -53,7 +53,31 @@
       @page-insert-from-file="onInsertFromFile"
       @watermark="onWatermark"
       @header-footer="onHeaderFooter"
-      @export-menu="onOpenExport" />
+      @export-menu="onOpenExport"
+      @save-as-new="onSaveAsNew"
+      @redact="onRedact"
+      @compress="onCompress"
+      @remove-watermark="onRemoveWatermark"
+      @fill-form="() => toggleRightPanel('form')"
+      @rotate-current="() => onRotatePage(currentPage, 90)"
+      @crop-page="onCropPage"
+      @split-pdf="onSplitPdf"
+      @ai-summarize="onCanvasMenuAiSummarize"
+      @ai-translate="onCanvasMenuAiTranslate"
+      @ai-full-summary="onAiFullSummary"
+      @ai-rewrite="onAiRewrite"
+      @ai-generate="onAiGenerate"
+      @ai-vqa="() => selectTool('vqa')"
+      @ai-image-desc="onAiImageDesc"
+      @ai-extract-terms="onAiExtractTerms"
+      @ai-optimize-ocr="onAiOptimizeOcr"
+      @ai-extract-structured="onAiExtractStructured"
+      @ai-auto-outline="onAiAutoOutline"
+      @ai-view-outline="() => toggleRightPanel('outline')"
+      @ai-keywords="onAiKeywords"
+      @ai-annotate="onAiAnnotate"
+      @ai-proofread="onAiProofread"
+      @extract-images="onExtractImages" />
     />
 
     <!-- 2. 主体三栏 -->
@@ -121,6 +145,8 @@
               :annotations="annotations"
               :pending-rect="pendingRect"
               :drawing-path="drawingPath"
+              :eraser-cursor="eraserCursor"
+              :eraser-radius="eraserRadius"
               :recognized="recognizedPages.has(currentPage)"
               :form-highlight="formHighlightFor(currentPage)"
               :is-editing="activeTool === 'textEdit'"
@@ -143,7 +169,7 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && (showOcrOverlay || activeTool === 'select')"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && showOcrOverlay"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
@@ -216,6 +242,8 @@
               :annotations="annotations"
               :pending-rect="pendingRect"
               :drawing-path="drawingPath"
+              :eraser-cursor="eraserCursor"
+              :eraser-radius="eraserRadius"
               :recognized="recognizedPages.has(i)"
               :form-highlight="formHighlightFor(i)"
               :is-editing="activeTool === 'textEdit'"
@@ -238,7 +266,7 @@
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
                 <PdfOcrLayer
-                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && (showOcrOverlay || activeTool === 'select')"
+                  v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && showOcrOverlay"
                   :page-num="pn"
                   :scale="sc"
                   :page-raw-height="pageRawHeight"
@@ -265,6 +293,7 @@
           @remove-annotation="onRemoveAnnotation"
           @focus-field="onFocusFormField"
           @form-filled="onFormFilled"
+          @form-filled-inplace="onFormFilledInPlace"
         />
       </Transition>
 
@@ -273,6 +302,7 @@
         :active-tool="activeTool"
         :right-panel="rightPanelOpen"
         :ai-visible="aiVisible"
+        :organize-open="organizeViewOpen"
         :collapsed="toolsRailCollapsed"
         @select-tool="selectTool"
         @export="onOpenExport"
@@ -281,12 +311,37 @@
         @send-sign="onSendSign"
         @open-ai="onOpenAi"
         @toggle-panel="toggleRightPanel"
+        @organize="openOrganizeView"
         @toggle-collapse="toolsRailCollapsed = !toolsRailCollapsed"
       />
 
-      <!-- Phase 9: 浮动文本格式工具栏(选区出现时浮现) -->
-      <PdfFloatingToolbar @format="onFloatingFormat" />
+      <!-- Phase 9 + 13.24: 浮动文本格式工具栏(只在编辑模式下显示)
+           Acrobat 风格: 编辑模式下选中文字才弹浮动工具栏;
+           普通 select 工具下不应出现(否则用户误以为是 Chrome 原生工具栏) -->
+      <PdfFloatingToolbar v-if="activeTool === 'textEdit'" @format="onFloatingFormat" @confirm="onFloatingConfirm" @cancel="onFloatingCancel" />
     </div>
+
+    <!-- Phase 13.26: 评论输入弹窗(comment 工具框选后弹出) -->
+    <el-dialog
+      v-model="commentDialogVisible"
+      title="添加评论"
+      width="420px"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <el-input
+        v-model="commentDraft"
+        type="textarea"
+        :rows="4"
+        placeholder="请输入评论内容…"
+        maxlength="500"
+        show-word-limit
+      />
+      <template #footer>
+        <el-button @click="onCommentCancel">取消</el-button>
+        <el-button type="primary" @click="onCommentSave">保存评论</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 3. 状态条(Adobe 风格 V3.2) -->
     <footer class="pdf-statusbar">
@@ -387,6 +442,7 @@
       :doc-id="docId"
       :current-page="currentPage"
       :filename="filename"
+      anchor-side="left"
       @close="exportMenuOpen = false"
     />
     <PdfThumbnailContextMenu
@@ -417,6 +473,25 @@
       :total-pages="totalPages"
       :initial-tab="pageOpsInitialTab"
       @success="onPageOpSuccess"
+    />
+    <!-- Phase 13.12-D: 全屏组织页面视图(z-index 1000,el-dialog 弹窗在其上) -->
+    <PdfOrganizePages
+      v-if="organizeViewOpen"
+      :open="organizeViewOpen"
+      :doc-id="docId"
+      :total-pages="totalPages"
+      :current-page="currentPage"
+      :pdf-doc="renderer.pdfDoc.value"
+      ref="organizeRef"
+      @close="organizeViewOpen = false"
+      @op-merge="onOpenMerge"
+      @op-delete-pages="onReorganizeDelete"
+      @op-rotate-pages="onReorganizeRotate"
+      @op-extract-pages="onReorganizeExtract"
+      @op-insert-blank="onReorganizeInsertBlank"
+      @op-insert-file="onReorganizeInsertFile"
+      @op-reorder="onReorganizeReorder"
+      @op-crop="onReorganizeCrop"
     />
     <!-- Phase 12.3: 签名创建对话框 -->
     <PdfSignatureDialog
@@ -522,7 +597,7 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import '@/styles/pdf-tokens.css'
 
 import PdfRibbon from './PdfRibbon.vue'
@@ -532,6 +607,7 @@ import PdfAiFloatPanel from './PdfAiFloatPanel.vue'
 import PdfTextEditorLayer from './PdfTextEditorLayer.vue'
 import PdfOcrLayer from './PdfOcrLayer.vue'
 import PdfRightPanel from './PdfRightPanel.vue'
+import PdfOrganizePages from './PdfOrganizePages.vue'
 import PdfToolsRail from './PdfToolsRail.vue'
 import PdfFloatingToolbar from './PdfFloatingToolbar.vue'
 import PdfPageOpsMenu from './PdfPageOpsMenu.vue'
@@ -555,6 +631,7 @@ import { usePdfAiFloat } from '@/composables/pdf/usePdfAiFloat'
 import { usePdfViewMode, type ViewMode } from '@/composables/pdf/usePdfViewMode'
 import type { PageOpResult } from '@/api/pdf'
 import { pdfApi } from '@/api/pdf'
+import { documentApi } from '@/api/document'
 
 const props = defineProps<{
   docId: number
@@ -621,7 +698,10 @@ const stampText = computed(() => (annot as any).stampText?.value ?? 'DRAFT')
 const stampPresets = computed(() => (annot as any).stampPresets?.value ?? [])
 const annotations = computed(() => annot.annotations.value)
 const pendingRect = computed(() => annot.pendingRect.value)
-const drawingPath = computed(() => (annot as any).drawPath ?? null)
+// Phase 13.25: 修正 drawPath 拼写错误(原 annot.drawPath 不存在,永远 null)
+const drawingPath = computed(() => annot.currentDrawPath?.value ?? null)
+const eraserCursor = computed(() => annot.eraserCursor?.value ?? null)
+const eraserRadius = computed(() => annot.eraserRadius ?? 15)
 const onlineUsers = computed(() => collab.onlineUsers.value)
 
 const selectTool = (t: AnnotationTool) => (annot.activeTool.value = t)
@@ -641,6 +721,11 @@ const textEditor = usePdfTextEditor({
 
 async function reloadAfterTextEdit() {
   try {
+    // Phase 13.23: 修复编辑不生效 - 后端把 filePath 改成 {docKey}_edited,
+    // 需 emit fileUrlChanged + bustUrl 让 PDF.js 拉新文件(否则 HTTP 缓存拿旧文件)
+    const newUrl = `${props.fileUrl.split('?')[0]}?v=${Date.now()}&edited=1`
+    emit('fileUrlChanged', newUrl)
+    saveStatus.value = 'saving'
     renderer.destroy()
     textEditor.clearCache()
     await renderer.load()
@@ -650,11 +735,18 @@ async function reloadAfterTextEdit() {
       pageRawWidth.value = vp.width
       pageRawHeight.value = vp.height
     }
+    currentPage.value = 1
+    canvasRefs.clear()
+    textLayerRefs.clear()
+    annotationRefs.clear()
+    thumbRefs.clear()
     if (thumbRefs.size > 0) {
       await renderer.renderAllThumbs(thumbRefs)
     }
+    saveStatus.value = 'saved'
   } catch (e) {
     console.error('[PdfEditor] reloadAfterTextEdit failed:', e)
+    saveStatus.value = 'error'
   }
 }
 
@@ -722,7 +814,22 @@ async function flushTextEdits(): Promise<void> {
  * - color: 改文字颜色
  * - highlight: 高亮(走 document.execCommand 浏览器原生 hiliteColor)
  * - bold / italic / underline: 走浏览器原生 execCommand(即时视觉),后端持久化下一阶段
+ *
+ * Phase 13.25 重写: Acrobat 标准行为
+ * - 选区出现 -> 浮动工具栏显示(仅 textEdit 模式)
+ * - 点字号/B/I/U/颜色/高亮 -> 即时视觉反馈(inline style 或 execCommand 对 contenteditable token)
+ * - 点 ✓ 保存 -> 批量持久化到后端 /text-format
+ * - 点 ✗ 取消 / ESC -> 清空待保存 ops + reload 还原
  */
+type FormatProp = 'color' | 'backgroundColor' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'textDecoration'
+
+// Phase 13.25: 待持久化的格式操作(每次 format 追加,confirm 时批量提交)
+const pendingFormatOps = ref<Array<{
+  pageNumber: number
+  range: { x: number; y: number; width: number; height: number }
+  format: Partial<{ fontSize: number; color: string; bold: boolean; italic: boolean; underline: boolean; highlight: string }>
+}>>([])
+
 function onFloatingFormat(payload: { type: string; value?: string | number }): void {
   // 先抓选区(mousedown.prevent 后 selection 还在,但 execCommand 后会丢)
   const sel = window.getSelection()
@@ -733,75 +840,103 @@ function onFloatingFormat(payload: { type: string; value?: string | number }): v
   )
   if (!container) return
 
-  // 高亮走浏览器原生实现(选中文本即时着色)
+  // 判断选区是否在 contenteditable token 内(execCommand 对 token 有效,对透明 text-layer span 无效)
+  const inEditableToken = !!(document.activeElement as HTMLElement | null)?.closest?.('.pdf-edit-token')
+
+  const rect = range.getBoundingClientRect()
+  const pageEl = container.closest('[data-page-num]') as HTMLElement | null
+  const pageNumber = pageEl ? Number(pageEl.dataset.pageNum) : 1
+
+  const recordOp = (format: Partial<{ fontSize: number; color: string; bold: boolean; italic: boolean; underline: boolean; highlight: string }>) => {
+    pendingFormatOps.value.push({
+      pageNumber,
+      range: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      format,
+    })
+  }
+
+  // 高亮:contenteditable token 用 execCommand,否则 inline style
   if (payload.type === 'highlight' && typeof payload.value === 'string') {
-    let ok = false
-    try {
-      ok = !!document.execCommand('hiliteColor', false, payload.value)
-    } catch { /* ignore */ }
-    if (!ok) {
-      // 退化:给选区内每个 span 加 inline 背景色
-      paintRangeInline(range, 'backgroundColor', payload.value)
+    if (inEditableToken) {
+      try { document.execCommand('hiliteColor', false, payload.value) } catch { /* ignore */ }
     }
-    // 重新选中(防止浏览器清空 selection 后浮动条消失)
+    paintRangeInline(range, 'backgroundColor', payload.value)
+    recordOp({ highlight: payload.value })
     requestAnimationFrame(() => restoreSelection(range))
     return
   }
 
-  // 粗/斜/下划线走浏览器原生 execCommand(即时视觉)
+  // 粗/斜/下划线:contenteditable token 用 execCommand,否则 inline style
   if (payload.type === 'bold') {
-    document.execCommand('bold')
+    if (inEditableToken) document.execCommand('bold')
+    else paintRangeInline(range, 'fontWeight', 'bold')
+    recordOp({ bold: true })
     requestAnimationFrame(() => restoreSelection(range))
     return
   }
   if (payload.type === 'italic') {
-    document.execCommand('italic')
+    if (inEditableToken) document.execCommand('italic')
+    else paintRangeInline(range, 'fontStyle', 'italic')
+    recordOp({ italic: true })
     requestAnimationFrame(() => restoreSelection(range))
     return
   }
   if (payload.type === 'underline') {
-    document.execCommand('underline')
+    if (inEditableToken) document.execCommand('underline')
+    else paintRangeInline(range, 'textDecoration', 'underline')
+    recordOp({ underline: true })
     requestAnimationFrame(() => restoreSelection(range))
     return
   }
 
-  // 字号/颜色:尝试找到对应 token 并走持久化
-  const focusedEl = (document.activeElement as HTMLElement | null)?.closest?.(
-    '.pdf-edit-token',
-  ) as HTMLElement | null
-  if (!focusedEl) {
-    // 没有可编辑 token 聚焦,只是文字层选区 → 仅做即时视觉反馈
-    if (payload.type === 'color' && typeof payload.value === 'string') {
-      try {
-        const ok = document.execCommand('foreColor', false, payload.value as string)
-        if (!ok) throw new Error('execCommand returned false')
-      } catch {
-        // 退化方案:直接给选区每个 span 加 inline color
-        paintRangeInline(range, 'color', payload.value as string)
-      }
-      requestAnimationFrame(() => restoreSelection(range))
-      return
+  // 颜色:contenteditable token 用 execCommand,否则 inline style
+  if (payload.type === 'color' && typeof payload.value === 'string') {
+    if (inEditableToken) {
+      try { document.execCommand('foreColor', false, payload.value) } catch { /* ignore */ }
     }
-    ElMessage.info('请先用文本工具点击段落进入编辑,再使用浮动格式工具栏')
+    paintRangeInline(range, 'color', payload.value)
+    recordOp({ color: payload.value })
+    requestAnimationFrame(() => restoreSelection(range))
     return
   }
 
-  const tokenIdx = Number(focusedEl.dataset.tokenIdx)
-  const pageNum = Number(focusedEl.dataset.pageNum)
-  if (Number.isNaN(tokenIdx) || Number.isNaN(pageNum)) return
-  const positions = textEditor.positionsByPage.value.get(pageNum) || []
-  const token = positions[tokenIdx]
-  if (!token) return
-
-  const newEdit = {
-    position: token,
-    newText: focusedEl.textContent ?? token.text ?? '',
-    color:
-      payload.type === 'color' && typeof payload.value === 'string'
-        ? payload.value
-        : undefined,
+  // 字号:contenteditable token 用 execCommand(fontSize 1-7),否则 inline style
+  if (payload.type === 'fontSize' && typeof payload.value === 'number') {
+    if (inEditableToken) {
+      try { document.execCommand('fontSize', false, '7') } catch { /* ignore */ }
+    }
+    paintRangeInline(range, 'fontSize', payload.value + 'px')
+    recordOp({ fontSize: payload.value })
+    requestAnimationFrame(() => restoreSelection(range))
+    return
   }
-  textEditor.applyEdit(newEdit)
+}
+
+/**
+ * Phase 13.25: 点 ✓ 保存 -> 批量提交 pendingFormatOps 到后端
+ */
+async function onFloatingConfirm(): Promise<void> {
+  if (pendingFormatOps.value.length === 0) {
+    ElMessage.info('没有待保存的格式修改')
+    return
+  }
+  try {
+    const ops = [...pendingFormatOps.value]
+    pendingFormatOps.value = []
+    await pdfApi.applyTextFormat(props.docId, ops)
+    ElMessage.success(`已保存 ${ops.length} 处格式修改`)
+    await reloadAfterTextEdit()
+  } catch (e: any) {
+    ElMessage.error('保存格式失败: ' + (e?.message || ''))
+  }
+}
+
+/**
+ * Phase 13.25: 点 ✗ 取消 -> 清空待保存 ops + reload 还原视觉
+ */
+async function onFloatingCancel(): Promise<void> {
+  pendingFormatOps.value = []
+  await reloadAfterTextEdit()
 }
 
 /**
@@ -819,24 +954,22 @@ function restoreSelection(range: Range): void {
 }
 
 /**
- * 当 document.execCommand 在非 contenteditable 节点上失败时,
- * 退化方案:遍历选区内的 span,给每个 span 加 inline style,
- * 达到即时视觉反馈。
+ * Phase 13.25: 扩展 paintRangeInline,支持 fontSize/fontWeight/fontStyle/textDecoration。
+ * 遍历选区内的 span / pdf-edit-token,给每个设 inline style(即时视觉反馈)。
  */
-function paintRangeInline(range: Range, prop: 'color' | 'backgroundColor', value: string): void {
+function paintRangeInline(range: Range, prop: FormatProp, value: string): void {
   try {
     const container = range.commonAncestorContainer.nodeType === 1
       ? (range.commonAncestorContainer as Element)
       : (range.commonAncestorContainer.parentElement as Element | null)
     if (!container) return
 
-    // 找选区所在的最近 .pdf-text-layer 作为搜索根
-    const root = container.closest('.pdf-text-layer') || container
+    const root = container.closest('.pdf-text-layer, .pdf-text-edit-layer') || container
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
     const targets: HTMLElement[] = []
     let node = walker.nextNode() as HTMLElement | null
     while (node) {
-      if (node.tagName === 'SPAN' && range.intersectsNode(node)) {
+      if ((node.tagName === 'SPAN' || node.classList?.contains('pdf-edit-token')) && range.intersectsNode(node)) {
         targets.push(node)
       }
       node = walker.nextNode() as HTMLElement | null
@@ -950,10 +1083,22 @@ function onStampTextChange(text: string) {
 }
 
 // ========== 右侧任务面板 ==========
-type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | null
+type RightPanel = 'outline' | 'search' | 'info' | 'annotations' | 'form' | null
+type RightPanelToggle = RightPanel | 'reorganize'
 const rightPanelOpen = ref<RightPanel>(null)
-function toggleRightPanel(p: 'outline' | 'search' | 'info' | 'annotations') {
+function toggleRightPanel(p: RightPanelToggle) {
+  if (p === 'reorganize') {
+    openOrganizeView()
+    return
+  }
   rightPanelOpen.value = rightPanelOpen.value === p ? null : p
+}
+
+// ========== Phase 13.12-D: 全屏组织页面视图 ==========
+const organizeViewOpen = ref(false)
+const organizeRef = ref<InstanceType<typeof PdfOrganizePages> | null>(null)
+function openOrganizeView() {
+  organizeViewOpen.value = true
 }
 
 // ========== 页面导航 ==========
@@ -966,6 +1111,7 @@ const saveTime = ref('')
 const toolLabel = computed(() => {
   const map: Record<AnnotationTool, string> = {
     select: '选择',
+    move: '手型',
     textEdit: '文本',
     highlight: '高亮',
     comment: '评论',
@@ -1027,6 +1173,14 @@ function onFormFilled(blob: Blob) {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+/**
+ * Phase 13.26: 表单 in-place 填充后 reload 文档(不下载)
+ */
+async function onFormFilledInPlace() {
+  const bustUrl = `${props.fileUrl.split('?')[0]}?v=${Date.now()}&form=1`
+  await reloadAfterPageOp(bustUrl)
 }
 
 function nextTickScroll() {
@@ -1192,7 +1346,8 @@ async function placeSignature(pageNum: number, screenX: number, screenY: number)
     const sigW = pendingSignature.value.width / scale.value * 0.5  // 缩小到 50% 适配显示
     const sigH = pendingSignature.value.height / scale.value * 0.5
     const pdfY = pageRawHeight.value - (screenY * scaleX) - sigH
-    const blob = await pdfApi.embedSignature(props.docId, {
+    // Phase 13.26: in-place 嵌入(落盘 + reload),不再下载
+    await pdfApi.embedSignatureInPlace(props.docId, {
       image: pendingSignature.value.imageBase64,
       page: pageNum,
       x: pdfX,
@@ -1200,18 +1355,12 @@ async function placeSignature(pageNum: number, screenX: number, screenY: number)
       width: sigW,
       height: sigH,
     })
-    // 下载签名后的 PDF
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `signed-${props.docId}-${Date.now()}.pdf`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    ElMessage.success('签名已嵌入并下载')
+    ElMessage.success('签名已嵌入文档')
     pendingSignature.value = null
     signaturePlacing.value = false
+    // Phase 13.26: reload 让签名显示在当前页(用 bustUrl 拉最新文件,后端已更新 filePath)
+    const bustUrl = `${props.fileUrl.split('?')[0]}?v=${Date.now()}&signed=1`
+    await reloadAfterPageOp(bustUrl)
   } catch (e: any) {
     console.error('[PdfEditor] placeSignature failed:', e)
     ElMessage.error(e?.message || '签名嵌入失败')
@@ -1221,8 +1370,10 @@ async function placeSignature(pageNum: number, screenX: number, screenY: number)
 }
 function onZoomMenu() { ElMessage.info('缩放菜单开发中') }
 function onOpenExport(_evt?: MouseEvent) {
-  const anchor = canvasAreaRef.value?.getBoundingClientRect()
-  exportMenuAnchor.value = { x: anchor?.left ?? 0, y: anchor?.top ?? 56 }
+  // Phase 13.21: 锚定到右侧工具栏的"导出"按钮右边缘,弹窗向左展开
+  const btn = document.querySelector('[class*="tools-rail"] button[aria-label="导出 PDF"]') as HTMLElement | null
+  const rect = btn?.getBoundingClientRect()
+  exportMenuAnchor.value = { x: rect?.right ?? window.innerWidth - 60, y: rect?.bottom ?? 56 }
   exportMenuOpen.value = true
   pageMenuOpen.value = false
 }
@@ -1245,6 +1396,23 @@ function onInsertBlank() {
 function onInsertFromFile() {
   ElMessage.info('从文件插入开发中(Phase 11.1 后续)')
 }
+// Phase 13.23: 从文件插入复用组织视图逻辑(上传+合并)
+async function onInsertFromFileNew() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = 'application/pdf'
+  input.onchange = async () => {
+    const file = input.files?.[0]; if (!file) return
+    try {
+      ElMessage.info('正在上传并合并...')
+      const uploaded = await documentApi.upload(file) as any
+      const newDocId = uploaded?.id
+      if (!newDocId) throw new Error('上传失败')
+      const r = await pageOps.merge([props.docId, newDocId])
+      if (r) { ElMessage.success(`已从文件插入: ${file.name}`); await reloadAfterPageOp(pageOps.bustUrl(r)) }
+    } catch (e: any) { ElMessage.error(e?.message || '从文件插入失败') }
+  }
+  input.click()
+}
 function onWatermark() {
   pageOpsInitialTab.value = 'watermark'
   pageOpsDialogOpen.value = true
@@ -1252,6 +1420,124 @@ function onWatermark() {
 function onHeaderFooter() {
   pageOpsInitialTab.value = 'headerFooter'
   pageOpsDialogOpen.value = true
+}
+
+// ========== Phase 13.23: 新增功能 handler ==========
+async function onSaveAsNew() {
+  try {
+    const r = await pdfApi.saveAsNew(props.docId)
+    ElMessage.success(`已另存为新文档: ${r.title}`)
+  } catch (e: any) { ElMessage.error(e?.message || '另存失败') }
+}
+async function onRedact() {
+  ElMessage.info('请在画布上用矩形工具框选要遮盖的区域,然后点保存')
+  selectTool('rectangle')
+}
+async function onCompress() {
+  try {
+    ElMessage.info('正在压缩...')
+    const blob = await pdfApi.compress(props.docId, { level: 'medium' })
+    downloadBlob(blob, `compressed-${props.docId}.pdf`)
+    ElMessage.success('压缩完成,已下载')
+  } catch (e: any) { ElMessage.error(e?.message || '压缩失败') }
+}
+async function onRemoveWatermark() {
+  try {
+    const r = await pdfApi.removeWatermark(props.docId, 'annotation')
+    if (r.success) { ElMessage.success('去水印完成'); await reloadAfterPageOp(pageOps.bustUrl(r)) }
+  } catch (e: any) { ElMessage.error(e?.message || '去水印失败') }
+}
+function onCropPage() {
+  pageOpsInitialTab.value = 'crop'
+  pageOpsDialogOpen.value = true
+}
+function onSplitPdf() {
+  // 打开组织视图的拆分
+  openOrganizeView()
+  ElMessage.info('请在组织页面视图中点"拆分"')
+}
+
+// AI handler
+async function onAiFullSummary() {
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage('请摘要整个文档的核心内容(300 字以内)。')
+}
+async function onAiRewrite() {
+  const sel = window.getSelection()?.toString() || ''
+  if (!sel) { ElMessage.warning('请先选中要重写的文字'); return }
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`请润色重写以下文字(保持原意,更专业):\n\n${sel}`)
+}
+async function onAiGenerate() {
+  const sel = window.getSelection()?.toString() || ''
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`基于以下内容续写:\n\n${sel || '(请根据文档主题续写)'}`)
+}
+function onAiImageDesc() {
+  selectTool('vqa')
+  ElMessage.info('请框选图片区域,在 AI 浮窗输入"描述这张图"')
+}
+async function onAiExtractTerms() {
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage('请抽取本文档的合同条款:金额、日期、甲乙方、违约责任等关键字段。')
+}
+async function onAiOptimizeOcr() {
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage('请优化 OCR 识别结果:去页眉页脚、合并断行、修正错别字。')
+}
+async function onAiKeywords() {
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage('请提取本文档的关键词(10 个以内)。')
+}
+async function onAiAnnotate() {
+  const sel = window.getSelection()?.toString() || ''
+  if (!sel) { ElMessage.warning('请先选中要加批注的文字'); return }
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`请为以下文字添加批注建议:\n\n${sel}`)
+}
+async function onAiProofread() {
+  const sel = window.getSelection()?.toString() || ''
+  if (!sel) { ElMessage.warning('请先选中要检查的文字'); return }
+  aiVisible.value = true
+  await aiFloat.chat.sendUserMessage(`请检查以下文字的错别字并给出修改建议:\n\n${sel}`)
+}
+async function onAiAutoOutline() {
+  try {
+    ElMessage.info('AI 正在生成智能目录...')
+    const r = await pdfApi.autoOutline(props.docId)
+    if (r.success) {
+      ElMessage.success(`已生成 ${r.outline?.length || 0} 个章节目录`)
+      await reloadAfterPageOp(pageOps.bustUrl({ success: true, message: '', filePath: r.filePath || '' } as any))
+      // 刷新右侧大纲
+      toggleRightPanel('outline')
+    } else { ElMessage.error(r.error || '智能目录生成失败') }
+  } catch (e: any) { ElMessage.error(e?.message || '智能目录失败') }
+}
+async function onAiExtractStructured() {
+  try {
+    ElMessage.info('正在智能提取...')
+    const r = await pdfApi.extractStructured(props.docId)
+    if (r.success) {
+      const info = `文字: ${r.text?.length || 0} 字\n表格: ${r.tables ? '已提取' : '无'}\n图片: ${r.imagesCount} 张\n结构化 JSON: ${r.structuredJson?.slice(0, 200) || '无'}`
+      ElMessageBox.alert(info, '智能提取结果', { confirmButtonText: '复制全文' })
+    } else { ElMessage.error(r.error || '提取失败') }
+  } catch (e: any) { ElMessage.error(e?.message || '提取失败') }
+}
+async function onExtractImages() {
+  try {
+    ElMessage.info('正在提取图片...')
+    const blob = await pdfApi.extractImages(props.docId)
+    downloadBlob(blob, `pdf-images-${props.docId}.zip`)
+    ElMessage.success('图片已打包下载')
+  } catch (e: any) { ElMessage.error(e?.message || '提取图片失败') }
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 async function onPageOpSuccess(_op: string) {
@@ -1436,7 +1722,42 @@ function exitEditMode() {
 }
 
 // ========== 标注鼠标事件 ==========
+// Phase 13.27: 手型工具平移 -- mousedown 时挂 window mousemove/mouseup,
+// 避免鼠标移出 .pdf-page-canvas 时 pan 中断或 mouseup 漏触发
+const panState = ref<{ startX: number; startY: number; scrollTop: number; scrollLeft: number } | null>(null)
+
+function onWindowPanMove(evt: MouseEvent) {
+  if (!panState.value || !canvasAreaRef.value) return
+  const dx = evt.clientX - panState.value.startX
+  const dy = evt.clientY - panState.value.startY
+  // Phase 13.27: 用 scrollTo({behavior:'auto'}) 覆盖 CSS scroll-behavior:smooth,
+  // 否则 smooth 动画会让连续 mousemove 设值永远到不了目标(平移失效)
+  canvasAreaRef.value.scrollTo({
+    top: panState.value.scrollTop - dy,
+    left: panState.value.scrollLeft - dx,
+    behavior: 'auto',
+  })
+}
+function onWindowPanUp() {
+  panState.value = null
+  window.removeEventListener('mousemove', onWindowPanMove)
+  window.removeEventListener('mouseup', onWindowPanUp)
+}
+
 function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  // Phase 13.27: 手型工具 -> 挂 window 监听开始平移
+  if (activeTool.value === 'move' && canvasAreaRef.value) {
+    evt.preventDefault()  // 阻止浏览器开始文字选区
+    panState.value = {
+      startX: evt.clientX,
+      startY: evt.clientY,
+      scrollTop: canvasAreaRef.value.scrollTop,
+      scrollLeft: canvasAreaRef.value.scrollLeft,
+    }
+    window.addEventListener('mousemove', onWindowPanMove)
+    window.addEventListener('mouseup', onWindowPanUp)
+    return
+  }
   // Phase 12.3: 签名放置模式优先
   if (signaturePlacing.value) {
     const x = evt.clientX - containerRect.left
@@ -1444,16 +1765,72 @@ function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMR
     void placeSignature(pageNum, x, y)
     return
   }
-  ;(annot as any).onMouseDown?.(evt, pageNum, containerRect)
+  // Phase 13.25: 传 scale + pageRawHeight,annotation 存 PDF pt
+  ;(annot as any).onMouseDown?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
 }
 function onCanvasMouseMove(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
-  ;(annot as any).onMouseMove?.(evt, pageNum, containerRect)
+  ;(annot as any).onMouseMove?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
 }
 function onCanvasMouseUp(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
-  ;(annot as any).onMouseUp?.(evt, pageNum, containerRect)
+  ;(annot as any).onMouseUp?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
+  // Phase 13.26: 识图(vqa)框选完成后截图发 AI
+  if (activeTool.value === 'vqa' && annot.pendingRect.value) {
+    void captureVqaAndAsk(pageNum, annot.pendingRect.value)
+  }
 }
 function onCanvasMouseLeave(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
-  ;(annot as any).onMouseLeave?.(evt, pageNum, containerRect)
+  ;(annot as any).onMouseLeave?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
+}
+
+/**
+ * Phase 13.26: 评论弹窗接线(comment 工具框选后弹出)
+ * usePdfAnnotation 已暴露 showCommentDialog/editingComment/saveComment/cancelComment,
+ * 此前 PdfEditor 未消费 -> 框选后弹窗从不弹出。这里接出来。
+ */
+const commentDialogVisible = computed({
+  get: () => !!(annot as any).showCommentDialog?.value,
+  set: (v: boolean) => { if (!(annot as any).showCommentDialog) return; (annot as any).showCommentDialog.value = v },
+})
+const commentDraft = computed({
+  get: () => ((annot as any).editingComment?.value as string) ?? '',
+  set: (v: string) => { if ((annot as any).editingComment) (annot as any).editingComment.value = v },
+})
+function onCommentSave(): void {
+  ;(annot as any).saveComment?.()
+}
+function onCommentCancel(): void {
+  ;(annot as any).cancelComment?.()
+}
+
+/**
+ * Phase 13.26: 识图(VQA)框选完成后,截取该页 canvas 的 pendingRect 区域为 dataURL,
+ * 赋给 vqaImage + 打开 AI 浮窗自动问答。
+ * pendingRect 是画布像素(归一化后正宽高)。
+ */
+async function captureVqaAndAsk(pageNum: number, rect: { x: number; y: number; width: number; height: number; pageNumber: number }): Promise<void> {
+  try {
+    const canvasEl = canvasRefs.get(pageNum)
+    if (!canvasEl) return
+    const w = Math.max(1, Math.round(rect.width))
+    const h = Math.max(1, Math.round(rect.height))
+    const sx = Math.max(0, Math.round(rect.x))
+    const sy = Math.max(0, Math.round(rect.y))
+    // 用离屏 canvas 截取区域
+    const off = document.createElement('canvas')
+    off.width = w
+    off.height = h
+    const ctx = off.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(canvasEl, sx, sy, w, h, 0, 0, w, h)
+    vqaImage.value = off.toDataURL('image/png')
+    vqaContext.value = '请识别并描述这张图片的内容'
+    aiVisible.value = true
+    annot.pendingRect.value = null
+    ElMessage.success('已截取选区,请在 AI 面板提问')
+  } catch (e) {
+    console.error('[PdfEditor] VQA 截图失败', e)
+    annot.pendingRect.value = null
+  }
 }
 
 // ========== Phase 3 菜单状态(保留 V2 菜单,Phase 3-4 功能) ==========
@@ -1488,6 +1865,91 @@ function onMergeConfirmed(docIds: number[]) {
   pageOps.merge(docIds).then((r) => {
     if (r) reloadAfterPageOp(pageOps.bustUrl(r))
   })
+}
+
+// ========== Phase 13.12-D: 重组面板事件 ==========
+async function onReorganizeDelete(pages: number[]) {
+  if (pages.length === 0) return
+  const proceed = await flushTextEdits().then(() => true).catch(() => false)
+  if (!proceed) return
+  try {
+    const r = await pdfApi.deletePagesBatch(props.docId, pages)
+    if (r.success) {
+      ElMessage.success(r.message || `已删除 ${pages.length} 页`)
+      await reloadAfterPageOp(pageOps.bustUrl(r))
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '批量删除失败')
+  } finally {
+    organizeRef.value?.markDone?.()
+  }
+}
+
+async function onReorganizeRotate(pages: number[], degrees: number) {
+  const r = await pageOps.rotatePages(pages, degrees)
+  if (r) await reloadAfterPageOp(pageOps.bustUrl(r))
+  organizeRef.value?.markDone?.()
+}
+
+async function onReorganizeExtract(pages: number[]) {
+  const r = await pageOps.extractPages(pages)
+  if (r) await reloadAfterPageOp(pageOps.bustUrl(r))
+  organizeRef.value?.markDone?.()
+}
+
+async function onReorganizeInsertBlank(afterPage: number) {
+  try {
+    const r = await pdfApi.insertBlankPage(props.docId, afterPage)
+    if (r.success) {
+      ElMessage.success(r.message || '已插入空白页')
+      await reloadAfterPageOp(`${props.fileUrl.split('?')[0]}?v=${Date.now()}`)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '插入空白页失败')
+  } finally {
+    organizeRef.value?.markDone?.()
+  }
+}
+
+async function onReorganizeReorder(newOrder: number[]) {
+  const r = await pageOps.reorderPages(newOrder)
+  if (r) await reloadAfterPageOp(pageOps.bustUrl(r))
+  organizeRef.value?.markDone?.()
+}
+
+async function onReorganizeInsertFile() {
+  // 弹出文件选择器,选 PDF -> 上传为新文档 -> 合并追加到当前文档
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'application/pdf'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      ElMessage.info('正在上传并合并...')
+      const uploaded = await documentApi.upload(file) as any
+      const newDocId = uploaded?.id
+      if (!newDocId) throw new Error('上传失败')
+      const r = await pageOps.merge([props.docId, newDocId])
+      if (r) {
+        ElMessage.success(`已从文件插入: ${file.name}`)
+        await reloadAfterPageOp(pageOps.bustUrl(r))
+      }
+    } catch (e: any) {
+      console.error('[PdfEditor] insertFromFile failed:', e)
+      ElMessage.error(e?.message || '从文件插入失败')
+    } finally {
+      organizeRef.value?.markDone?.()
+    }
+  }
+  input.click()
+}
+
+function onReorganizeCrop(pages: number[]) {
+  // 复用 PdfPageOpsDialog 的 crop tab,选中页带入
+  pageOpsInitialTab.value = 'crop'
+  pageOpsDialogOpen.value = true
+  ElMessage.info(`裁剪 ${pages.length} 页:在弹出的对话框中设置裁剪区域`)
 }
 
 function onOpenAiChatFromMenu() { aiVisible.value = true }

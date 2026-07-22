@@ -13,6 +13,7 @@
     title="合并 PDF"
     width="560px"
     :close-on-click-modal="false"
+    custom-class="pdf-dialog"
     @closed="onClosed"
   >
     <div class="merge-dialog">
