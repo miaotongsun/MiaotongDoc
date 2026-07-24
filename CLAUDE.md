@@ -72,6 +72,43 @@
 
 ---
 
+## 🧪 E2E 自动化测试(Playwright)—— **Phase 14 起固化**
+
+> **AI 准则**:今后涉及 UI 交互功能修改时,必须用 Playwright 跑 E2E 测试验证 + 输出报告。`tests/` 目录已固化,新增测试场景在 `tests/*.mjs` 中扩展。
+
+### 工具固化
+
+| 组件 | 版本 | 默认路径 | 说明 |
+|---|---|---|---|
+| `playwright` npm 包 | **1.61.1** (精确锁定,无 `^`) | `miaotongdoc-web/node_modules/playwright/` | 跟项目走,版本锁定 |
+| Chromium 浏览器 | **149.0.7827.55** (Playwright 自带) | **`D:\Tools\ms-playwright\`** (Windows)<br>`~/Tools/ms-playwright/` (Unix) | **跨项目共享工具目录**,根盘 `Tools/`,不入项目,不依赖用户名 |
+| 测试脚本 | `run.mjs` + `phase14-e2e.mjs` | `miaotongdoc-web/tests/` | 统一入口 + 11 项测试 |
+| 报告输出 | `phase14-e2e-report.md` | 同上(gitignore) | 本地生成,不入 git |
+| 截图 | `tests/screenshots/*.png` | 同上(gitignore) | 本地生成,不入 git |
+
+### npm scripts
+
+```json
+"e2e":         "node tests/run.mjs",   // 统一入口:检查 Chromium + 自动装 + 跑测试
+"e2e:install": "playwright install chromium",  // 单独装/更新浏览器
+"e2e:report":  "node -e \"console.log(require('fs').readFileSync('tests/phase14-e2e-report.md','utf8'))\""
+```
+
+**自动化保证**:`run.mjs` 检测 Chromium 不存在时自动 `npx playwright install`,新开发者无需手动装浏览器。
+
+### 标准工作流
+
+1. **写完代码后必跑测试**:`npm run e2e`,检查通过率
+2. **截图入档**:关键 UI 改动自动截图(`tests/screenshots/`),可作为 PR 视觉证据
+3. **失败重试**:测试失败时先看截图定位,再修代码,**不要**绕过测试
+4. **新功能加测试**:在 `phase14-e2e.mjs` 中加 `step()`,确保持续覆盖
+
+### 完整文档
+
+见 [miaotongdoc-web/tests/README.md](miaotongdoc-web/tests/README.md):安装、使用、调试、CI 集成。
+
+---
+
 ## 快速开始
 
 ### 本地开发环境启动
@@ -2014,126 +2051,7 @@ plans/
 ```
 
 ### 9. 测试策略
-
-> "业务逻辑必须有测试保护。无测试的代码等于'不知道能不能跑'"——核心原则 3。
-> 本节定义本项目当前阶段的**测试基线、工具链、强制记录要求**。
-
-#### 9.1 当前测试基线
-
-| 层 | 现状 | 备注 |
-|---|---|---|
-| 后端单测 | ❌ 无 `src/test/java/` 测试文件 | `pom.xml` 已引入 `spring-boot-starter-test`（JUnit 5 + Mockito），框架就绪未使用 |
-| 前端单测 | ❌ 无 `.spec.ts` / `.test.ts` | `package.json` 未安装 vitest/jest |
-| 集成验证 | ✅ 主力 | `curl + psql + docker logs` 三板斧 |
-| E2E | ❌ 无自动化 | 依赖人工浏览器验收 |
-
-> **结论**：本项目 G5 验证**以集成验证为主**，单测在补齐阶段。当前不要求所有改动都有单测，但**核心 Service 方法、权限校验、状态机迁移**这三类必须有单测保护（详见 9.4）。
-
-#### 9.2 工具链速查
-
-**后端：**
-
-| 工具 | 命令 | 用途 |
-|---|---|---|
-| Maven 单测 | `mvn test` | 跑所有 Java 单测 |
-| Maven 单测（指定） | `mvn -Dtest=*XxxTest test` | 跑指定测试类（开发循环用）|
-| Maven 编译 | `mvn clean compile` | 验证编译通过 |
-| Maven 打包 | `mvn clean package -DskipTests` | 出 JAR（跳过测试）|
-| Jacoco | 待配置 | 覆盖率（建议下个迭代接入）|
-
-**前端：**
-
-| 工具 | 命令 | 用途 |
-|---|---|---|
-| 类型检查 | `npm run build` (= `vue-tsc && vite build`) | 含类型检查的完整构建 |
-| 快速构建 | `npx vite build` | 跳过 vue-tsc，10-20s 出 bundle |
-| 仅类型检查 | `npx vue-tsc --noEmit` | 不构建只检查类型（快）|
-| Lint | `npm run lint` | ESLint |
-| 单测 | 暂未启用 | 见 9.5 演进方向 |
-
-**集成验证：**
-
-| 工具 | 命令 | 用途 |
-|---|---|---|
-| API 调用 | `curl -s -X POST http://localhost:9004/...` | 真打后端 API |
-| JSON 解析 | `... \| jq '.data.field'` | 提取字段做断言 |
-| 数据库查询 | `docker exec miaotongdoc-postgres psql -U miaotong -d miaotongdocdb -c "..."` | 验数据状态 |
-| 容器健康 | `docker compose ps \| grep healthy` | 看启动是否就绪 |
-| 后端日志 | `docker compose logs --tail=50 web-server` | 查 Flyway / SQL / 异常 |
-| 性能 | `curl -w "%{time_total}\n" ...` | 看响应耗时 |
-
-**E2E（人工）：**
-
-| 工具 | 用途 |
-|---|---|
-| 浏览器手测 | UI 验收、用户视角测试 |
-| Vue DevTools | 组件树、Pinia 状态、事件追踪 |
-| 浏览器 DevTools | Network / WebSocket / Console |
-
-#### 9.3 按改动类型选测试策略
-
-| 改动类型 | 必做 | 可选 |
-|---|---|---|
-| **修 bug** | 复现 → 修复 → 回归（`mvn test` + `curl`）| 边界用例单测 |
-| **加 Service 方法** | 单测：正常/异常/边界 3 分支（JUnit 5 + Mockito）| @SpringBootTest 集成 |
-| **改 Controller** | `curl` 验证 HTTP 状态码 + 响应体 | @WebMvcTest 切片 |
-| **加新 API 模块** | `curl` 三态验证（200/403/404）+ `psql` 看 DB | 权限矩阵测试 |
-| **前端加组件** | 浏览器手测 + 截图 | vitest 组件测试（演进）|
-| **数据库迁移** | Flyway 自动 + `psql \d` 看新表 + `psql SELECT` 看数据 | 回滚脚本测试 |
-| **安全修复** | 权限矩阵 `curl`（admin/owner/share/无权限 4 角色）| 渗透测试 |
-| **重构（不改行为）** | 改动前后 `mvn test` + `curl` 一致 | 完整回归 |
-
-#### 9.4 必须有单测的三类代码
-
-1. **核心 Service 业务方法**：超过 3 个分支、状态机迁移、金额/权限计算
-2. **权限校验逻辑**：owner / share / admin 三种判定、防止越权
-3. **复杂状态机**：文档状态（draft→signing→signed）、合同审批（draft→pending→approved/rejected）
-
-> 单测是**保护**而非**装饰**：写之前先问"如果这块错了，谁会骂我？"——如果答案是用户/数据/钱，就写。
-
-#### 9.5 演进方向（下一个迭代）
-
-1. **后端补单测**：从核心 Service（DocumentService / SigningService / ContractService）开始，每个方法补 1 个 happy path + 1 个边界用例
-2. **前端接入 vitest**：先给 Pinia store 和工具函数（`utils/`）写单测，再扩展到组件
-3. **接入 Jacoco**：覆盖率门槛核心代码 ≥ 60%，关键路径 ≥ 80%
-4. **CI 集成**：跑测试不通过就不让合并
-
-#### 9.6 测试结果强制记录
-
-> **铁律**：**没有记录的验证 = 没验证**。G5 门禁**不通过**任何缺失记录的功能。
-
-每个计划文档的 `## ✅ 验证结果` 表格必须填完整：
-
-```markdown
-## ✅ 验证结果
-
-> 验证日期：YYYY-MM-DD | 验证人：Claude Code
-
-| 验证项 | 命令 | 期望 | 实际 | 结论 |
-|--------|------|------|------|------|
-| 后端编译 | `mvn clean compile` | BUILD SUCCESS | BUILD SUCCESS | ✅ |
-| 单测 | `mvn -Dtest=DocumentServiceTest test` | Tests run: 5, Failures: 0 | Tests run: 5, Failures: 0 | ✅ |
-| API 正常 | `curl -X POST .../api/documents` | 200 + data.id | 200 + data.id=42 | ✅ |
-| API 权限 | `curl -X POST .../api/admin/users` (普通用户) | 403 | 403 | ✅ |
-| DB 状态 | `psql -c "SELECT ..."` | 1 行 updated | 1 行 updated | ✅ |
-| 回归 | `mvn test` | 全绿 | 全绿 | ✅ |
-| 用户验收 | 浏览器手测 | UI 正确 | 通过 | ✅ |
-```
-
-**记录到哪里**：
-- 计划文档末尾（首选）
-- 关键回归结果可贴进 `commit message` 或 PR 描述
-- 重大 bug 修复的复现命令贴进 `## 📝 经验总结`
-
-**门禁 G5 强化**：
-- [ ] 所有验证项已记录（命令 + 期望 + 实际 + 结论）
-- [ ] 回归验证无副作用
-- [ ] 用户已确认验收
-- [ ] **没有"应该没问题"这类模糊描述，必须有证据**
-
----
-
-## 危险操作确认机制
+测试占位## 危险操作确认机制
 
 > Claude Code 在以下场景**必须先停下来与用户确认**，不得自行执行。
 > 这一节是写给 Claude 的纪律，也是给用户的"预期管理"——什么场景会被打断。

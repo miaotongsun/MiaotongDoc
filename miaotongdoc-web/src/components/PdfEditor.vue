@@ -1089,25 +1089,27 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
     const r: any = await pdfApi.recognizePaddle(props.docId, model)
     if (r.status !== 'success') {
       recognizeStatus.value = 'error'
-      // Phase 14.U9: 明确错误 + 提供重试/切换模型操作
       const errorMsg = r.error || 'OCR 识别失败'
       const isServiceDown = /服务.*未启动|不可用|超时|connection|refused/i.test(errorMsg)
-      ElMessageBox.confirm(
-        `${errorMsg}\n\n可能原因:1) PaddleOCR 服务容器未启动 2) 模型文件缺失 3) 文档过大\n\n点击「重试」再次尝试,或「切换模型」用 mobile 替代 server。`,
-        `OCR ${modelLabel}识别失败`,
-        {
-          type: 'error',
-          confirmButtonText: '重试',
-          cancelButtonText: isServiceDown ? '切换模型' : '关闭',
-          distinguishCancelAndClose: true,
-        }
-      ).then(() => {
-        void onOcrRecognize(model)
-      }).catch((action: string) => {
-        if (action === 'cancel' && isServiceDown) {
-          void onOcrRecognize(model === 'server' ? 'mobile' : 'server')
-        }
+      // Phase 14.U15: 用 toast + 操作按钮,不再用 ElMessageBox.confirm(会挡 UI)
+      ElMessage({
+        type: 'error',
+        message: `OCR ${modelLabel}识别失败:${errorMsg}`,
+        duration: 6000,
       })
+      if (isServiceDown) {
+        ElMessageBox({
+          title: `OCR ${modelLabel}不可用`,
+          message: `${errorMsg}<br><br>推荐切换到 ${model === 'server' ? 'mobile' : 'server'} 模型`,
+          confirmButtonText: `切换到 ${model === 'server' ? '快速(mobile)' : '高精度(server)'}`,
+          cancelButtonText: '关闭',
+          type: 'warning',
+          dangerouslyUseHTMLString: true,
+        }).then(() => onOcrRecognize(model === 'server' ? 'mobile' : 'server'))
+          .catch(() => {})
+      } else {
+        setTimeout(() => onOcrRecognize(model), 8000)
+      }
       return
     }
     // server 降级提示
@@ -1130,20 +1132,13 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   } catch (e: any) {
     console.error('[PdfEditor] OCR failed:', e)
     recognizeStatus.value = 'error'
-    // Phase 14.U9: catch 也提供重试
     const errorMsg = e?.response?.data?.error || e?.message || 'OCR 调用失败'
-    ElMessageBox.confirm(
-      `${errorMsg}\n\n点击「重试」再次尝试。`,
-      'OCR 调用失败',
-      {
-        type: 'error',
-        confirmButtonText: '重试',
-        cancelButtonText: '关闭',
-        distinguishCancelAndClose: true,
-      }
-    ).then(() => {
-      void onOcrRecognize(model)
-    }).catch(() => {})
+    // Phase 14.U15: 用轻量 toast(不挡 UI),不自动重试避免循环
+    ElMessage({
+      type: 'error',
+      message: `OCR 调用失败:${errorMsg}`,
+      duration: 5000,
+    })
   }
 }
 
@@ -1365,38 +1360,34 @@ async function onCanvasSetScale(s: number) {
 
 // ========== Ribbon 事件占位(Phase 8-12 完整实现) ==========
 function onSave() { ElMessage.success('已保存(占位)') }
-/** Phase 14.U13: 打印功能 —— blob iframe + window.print,直接弹打印对话框(不下载) */
+/** Phase 14.U12: 打印功能 —— 在新标签页打开 PDF viewer,用户用 Ctrl+P */
 async function onPrint() {
   const url = `/api/documents/${props.docId}/file`
   const token = sessionStorage.getItem('token') || ''
   try {
-    // 1. fetch PDF 转 blob URL(避免浏览器对 /file 直接下载)
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     if (!res.ok) throw new Error(`加载 PDF 失败: ${res.status}`)
     const blob = await res.blob()
     const blobUrl = URL.createObjectURL(blob)
 
-    // 2. 创建隐藏 iframe 加载 blob PDF
-    const iframe = document.createElement('iframe')
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:none;visibility:hidden'
-    iframe.src = blobUrl
-    document.body.appendChild(iframe)
-    iframe.onload = () => {
-      // 3. 等浏览器内置 PDF viewer 加载,调用 print
-      setTimeout(() => {
-        try {
-          iframe.contentWindow?.focus()
-          iframe.contentWindow?.print()
-        } catch (e) {
-          console.warn('[PdfEditor] iframe.print failed, fallback window.open', e)
-          const w = window.open(blobUrl, '_blank')
-          if (w) w.focus()
-          ElMessage.info('请在弹窗中按 Ctrl+P 打印')
-        }
-      }, 600)
-      // 4. 60s 后清理(打印对话框可能耗时)
-      setTimeout(() => { iframe.remove(); URL.revokeObjectURL(blobUrl) }, 60_000)
+    // 在新标签打开(浏览器内置 PDF viewer,顶部有打印按钮,用户 Ctrl+P)
+    const w = window.open(blobUrl, '_blank')
+    if (!w) {
+      // 弹窗被拦截,改为链接提示
+      ElMessageBox.confirm(
+        '浏览器拦截了新标签页。是否下载 PDF 后手动打印?',
+        '打印',
+        { confirmButtonText: '下载 PDF', cancelButtonText: '取消' }
+      ).then(() => {
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `${props.filename || 'document'}.pdf`
+        a.click()
+      }).catch(() => {})
+    } else {
+      ElMessage.info('已在新标签打开 PDF,请按 Ctrl+P 打印')
     }
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
   } catch (e: any) {
     ElMessage.error(e?.message || '打印失败,请确认文档已上传')
   }

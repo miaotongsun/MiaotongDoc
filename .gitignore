@@ -1,6 +1,16 @@
 node_modules
 document-storage
 
+# 测试相关(本地生成/调试用,不进 git)
+miaotongdoc-web/tests/phase14-e2e-report.md
+miaotongdoc-web/tests/screenshots/
+# 后续测试脚本(个人调试/临时验证,不入 git;固化测试放 tests/ 根目录)
+miaotongdoc-web/tests/local/
+miaotongdoc-web/tests/local/**
+
+# Playwright 浏览器默认装在系统 ~/.cache/ms-playwright/(跨项目共享,不入 git)
+# 已被 node_modules 覆盖项目内的 .cache;系统 ~/.cache 由用户主目录 ignore 规则覆盖
+
 # 敏感配置文件（密码从 .env 统一管理）
 .env
 **/local.json
