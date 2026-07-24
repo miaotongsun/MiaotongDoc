@@ -21,15 +21,6 @@
             <span>组织页面</span>
             <span class="pdf-org-title-meta">{{ totalPages }} 页</span>
           </div>
-          <div class="pdf-org-zoom">
-            <button class="pdf-org-icon-btn" aria-label="缩小" :disabled="zoomIdx <= 0" @click="zoomOut">
-              <PdfIcon name="zoomOut" :size="16" />
-            </button>
-            <span class="pdf-org-zoom-val">{{ zoomLevels[zoomIdx] }}</span>
-            <button class="pdf-org-icon-btn" aria-label="放大" :disabled="zoomIdx >= zoomLevels.length - 1" @click="zoomIn">
-              <PdfIcon name="zoomIn" :size="16" />
-            </button>
-          </div>
           <button class="pdf-org-close" aria-label="关闭" @click="$emit('close')">
             <PdfIcon name="close" :size="18" />
           </button>
@@ -49,6 +40,9 @@
           <div class="pdf-org-tool-group">
             <button class="pdf-org-tool" :disabled="selected.size === 0 || busy" @click="onExtract">
               <PdfIcon name="extract" :size="14" /><span>提取</span>
+            </button>
+            <button class="pdf-org-tool" :disabled="selected.size === 0 || busy" @click="onReplace">
+              <PdfIcon name="insertFile" :size="14" /><span>替换<span v-if="selected.size">({{ selected.size }})</span></span>
             </button>
             <button class="pdf-org-tool pdf-org-tool-danger" :disabled="selected.size === 0 || busy" @click="onDelete">
               <PdfIcon name="close" :size="14" /><span>删除<span v-if="selected.size">({{ selected.size }})</span></span>
@@ -83,6 +77,17 @@
             <button class="pdf-org-tool" @click="selectAll">全选</button>
             <button class="pdf-org-tool" :disabled="selected.size === 0" @click="clearSelection">清空</button>
           </div>
+        </div>
+
+        <!-- Phase 13.29: 缩放控件移到画布顶部居中 -->
+        <div class="pdf-org-zoom-bar">
+          <button class="pdf-org-icon-btn" aria-label="缩小" :disabled="zoomIdx <= 0" @click="zoomOut">
+            <PdfIcon name="zoomOut" :size="16" />
+          </button>
+          <span class="pdf-org-zoom-val">{{ zoomLevels[zoomIdx] }}px</span>
+          <button class="pdf-org-icon-btn" aria-label="放大" :disabled="zoomIdx >= zoomLevels.length - 1" @click="zoomIn">
+            <PdfIcon name="zoomIn" :size="16" />
+          </button>
         </div>
 
         <!-- 主区:缩略图网格 -->
@@ -167,10 +172,40 @@
             </div>
             <div class="pdf-org-sub-card">
               <div class="pdf-org-sub-card-title">模式 B · 按区间拆分</div>
-              <div class="pdf-org-sub-card-desc">输入区间(如 <code>1-3,5,7-9</code>),每段输出一个 PDF。</div>
+              <div class="pdf-org-sub-card-desc">输入区间(如 <code>1-3,5,7-9</code>),<b>每个区间生成一个含该区间所有页的 PDF</b>(如 1-3 生成含第1-3页的 PDF),打包 zip 下载。</div>
               <input v-model="splitRanges" type="text" class="pdf-org-input" placeholder="1-3,5,7-9" />
               <button class="pdf-org-primary-btn" :disabled="!splitRanges.trim() || busy" @click="onSplitByRanges">按区间拆分 zip</button>
               <div v-if="splitError" class="pdf-org-error">{{ splitError }}</div>
+            </div>
+          </div>
+        </el-dialog>
+
+        <!-- Phase 13.37: 替换页面子弹窗 -->
+        <el-dialog
+          v-model="replaceDialogOpen"
+          title="替换页面"
+          width="480px"
+          :close-on-click-modal="false"
+          custom-class="pdf-dialog"
+          append-to-body
+        >
+          <div class="pdf-org-sub-body">
+            <div class="pdf-org-sub-card">
+              <div class="pdf-org-sub-card-title">替换选中页</div>
+              <div class="pdf-org-sub-card-desc">
+                将选中的 <b>{{ replaceTargetPages.length }}</b> 页(第 {{ replaceTargetPages.join('、') }} 页)替换为上传 PDF 的对应页。
+                上传 PDF 从「源起始页」开始,按顺序取相同数量页逐页替换。
+              </div>
+              <div class="pdf-org-sub-card-title" style="margin-top:12px">1. 上传源 PDF</div>
+              <input type="file" accept="application/pdf" class="pdf-org-input" @change="onReplaceFileChange" />
+              <div v-if="replaceFileName" class="pdf-org-footer-hint" style="margin-top:4px">已选: {{ replaceFileName }}(共 {{ replaceFilePages }} 页)</div>
+              <div class="pdf-org-sub-card-title" style="margin-top:12px">2. 源起始页</div>
+              <input v-model.number="replaceSourceStart" type="number" min="1" class="pdf-org-input" placeholder="1" />
+              <div class="pdf-org-footer-hint" style="margin-top:4px">从源 PDF 的该页开始,取 {{ replaceTargetPages.length }} 页替换选中页</div>
+              <div v-if="replaceError" class="pdf-org-error">{{ replaceError }}</div>
+              <button class="pdf-org-primary-btn" :disabled="!replaceFile || replaceTargetPages.length === 0 || busy" @click="onReplaceConfirm">
+                {{ busy ? '替换中...' : '确认替换' }}
+              </button>
             </div>
           </div>
         </el-dialog>
@@ -180,6 +215,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount, nextTick, type ComponentPublicInstance } from 'vue'
+import { buildDownloadName as dlName } from '@/lib/download'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pdfApi } from '@/api/pdf'
 import PdfIcon from './PdfIcon.vue'
@@ -190,6 +226,8 @@ const props = defineProps<{
   totalPages: number
   currentPage?: number
   pdfDoc?: any
+  /** Phase 13.30: 文档标题,用于规范下载文件名 */
+  title?: string
 }>()
 
 const emit = defineEmits<{
@@ -202,6 +240,8 @@ const emit = defineEmits<{
   (e: 'op-insert-file'): void
   (e: 'op-reorder', newOrder: number[]): void
   (e: 'op-crop', pages: number[]): void
+  /** Phase 13.37: 替换页面完成后,通知父组件 reload */
+  (e: 'op-replaced'): void
 }>()
 
 const busy = ref(false)
@@ -446,7 +486,7 @@ async function onBatchExport() {
   busy.value = true
   try {
     const blob = await pdfApi.extractPagesBatch(props.docId, pages)
-    downloadBlob(blob, `pdf-pages-${pages.join('-')}.zip`)
+    downloadBlob(blob, dlName('提取导出', pages.length === 1 ? 'pdf' : 'zip', props.title))
     ElMessage.success(`已导出 ${pages.length} 页为 zip`)
   } catch (e: any) {
     console.error('[PdfOrganizePages] batchExport failed:', e)
@@ -460,6 +500,64 @@ async function onBatchExport() {
 const splitDialogOpen = ref(false)
 const splitRanges = ref('')
 const splitError = ref('')
+
+// ===== Phase 13.37: 替换页面 =====
+const replaceDialogOpen = ref(false)
+const replaceTargetPages = ref<number[]>([])
+const replaceFile = ref<File | null>(null)
+const replaceFileName = ref('')
+const replaceFilePages = ref(0)
+const replaceSourceStart = ref(1)
+const replaceError = ref('')
+
+function onReplace() {
+  const pages = Array.from(selected.value).sort((a, b) => a - b)
+  if (pages.length === 0) return
+  replaceTargetPages.value = pages
+  replaceFile.value = null
+  replaceFileName.value = ''
+  replaceFilePages.value = 0
+  replaceSourceStart.value = 1
+  replaceError.value = ''
+  replaceDialogOpen.value = true
+}
+
+async function onReplaceFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  if (!f) return
+  replaceFile.value = f
+  replaceFileName.value = f.name
+  replaceError.value = ''
+  // 读取源 PDF 页数(用 pdfjs)
+  try {
+    const lib = await import('pdfjs-dist')
+    lib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`
+    const buf = await f.arrayBuffer()
+    const doc = await lib.getDocument({ data: buf }).promise
+    replaceFilePages.value = doc.numPages
+  } catch {
+    replaceFilePages.value = 0
+    replaceError.value = '无法读取源 PDF'
+  }
+}
+
+async function onReplaceConfirm() {
+  if (!replaceFile.value || replaceTargetPages.value.length === 0) return
+  replaceError.value = ''
+  busy.value = true
+  try {
+    await pdfApi.replacePages(props.docId, replaceTargetPages.value, replaceFile.value, replaceSourceStart.value)
+    ElMessage.success(`已替换 ${replaceTargetPages.value.length} 页`)
+    replaceDialogOpen.value = false
+    emit('op-replaced')
+  } catch (e: any) {
+    console.error('[PdfOrganizePages] replace failed:', e)
+    replaceError.value = e?.message || '替换失败'
+  } finally {
+    busy.value = false
+  }
+}
 
 function onSplit() {
   splitError.value = ''
@@ -488,7 +586,7 @@ async function onSplitEveryPage() {
   try {
     const ranges = Array.from({ length: props.totalPages }, (_, i) => i + 1).join(',')
     const blob = await pdfApi.splitByRanges(props.docId, ranges)
-    downloadBlob(blob, `pdf-split-${props.totalPages}p.zip`)
+    downloadBlob(blob, dlName('拆分每页', props.totalPages === 1 ? 'pdf' : 'zip', props.title))
     ElMessage.success(`已拆分为 ${props.totalPages} 个 PDF`)
     splitDialogOpen.value = false
   } catch (e: any) {
@@ -509,7 +607,7 @@ async function onSplitByRanges() {
   busy.value = true
   try {
     const blob = await pdfApi.splitByRanges(props.docId, splitRanges.value.trim())
-    downloadBlob(blob, `pdf-split-ranges.zip`)
+    downloadBlob(blob, dlName('拆分区间', ranges.length === 1 ? 'pdf' : 'zip', props.title))
     ElMessage.success(`已按区间拆分为 ${ranges.length} 个 PDF`)
     splitDialogOpen.value = false
   } catch (e: any) {
@@ -521,6 +619,7 @@ async function onSplitByRanges() {
 }
 
 // ===== 工具 =====
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -595,6 +694,7 @@ watch(
 
 defineExpose({
   markDone() { busy.value = false },
+  clearSelection() { selected.value = new Set() },
 })
 
 onMounted(() => {
@@ -647,11 +747,43 @@ onBeforeUnmount(() => {
   color: var(--color-foreground-3);
   margin-left: 4px;
 }
-.pdf-org-zoom {
-  margin-left: auto;
+.pdf-org-zoom-bar {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 0 14px;
+}
+.pdf-org-zoom-bar .pdf-org-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+  color: var(--color-foreground-2, #475569);
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.pdf-org-zoom-bar .pdf-org-icon-btn:hover:not(:disabled) {
+  background: var(--color-primary-soft, #ebf1fe);
+  color: var(--color-primary, #3b6fe8);
+  transform: translateY(-1px);
+}
+.pdf-org-zoom-bar .pdf-org-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pdf-org-zoom-bar .pdf-org-zoom-val {
+  min-width: 64px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-foreground, #0f172a);
+  text-align: center;
 }
 .pdf-org-zoom-val {
   font-size: 12px;
@@ -809,19 +941,18 @@ onBeforeUnmount(() => {
 }
 /* TransitionGroup FLIP:调序时其他卡片平滑滑动 */
 .pdf-org-grid-move {
-  transition: transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 120ms ease;
 }
 .pdf-org-grid-enter-active,
 .pdf-org-grid-leave-active {
-  transition: all 250ms ease;
+  transition: none;
 }
 .pdf-org-grid-enter-from,
 .pdf-org-grid-leave-to {
-  opacity: 0;
-  transform: scale(0.9);
+  opacity: 1;
 }
 .pdf-org-grid-leave-active {
-  position: absolute;
+  position: static;
 }
 .pdf-org-thumb-canvas-wrap {
   width: 100%;

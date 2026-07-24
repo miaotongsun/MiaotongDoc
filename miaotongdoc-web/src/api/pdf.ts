@@ -112,6 +112,33 @@ export const pdfApi = {
     return api.post<any, PageOpResult>(`/pdf/${docId}/pages/extract`, data)
   },
 
+  /**
+   * Phase 13.29: 提取页面到新文档(非破坏性,生成新 Document)
+   * POST /api/pdf/{id}/pages/extract-to-new
+   * 返回: { success, docId, message }
+   */
+  extractPagesToNew(docId: number, pages: number[], title?: string) {
+    return api.post<any, { success: boolean; docId: number; message?: string }>(
+      `/pdf/${docId}/pages/extract-to-new`,
+      { pages, title },
+    )
+  },
+
+  /**
+   * Phase 13.29: 高级合并(页区间 + 目标 new/overwrite)
+   * POST /api/pdf/merge-advanced
+   * 返回: { success, docId?, filePath, targetDocId? }
+   */
+  mergeAdvanced(payload: {
+    documents: Array<{ docId: number; pageRanges?: string }>
+    target: { mode: 'new' | 'overwrite'; docId?: number; title?: string }
+  }) {
+    return api.post<any, { success: boolean; docId?: number; filePath: string; targetDocId?: number; message?: string }>(
+      `/pdf/merge-advanced`,
+      payload,
+    )
+  },
+
   /** 重排页面(Phase 3:原子化) */
   reorderPages(docId: number, data: PdfPageOperationRequest) {
     return api.post<any, PageOpResult>(`/pdf/${docId}/pages/reorder`, data)
@@ -199,13 +226,13 @@ export const pdfApi = {
     )
   },
   /** 添加水印 */
-  addWatermark(docId: number, data: { text: string; opacity: number; rotation: number; pages?: number[] }) {
+  addWatermark(docId: number, data: { text: string; opacity: number; rotation: number; position?: 'diagonal' | 'header' | 'footer' | 'center' | 'tile'; fontSize?: number; clearExisting?: boolean; pages?: number[] }) {
     return api.post<any, { success: boolean; message: string; bustUrl: number }>(
       `/pdf/${docId}/watermark`, data,
     )
   },
   /** 添加页眉/页脚 */
-  addHeaderFooter(docId: number, data: { position: 'header' | 'footer'; content: string; fontSize: number; pages?: number[] }) {
+  addHeaderFooter(docId: number, data: { position: 'header' | 'footer'; content: string; fontSize: number; clearExisting?: boolean; pages?: number[] }) {
     return api.post<any, { success: boolean; message: string; bustUrl: number }>(
       `/pdf/${docId}/header-footer`, data,
     )
@@ -435,6 +462,22 @@ export const pdfApi = {
   },
 
   /**
+   * Phase 13.37: 替换页面 - 用上传 PDF 的指定页替换目标文档选中页
+   * POST /api/pdf/{id}/pages/replace (multipart)
+   */
+  replacePages(docId: number, targetPages: number[], file: File, sourceStartPage: number) {
+    const form = new FormData()
+    form.append('targetPages', targetPages.join(','))
+    form.append('sourceStartPage', String(sourceStartPage))
+    form.append('file', file)
+    return api.post<any, { success: boolean; message: string; filePath: string }>(
+      `/pdf/${docId}/pages/replace`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } as any },
+    )
+  },
+
+  /**
    * Phase 13.12-B: 批量提取页面为单个 PDF
    * POST /api/pdf/{id}/extract-pages-batch { pages: [1,3,5] }
    */
@@ -447,7 +490,7 @@ export const pdfApi = {
   },
 
   /** Phase 13.23: 去水印 */
-  removeWatermark(docId: number, mode: 'annotation' | 'cover' = 'annotation') {
+  removeWatermark(docId: number, mode: 'annotation' | 'all' = 'all') {
     return api.post<any, PageOpResult>(`/pdf/${docId}/watermark/remove`, { mode })
   },
 
@@ -456,6 +499,17 @@ export const pdfApi = {
     return api.post<any, { success: boolean; outline: Array<{ title: string; page: number; level: number }>; filePath?: string; error?: string }>(
       `/pdf/${docId}/ai/auto-outline`, {},
     )
+  },
+
+  /** Phase 14.U6: 文档对比 */
+  compare(docIdA: number, docIdB: number) {
+    return api.post<any, {
+      success: boolean
+      docA: { id: number; title: string }
+      docB: { id: number; title: string }
+      summary: { totalPages: number; same: number; modified: number; added: number; removed: number }
+      pages: Array<{ page: number; status: 'same' | 'modified' | 'added' | 'removed'; diffHunks?: Array<{ type: 'eq' | 'add' | 'del'; text: string }> }>
+    }>(`/pdf/compare`, { docIdA, docIdB })
   },
 
   /** Phase 13.23: 智能提取(文字+表格+图片+结构化 JSON) */

@@ -40,8 +40,6 @@
       @zoom-menu="onZoomMenu"
       @save="onSave"
       @print="onPrint"
-      @share="onShare"
-      @send-sign="onSendSign"
       @open-ai="onOpenAi"
       @place-signature="onOpenSignatureDialog"
       @protect="onOpenSecurityDialog"
@@ -50,17 +48,15 @@
       @page-extract="onExtractCurrent"
       @page-rotate-all="onRotateAll"
       @page-insert="onInsertBlank"
-      @page-insert-from-file="onInsertFromFile"
       @watermark="onWatermark"
       @header-footer="onHeaderFooter"
-      @export-menu="onOpenExport"
+      @export-menu="(e: MouseEvent) => onOpenExport(e)"
       @save-as-new="onSaveAsNew"
       @redact="onRedact"
       @compress="onCompress"
       @remove-watermark="onRemoveWatermark"
       @fill-form="() => toggleRightPanel('form')"
       @rotate-current="() => onRotatePage(currentPage, 90)"
-      @crop-page="onCropPage"
       @split-pdf="onSplitPdf"
       @ai-summarize="onCanvasMenuAiSummarize"
       @ai-translate="onCanvasMenuAiTranslate"
@@ -87,11 +83,13 @@
         :total-pages="totalPages"
         :current-page="currentPage"
         :collapsed="thumbCollapsed"
+        :thumb-scale="renderer.thumbScale.value"
         @goto="goToPage"
         @rotate="onRotatePage"
         @reorder="onReorderPages"
         @context-menu="onThumbContextMenu"
         @thumb-ready="onThumbReady"
+        @thumb-zoom="onThumbZoom"
         @toggle-collapse="thumbCollapsed = !thumbCollapsed"
       />
 
@@ -131,6 +129,28 @@
           </div>
         </div>
         <template v-else>
+          <!-- Phase 13.31: 画布顶部工具栏(Acrobat DC 风格,吸顶) -->
+          <PdfCanvasToolbar
+            :visible="true"
+            :active-tool="activeTool"
+            :current-page="currentPage"
+            :total-pages="totalPages"
+            :percent="Math.round(scale * 100)"
+            :can-zoom-in="scale < 3"
+            :can-zoom-out="scale > 0.3"
+            :view-mode="viewMode"
+            @set-tool="onToolbarSetTool"
+            @set-view="setViewMode"
+            @go-prev="goPrev"
+            @go-next="goNext"
+            @go-page="onToolbarGoPage"
+            @zoom-in="onZoomIn"
+            @zoom-out="onZoomOut"
+            @fit-width="onFitWidth"
+            @fit-page="onFitPage"
+            @actual-size="onActualSize"
+            @set-scale="onCanvasSetScale"
+          />
           <!-- V3: 单页 / 连续 / 双页 三种视图 -->
           <template v-if="viewMode === 'single'">
             <PdfCanvas
@@ -138,8 +158,8 @@
               :page-num="currentPage"
               :total-pages="totalPages"
               :scale="scale"
-              :page-raw-width="pageRawWidth"
-              :page-raw-height="pageRawHeight"
+              :page-raw-width="getPageRawSize(currentPage).w"
+              :page-raw-height="getPageRawSize(currentPage).h"
               :active-tool="activeTool"
               :active-color="activeColor"
               :annotations="annotations"
@@ -189,8 +209,8 @@
                 :page-num="currentPage"
                 :total-pages="totalPages"
                 :scale="scale"
-                :page-raw-width="pageRawWidth"
-                :page-raw-height="pageRawHeight"
+                :page-raw-width="getPageRawSize(currentPage).w"
+                :page-raw-height="getPageRawSize(currentPage).h"
                 :active-tool="activeTool"
                 :active-color="activeColor"
                 :annotations="annotations"
@@ -211,8 +231,8 @@
                 :page-num="currentPage + 1"
                 :total-pages="totalPages"
                 :scale="scale"
-                :page-raw-width="pageRawWidth"
-                :page-raw-height="pageRawHeight"
+                :page-raw-width="getPageRawSize(currentPage + 1).w"
+                :page-raw-height="getPageRawSize(currentPage + 1).h"
                 :active-tool="activeTool"
                 :active-color="activeColor"
                 :annotations="annotations"
@@ -235,8 +255,8 @@
               :page-num="i"
               :total-pages="totalPages"
               :scale="scale"
-              :page-raw-width="pageRawWidth"
-              :page-raw-height="pageRawHeight"
+              :page-raw-width="getPageRawSize(i).w"
+              :page-raw-height="getPageRawSize(i).h"
               :active-tool="activeTool"
               :active-color="activeColor"
               :annotations="annotations"
@@ -294,6 +314,7 @@
           @focus-field="onFocusFormField"
           @form-filled="onFormFilled"
           @form-filled-inplace="onFormFilledInPlace"
+          @generate-outline="onAiAutoOutline"
         />
       </Transition>
 
@@ -307,11 +328,10 @@
         @select-tool="selectTool"
         @export="onOpenExport"
         @print="onPrint"
-        @share="onShare"
-        @send-sign="onSendSign"
         @open-ai="onOpenAi"
         @toggle-panel="toggleRightPanel"
         @organize="openOrganizeView"
+        @compare="onCompareOpen"
         @toggle-collapse="toolsRailCollapsed = !toolsRailCollapsed"
       />
 
@@ -464,6 +484,17 @@
       :exclude-doc-title="filename"
       @confirm="onMergeConfirmed"
     />
+    <!-- Phase 13.29: 提取模式选择弹窗 -->
+    <PdfExtractModeDialog
+      v-if="extractModeDialogOpen"
+      v-model="extractModeDialogOpen"
+      :doc-id="docId"
+      :doc-title="filename"
+      :pages="pendingExtractPages"
+      :on-overwrite-reload="onExtractOverwriteReload"
+      @goto-new="onExtractGotoNew"
+      @done="onExtractDone"
+    />
     <!-- Phase 11: 页面操作(插入空白/裁剪/水印/页眉页脚) -->
     <PdfPageOpsDialog
       v-if="pageOpsDialogOpen"
@@ -479,6 +510,7 @@
       v-if="organizeViewOpen"
       :open="organizeViewOpen"
       :doc-id="docId"
+      :title="filename"
       :total-pages="totalPages"
       :current-page="currentPage"
       :pdf-doc="renderer.pdfDoc.value"
@@ -492,6 +524,7 @@
       @op-insert-file="onReorganizeInsertFile"
       @op-reorder="onReorganizeReorder"
       @op-crop="onReorganizeCrop"
+      @op-replaced="onReorganizeReplaced"
     />
     <!-- Phase 12.3: 签名创建对话框 -->
     <PdfSignatureDialog
@@ -505,6 +538,12 @@
       :doc-id="docId"
       @close="securityDialogOpen = false"
       @done="onSecurityDone"
+    />
+    <!-- Phase 14.U6: 文档对比对话框 -->
+    <PdfCompareDialog
+      v-if="compareDialogOpen"
+      v-model="compareDialogOpen"
+      :default-doc-id="docId"
     />
     <!-- Phase 13.8: PDF 画布右键快捷菜单 -->
     <PdfCanvasContextMenu
@@ -596,6 +635,7 @@
  *   - 保留 V2 所有功能(AI/页面操作/文本编辑/协同)
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { buildDownloadName as dlName, triggerDownload as dlTrigger } from '@/lib/download'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import '@/styles/pdf-tokens.css'
@@ -610,12 +650,15 @@ import PdfRightPanel from './PdfRightPanel.vue'
 import PdfOrganizePages from './PdfOrganizePages.vue'
 import PdfToolsRail from './PdfToolsRail.vue'
 import PdfFloatingToolbar from './PdfFloatingToolbar.vue'
+import PdfCanvasToolbar from './PdfCanvasToolbar.vue'
+import PdfExtractModeDialog from './PdfExtractModeDialog.vue'
 import PdfPageOpsMenu from './PdfPageOpsMenu.vue'
 import PdfExportMenu from './PdfExportMenu.vue'
 import PdfThumbnailContextMenu from './PdfThumbnailContextMenu.vue'
 import PdfCanvasContextMenu from './PdfCanvasContextMenu.vue'
 import PdfAiMenu from './PdfAiMenu.vue'
 import PdfSignatureDialog from './PdfSignatureDialog.vue'
+import PdfCompareDialog from './PdfCompareDialog.vue'
 import PdfSecurityDialog from './PdfSecurityDialog.vue'
 import PdfSaveModeDialog from './PdfSaveModeDialog.vue'
 import MergeDialog from './MergeDialog.vue'
@@ -671,11 +714,30 @@ const error = computed(() => {
 const pageRawWidth = ref(595)
 const pageRawHeight = ref(842)
 
+/** Phase 13.30: 取指定页的 raw 尺寸(从每页独立 Map),支持多尺寸页文档 */
+function getPageRawSize(pn: number): { w: number; h: number } {
+  const s = renderer.pageSizes?.value?.get(pn)
+  if (s && s.w > 0) return s
+  return { w: pageRawWidth.value, h: pageRawHeight.value }
+}
+
 // ========== 视图模式 ==========
 const viewModeLogic = usePdfViewMode()
 const viewMode = computed(() => viewModeLogic.viewMode.value)
 const setViewMode = (m: ViewMode) => viewModeLogic.setViewMode(m)
 const cycleViewMode = () => viewModeLogic.cycleViewMode()
+
+/** Phase 13.32: 视图模式变化 → 重新绑定页面 IntersectionObserver */
+watch(viewMode, async () => {
+  await nextTick()
+  bindScrollListener()
+})
+
+/** Phase 13.32: 总页数变化(如覆盖/合并后)→ 重建 observer */
+watch(totalPages, async () => {
+  await nextTick()
+  bindScrollListener()
+})
 
 // ========== 协同层 ==========
 const collab = usePdfCollaborate({
@@ -985,6 +1047,10 @@ function paintRangeInline(range: Range, prop: FormatProp, value: string): void {
 // ========== AI ==========
 const aiFloat = usePdfAiFloat({ docId: props.docId })
 const aiVisible = ref(false)
+
+/** Phase 14.U6+U11: 文档对比对话框 */
+const compareDialogOpen = ref(false)
+function onCompareOpen() { compareDialogOpen.value = true }
 const aiStreaming = computed(() => aiFloat.isStreaming.value)
 const vqaImage = ref<string | undefined>(undefined)
 const vqaContext = ref('')
@@ -1018,12 +1084,30 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   if (recognizeStatus.value === 'recognizing') return
   recognizeStatus.value = 'recognizing'
   const modelLabel = model === 'server' ? '高精度' : '快速'
-  ElMessage.info(`OCR ${modelLabel}识别中(PaddleOCR ${model})...`)
+  ElMessage.info(`OCR ${modelLabel}识别中...`)
   try {
     const r: any = await pdfApi.recognizePaddle(props.docId, model)
     if (r.status !== 'success') {
       recognizeStatus.value = 'error'
-      ElMessage.error(r.error || 'OCR 识别失败')
+      // Phase 14.U9: 明确错误 + 提供重试/切换模型操作
+      const errorMsg = r.error || 'OCR 识别失败'
+      const isServiceDown = /服务.*未启动|不可用|超时|connection|refused/i.test(errorMsg)
+      ElMessageBox.confirm(
+        `${errorMsg}\n\n可能原因:1) PaddleOCR 服务容器未启动 2) 模型文件缺失 3) 文档过大\n\n点击「重试」再次尝试,或「切换模型」用 mobile 替代 server。`,
+        `OCR ${modelLabel}识别失败`,
+        {
+          type: 'error',
+          confirmButtonText: '重试',
+          cancelButtonText: isServiceDown ? '切换模型' : '关闭',
+          distinguishCancelAndClose: true,
+        }
+      ).then(() => {
+        void onOcrRecognize(model)
+      }).catch((action: string) => {
+        if (action === 'cancel' && isServiceDown) {
+          void onOcrRecognize(model === 'server' ? 'mobile' : 'server')
+        }
+      })
       return
     }
     // server 降级提示
@@ -1046,7 +1130,20 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   } catch (e: any) {
     console.error('[PdfEditor] OCR failed:', e)
     recognizeStatus.value = 'error'
-    ElMessage.error(e?.message || 'OCR 调用失败')
+    // Phase 14.U9: catch 也提供重试
+    const errorMsg = e?.response?.data?.error || e?.message || 'OCR 调用失败'
+    ElMessageBox.confirm(
+      `${errorMsg}\n\n点击「重试」再次尝试。`,
+      'OCR 调用失败',
+      {
+        type: 'error',
+        confirmButtonText: '重试',
+        cancelButtonText: '关闭',
+        distinguishCancelAndClose: true,
+      }
+    ).then(() => {
+      void onOcrRecognize(model)
+    }).catch(() => {})
   }
 }
 
@@ -1132,6 +1229,12 @@ const toolLabel = computed(() => {
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value) return
   currentPage.value = p
+  // Phase 13.32: 标记程序化滚动,避免 IntersectionObserver 回调把 currentPage 改回去
+  isProgrammaticScroll = true
+  if (programmaticScrollTimer) window.clearTimeout(programmaticScrollTimer)
+  programmaticScrollTimer = window.setTimeout(() => {
+    isProgrammaticScroll = false
+  }, 800)
   nextTickScroll()
 }
 
@@ -1165,14 +1268,7 @@ function formHighlightFor(pageNum: number) {
 
 // Phase 12.2: 表单填充完成后,触发下载
 function onFormFilled(blob: Blob) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `filled-${props.docId}-${Date.now()}.pdf`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  dlTrigger(blob, dlName('filled', 'pdf', props.filename))
 }
 
 /**
@@ -1248,12 +1344,63 @@ async function onActualSize() {
   await renderer.reRenderAll(canvasRefs, textLayerRefs)
   viewModeLogic.setZoom('actual')
 }
+/** Phase 13.31: 画布工具栏 - 切换工具(选择/手型) */
+function onToolbarSetTool(tool: 'select' | 'move') {
+  selectTool(tool)
+}
+
+/** Phase 13.31: 画布工具栏 - 跳转页 */
+function onToolbarGoPage(p: number) {
+  if (!Number.isFinite(p)) return
+  const clamped = Math.max(1, Math.min(p, totalPages.value))
+  if (clamped !== currentPage.value) goToPage(clamped)
+}
+
+/** Phase 13.31: 画布缩放栏选百分比 */
+async function onCanvasSetScale(s: number) {
+  renderer.setScale(s)
+  await renderer.reRenderAll(canvasRefs, textLayerRefs)
+  viewModeLogic.setZoom('custom', s)
+}
 
 // ========== Ribbon 事件占位(Phase 8-12 完整实现) ==========
 function onSave() { ElMessage.success('已保存(占位)') }
-function onPrint() { ElMessage.info('打印功能开发中') }
-function onShare() { ElMessage.info('分享功能开发中') }
-function onSendSign() { ElMessage.info('发送签署开发中') }
+/** Phase 14.U13: 打印功能 —— blob iframe + window.print,直接弹打印对话框(不下载) */
+async function onPrint() {
+  const url = `/api/documents/${props.docId}/file`
+  const token = sessionStorage.getItem('token') || ''
+  try {
+    // 1. fetch PDF 转 blob URL(避免浏览器对 /file 直接下载)
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) throw new Error(`加载 PDF 失败: ${res.status}`)
+    const blob = await res.blob()
+    const blobUrl = URL.createObjectURL(blob)
+
+    // 2. 创建隐藏 iframe 加载 blob PDF
+    const iframe = document.createElement('iframe')
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:none;visibility:hidden'
+    iframe.src = blobUrl
+    document.body.appendChild(iframe)
+    iframe.onload = () => {
+      // 3. 等浏览器内置 PDF viewer 加载,调用 print
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus()
+          iframe.contentWindow?.print()
+        } catch (e) {
+          console.warn('[PdfEditor] iframe.print failed, fallback window.open', e)
+          const w = window.open(blobUrl, '_blank')
+          if (w) w.focus()
+          ElMessage.info('请在弹窗中按 Ctrl+P 打印')
+        }
+      }, 600)
+      // 4. 60s 后清理(打印对话框可能耗时)
+      setTimeout(() => { iframe.remove(); URL.revokeObjectURL(blobUrl) }, 60_000)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '打印失败,请确认文档已上传')
+  }
+}
 
 // Phase 12.3: 签名创建 + 放置
 const signatureDialogOpen = ref(false)
@@ -1327,7 +1474,7 @@ function onSecurityDone(blob: Blob, action: 'encrypt' | 'decrypt') {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${action}-${props.docId}-${Date.now()}.pdf`
+  a.download = dlName(action, 'pdf', props.filename)
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -1369,19 +1516,30 @@ async function placeSignature(pageNum: number, screenX: number, screenY: number)
   }
 }
 function onZoomMenu() { ElMessage.info('缩放菜单开发中') }
-function onOpenExport(_evt?: MouseEvent) {
-  // Phase 13.21: 锚定到右侧工具栏的"导出"按钮右边缘,弹窗向左展开
-  const btn = document.querySelector('[class*="tools-rail"] button[aria-label="导出 PDF"]') as HTMLElement | null
+function onOpenExport(evt?: MouseEvent) {
+  // Phase 13.21 + 14 修复:从事件 target 直接取按钮位置,不再依赖不稳定的 querySelector 选择器
+  // Home tab 触发时 evt 是 undefined,fallback 到屏幕顶部
+  const btn = (evt?.currentTarget || evt?.target) as HTMLElement | null
   const rect = btn?.getBoundingClientRect()
-  exportMenuAnchor.value = { x: rect?.right ?? window.innerWidth - 60, y: rect?.bottom ?? 56 }
+  if (rect) {
+    // 右侧工具栏时:rect.right 是按钮右边缘(贴屏幕右),菜单向左展开(anchorSide='left' 已传)
+    // Home tab 顶部时:rect.bottom 是按钮底部,菜单向下展开
+    exportMenuAnchor.value = { x: rect.right, y: rect.bottom }
+  } else {
+    exportMenuAnchor.value = { x: window.innerWidth - 60, y: 56 }
+  }
   exportMenuOpen.value = true
   pageMenuOpen.value = false
 }
 function onOpenMerge(_e?: MouseEvent) { mergeDialogOpen.value = true }
 function onExtractCurrent() {
-  pageOps.extractPages([currentPage.value]).then((r) => {
-    if (r) reloadAfterPageOp(pageOps.bustUrl(r))
-  })
+  // Phase 13.30: 改为弹三模式选择(新文档/覆盖/下载),与组织页面提取一致
+  pendingExtractPages.value = [currentPage.value]
+  extractModeDialogOpen.value = true
+}
+/** Phase 13.30: 提取下载完成后清组织页面 busy(避免界面卡死) */
+function onExtractDone() {
+  organizeRef.value?.markDone?.()
 }
 function onRotateAll() {
   const all = Array.from({ length: totalPages.value }, (_, i) => i + 1)
@@ -1392,9 +1550,6 @@ function onRotateAll() {
 function onInsertBlank() {
   pageOpsInitialTab.value = 'insertBlank'
   pageOpsDialogOpen.value = true
-}
-function onInsertFromFile() {
-  ElMessage.info('从文件插入开发中(Phase 11.1 后续)')
 }
 // Phase 13.23: 从文件插入复用组织视图逻辑(上传+合并)
 async function onInsertFromFileNew() {
@@ -1437,7 +1592,7 @@ async function onCompress() {
   try {
     ElMessage.info('正在压缩...')
     const blob = await pdfApi.compress(props.docId, { level: 'medium' })
-    downloadBlob(blob, `compressed-${props.docId}.pdf`)
+    dlTrigger(blob, dlName('压缩', 'pdf', props.filename))
     ElMessage.success('压缩完成,已下载')
   } catch (e: any) { ElMessage.error(e?.message || '压缩失败') }
 }
@@ -1446,10 +1601,6 @@ async function onRemoveWatermark() {
     const r = await pdfApi.removeWatermark(props.docId, 'annotation')
     if (r.success) { ElMessage.success('去水印完成'); await reloadAfterPageOp(pageOps.bustUrl(r)) }
   } catch (e: any) { ElMessage.error(e?.message || '去水印失败') }
-}
-function onCropPage() {
-  pageOpsInitialTab.value = 'crop'
-  pageOpsDialogOpen.value = true
 }
 function onSplitPdf() {
   // 打开组织视图的拆分
@@ -1527,7 +1678,7 @@ async function onExtractImages() {
   try {
     ElMessage.info('正在提取图片...')
     const blob = await pdfApi.extractImages(props.docId)
-    downloadBlob(blob, `pdf-images-${props.docId}.zip`)
+    dlTrigger(blob, dlName('提取图片', 'zip', props.filename))
     ElMessage.success('图片已打包下载')
   } catch (e: any) { ElMessage.error(e?.message || '提取图片失败') }
 }
@@ -1538,6 +1689,16 @@ function downloadBlob(blob: Blob, filename: string) {
   a.href = url; a.download = filename
   document.body.appendChild(a); a.click(); document.body.removeChild(a)
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/** Phase 13.30: 规范下载文件名 = `${docTitle}_${op}_${YYYYMMDD-HHmmss}.${ext}`(去特殊字符) */
+function buildDownloadName(op: string, ext: string): string {
+  const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_').trim() || 'document'
+  const title = safe((props.filename || 'document').replace(/\.pdf$/i, ''))
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  return `${title}_${op}_${ts}.${ext}`
 }
 
 async function onPageOpSuccess(_op: string) {
@@ -1580,6 +1741,74 @@ const annotationRefs = new Map<number, SVGSVGElement>()
 const thumbRefs = new Map<number, HTMLCanvasElement>()
 const canvasAreaRef = ref<HTMLElement | null>(null)
 
+/**
+ * Phase 13.33: 画布滚动驱动当前页(改用 scroll + getBoundingClientRect,更可靠)
+ * - 监听 canvasAreaRef 的 scroll 事件(throttle 80ms)
+ * - 找"跨越激活线(视口顶部 30%)或最接近该线"的可见 .pdf-page-card
+ * - 仅在 continuous / facing 视图生效(single 只渲染一页,无滚动联动必要)
+ * - 程序化滚动锁:goToPage/scrollIntoView 期间忽略,避免互踩
+ */
+let isProgrammaticScroll = false
+let programmaticScrollTimer: number | null = null
+let scrollRafId: number | null = null
+
+function findCurrentPageByScroll() {
+  const root = canvasAreaRef.value
+  if (!root) return
+  const rootRect = root.getBoundingClientRect()
+  // 激活线:视口顶部往下 30%
+  const triggerY = rootRect.top + rootRect.height * 0.3
+  let best = -1
+  let bestDist = Infinity
+  const cards = root.querySelectorAll<HTMLElement>('.pdf-page-card')
+  cards.forEach((card) => {
+    const pn = Number(card.dataset.pageNum)
+    if (!pn) return
+    const rect = card.getBoundingClientRect()
+    // 完全不可见跳过
+    if (rect.bottom < rootRect.top || rect.top > rootRect.bottom) return
+    if (rect.top <= triggerY && rect.bottom >= triggerY) {
+      // 跨越激活线,直接选定
+      best = pn
+      bestDist = -1
+    } else if (bestDist >= 0) {
+      const dist = Math.abs(rect.top - triggerY)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = pn
+      }
+    }
+  })
+  if (best > 0 && best !== currentPage.value) {
+    currentPage.value = best
+  }
+}
+
+function onCanvasScroll() {
+  if (isProgrammaticScroll) return
+  if (scrollRafId != null) return
+  scrollRafId = window.requestAnimationFrame(() => {
+    scrollRafId = null
+    findCurrentPageByScroll()
+  })
+}
+
+function bindScrollListener() {
+  const root = canvasAreaRef.value
+  if (!root) return
+  root.removeEventListener('scroll', onCanvasScroll)
+  root.addEventListener('scroll', onCanvasScroll, { passive: true })
+}
+
+function unbindScrollListener() {
+  const root = canvasAreaRef.value
+  if (root) root.removeEventListener('scroll', onCanvasScroll)
+  if (scrollRafId != null) {
+    window.cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
+}
+
 const recognizedPages = ref<Set<number>>(new Set())
 /** OCR 状态:'unrecognized' | 'recognizing' | 'recognized' | 'error' */
 const recognizeStatus = ref<'unrecognized' | 'recognizing' | 'recognized' | 'error'>('unrecognized')
@@ -1607,6 +1836,20 @@ function onPageReady(
 function onThumbReady(pageNum: number, canvasEl: HTMLCanvasElement) {
   thumbRefs.set(pageNum, canvasEl)
   nextTick(() => renderThumbIfReady(pageNum))
+}
+
+/** Phase 13.35: 缩略图侧栏 +/- 缩放,重渲染所有缩略图 */
+async function onThumbZoom(delta: number) {
+  renderer.setThumbScale(renderer.thumbScale.value + delta)
+  // 清空已渲染标记,强制重渲染(PdfThumbPanel 的 thumbRendered 由其管理,这里只重画 canvas)
+  if (thumbRefs.size > 0 && renderer.pdfDoc.value) {
+    try {
+      // Phase 13.36: force=true 绕过并发锁,确保缩放后立即重渲染更新像素分辨率
+      await renderer.renderAllThumbs(thumbRefs, true)
+    } catch (e) {
+      console.error('[PdfEditor] thumb zoom re-render failed:', e)
+    }
+  }
 }
 
 async function renderPageIfReady(pageNum: number) {
@@ -1826,6 +2069,8 @@ async function captureVqaAndAsk(pageNum: number, rect: { x: number; y: number; w
     vqaContext.value = '请识别并描述这张图片的内容'
     aiVisible.value = true
     annot.pendingRect.value = null
+    // Phase 13.35: 框选完成后切回选择工具,避免鼠标一直处于框选状态
+    selectTool('select')
     ElMessage.success('已截取选区,请在 AI 面板提问')
   } catch (e) {
     console.error('[PdfEditor] VQA 截图失败', e)
@@ -1841,6 +2086,14 @@ const exportMenuAnchor = ref<{ x: number; y: number } | null>(null)
 const aiMenuOpen = ref(false)
 const aiMenuAnchor = ref<{ x: number; y: number } | null>(null)
 const mergeDialogOpen = ref(false)
+const extractModeDialogOpen = ref(false)
+const pendingExtractPages = ref<number[]>([])
+/** Phase 13.35: 提取弹窗关闭(取消/完成)时,清组织页 busy,避免按钮卡死 */
+watch(extractModeDialogOpen, (open) => {
+  if (!open) {
+    nextTick(() => organizeRef.value?.markDone?.())
+  }
+})
 // Phase 11: 页面操作对话框(插入/裁剪/水印/页眉页脚)
 const pageOpsDialogOpen = ref(false)
 const pageOpsInitialTab = ref<'insertBlank' | 'crop' | 'watermark' | 'headerFooter'>('insertBlank')
@@ -1861,10 +2114,25 @@ const ctxMenuOpen = ref(false)
 const ctxMenuAnchor = ref<{ x: number; y: number } | null>(null)
 const ctxMenuPageNum = ref(1)
 
-function onMergeConfirmed(docIds: number[]) {
-  pageOps.merge(docIds).then((r) => {
-    if (r) reloadAfterPageOp(pageOps.bustUrl(r))
-  })
+async function onMergeConfirmed(payload: {
+  documents: Array<{ docId: number; pageRanges?: string }>
+  target: { mode: 'new' | 'overwrite'; docId?: number; title?: string }
+}) {
+  try {
+    const r = await pdfApi.mergeAdvanced(payload)
+    if (r.success) {
+      if (payload.target.mode === 'new' && r.docId) {
+        mergeDialogOpen.value = false  // 关闭合并弹窗
+        ElMessage.success('已合并为新文档')
+        router.push(`/editor/${r.docId}`)
+      } else {
+        ElMessage.success('已合并并覆盖当前文档')
+        await reloadAfterPageOp(`${props.fileUrl.split('?')[0]}?v=${Date.now()}&merge=1`)
+      }
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '合并失败')
+  }
 }
 
 // ========== Phase 13.12-D: 重组面板事件 ==========
@@ -1891,10 +2159,32 @@ async function onReorganizeRotate(pages: number[], degrees: number) {
   organizeRef.value?.markDone?.()
 }
 
-async function onReorganizeExtract(pages: number[]) {
-  const r = await pageOps.extractPages(pages)
-  if (r) await reloadAfterPageOp(pageOps.bustUrl(r))
+/** Phase 13.37: 替换页面完成后 reload 文档(页数不变,但页面内容/尺寸可能变) */
+async function onReorganizeReplaced() {
+  await reloadAfterPageOp(pageOps.bustUrl({ success: true, message: '', filePath: '' } as any))
   organizeRef.value?.markDone?.()
+}
+
+async function onReorganizeExtract(pages: number[]) {
+  // Phase 13.29: 改为先弹模式选择(新文档/覆盖/下载),不再直接覆盖
+  pendingExtractPages.value = pages
+  extractModeDialogOpen.value = true
+}
+
+/** Phase 13.29: 提取模式弹窗 - 覆盖当前文档后的 reload 回调 */
+async function onExtractOverwriteReload() {
+  await reloadAfterPageOp(`${props.fileUrl.split('?')[0]}?v=${Date.now()}&extract=1`)
+  // 清组织页面选区(覆盖后页数变了,旧选区可能含无效页码,避免重复提取 400)
+  organizeRef.value?.clearSelection?.()
+  organizeRef.value?.markDone?.()
+}
+/** Phase 13.29: 提取模式弹窗 - 新文档跳转 */
+function onExtractGotoNew(docId: number) {
+  // 先关闭组织页面 overlay + 提取弹窗,避免挡住新文档
+  organizeViewOpen.value = false
+  extractModeDialogOpen.value = false
+  organizeRef.value?.markDone?.()
+  router.push(`/editor/${docId}`)
 }
 
 async function onReorganizeInsertBlank(afterPage: number) {
@@ -1983,11 +2273,15 @@ onMounted(async () => {
   } catch (e) {
     console.error('[PdfEditor] 加载失败:', e)
   }
+  // Phase 13.32: 等 PdfCanvas 完成首次渲染,再绑 IntersectionObserver
+  await nextTick()
+  bindScrollListener()
 })
 
 onBeforeUnmount(() => {
   collab.destroy()
   renderer.destroy()
+  unbindScrollListener()
 })
 
 let currentFileUrl = props.fileUrl
@@ -2091,7 +2385,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   /* Phase 13.12: scrollbar-gutter 始终为滚动条预留空间,
      避免滚动条出现/消失时内容跳动,改善垂直滚动条可见性 */
   scrollbar-gutter: stable;
-  padding: var(--space-8) var(--space-12);  /* Q2: 上下对称 32px,去底部 64px 浪费 */
+  /* Phase 13.31: toolbar 紧贴画布区顶部,取消 padding-top(改为底部留白 + 左右对称) */
+  padding: 0 var(--space-12) var(--space-8);
   height: 100%;
   min-height: 0;
   display: flex;
@@ -2126,12 +2421,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 
 /* 双页对照 */
 .pdf-facing-pair {
-  display: grid;
-  grid-template-columns: 1fr var(--space-6) 1fr;
-  gap: 0;
+  display: flex;
+  gap: 32px;
   align-items: start;
   justify-content: center;
   width: 100%;
+  /* Phase 13.31: 两栏之间留出明显间距,改善双页阅读 */
 }
 
 .pdf-state {

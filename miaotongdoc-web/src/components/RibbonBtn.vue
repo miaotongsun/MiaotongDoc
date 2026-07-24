@@ -111,12 +111,36 @@ function onClick(evt: MouseEvent) {
 .ribbon-btn.is-active::before {
   content: '';
   position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 0;
-  width: 3px;
+  left: 4px;
+  right: 4px;
+  bottom: 0;
+  height: 3px;
   background: var(--color-primary, #3B6FE8);
-  border-radius: 0 2px 2px 0;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Phase 13.39: hover 浅色短横线 + 点击(按下)由短变长动画 */
+.ribbon-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 0;
+  height: 2px;
+  background: var(--color-primary, #3B6FE8);
+  border-radius: 2px 2px 0 0;
+  transform: translateX(-50%);
+  transition: width 220ms var(--ease-out, ease);
+  pointer-events: none;
+  opacity: 0;
+}
+.ribbon-btn:hover:not(:disabled):not(.is-active)::after {
+  width: 40%;
+  opacity: 0.35;
+}
+.ribbon-btn:active:not(:disabled):not(.is-active)::after {
+  width: 90%;
+  opacity: 0.6;
 }
 
 .ribbon-btn.is-active:hover {

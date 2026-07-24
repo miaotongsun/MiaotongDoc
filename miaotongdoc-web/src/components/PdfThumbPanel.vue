@@ -8,11 +8,17 @@
   - 缩略图卡片悬浮显示快捷操作
 -->
 <template>
-  <aside class="pdf-thumb-panel" :class="{ 'is-collapsed': collapsed }" aria-label="页面缩略图">
+  <aside class="pdf-thumb-panel" :class="{ 'is-collapsed': collapsed }" :style="{ '--thumb-scale': thumbScale }" aria-label="页面缩略图">
     <header class="pdf-thumb-panel-header">
       <span v-if="!collapsed" class="pdf-thumb-panel-title">页面</span>
       <span v-if="!collapsed" class="pdf-thumb-panel-count">{{ currentPage }} / {{ totalPages }}</span>
       <span v-else class="pdf-thumb-panel-collapsed-label">P{{ currentPage }}</span>
+      <!-- Phase 13.35: 缩略图缩放按钮(仅展开时显示) -->
+      <div v-if="!collapsed" class="pdf-thumb-zoom">
+        <button class="pdf-thumb-zoom-btn" aria-label="缩小缩略图" title="缩小缩略图" :disabled="thumbScale <= 0.15" @click="$emit('thumb-zoom', -0.1)">−</button>
+        <span class="pdf-thumb-zoom-pct">{{ Math.round(thumbScale * 100) }}%</span>
+        <button class="pdf-thumb-zoom-btn" aria-label="放大缩略图" title="放大缩略图" :disabled="thumbScale >= 1.0" @click="$emit('thumb-zoom', 0.1)">+</button>
+      </div>
     </header>
 
     <div v-if="!collapsed" ref="listRef" class="pdf-thumb-panel-list">
@@ -24,6 +30,7 @@
           'is-current': i === currentPage,
           'is-dragging': dragFrom === i,
         }"
+        :data-page="i"
         :draggable="true"
         @click="$emit('goto', i)"
         @contextmenu.prevent="onContextMenu($event, i)"
@@ -71,11 +78,13 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount, nextTick, type ComponentPublicInstance } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   totalPages: number
   currentPage: number
   collapsed?: boolean
-}>()
+  /** Phase 13.35: 缩略图缩放比(0.15-1.0) */
+  thumbScale?: number
+}>(), { thumbScale: 0.4 })
 
 const emit = defineEmits<{
   (e: 'goto', page: number): void
@@ -84,12 +93,23 @@ const emit = defineEmits<{
   (e: 'context-menu', page: number, x: number, y: number): void
   (e: 'thumb-ready', pageNum: number, canvasEl: HTMLCanvasElement): void
   (e: 'toggle-collapse'): void
+  (e: 'thumb-zoom', delta: number): void
 }>()
 
 const listRef = ref<HTMLElement | null>(null)
 const thumbRendered = ref<Set<number>>(new Set())
 const thumbRefs = new Map<number, HTMLCanvasElement>()
 const observerRef = ref<IntersectionObserver | null>(null)
+
+/** Phase 13.31: 当前页变化时,自动把当前缩略图卡片滚动到可视区 */
+watch(() => props.currentPage, async (p) => {
+  if (!p || props.collapsed || !listRef.value) return
+  await nextTick()
+  const card = listRef.value.querySelector(`.pdf-thumb-card[data-page="${p}"]`) as HTMLElement | null
+  if (card) {
+    card.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
+})
 
 function bindThumb(el: Element | ComponentPublicInstance | null, pageNum: number) {
   if (!el || !(el instanceof HTMLCanvasElement)) {
@@ -275,13 +295,54 @@ onBeforeUnmount(() => {
   font-feature-settings: 'tnum';
 }
 
+/* Phase 13.35: 缩略图缩放控件 */
+.pdf-thumb-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+.pdf-thumb-zoom-btn {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  color: var(--color-foreground-2, #475569);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.pdf-thumb-zoom-btn:hover:not(:disabled) {
+  background: var(--color-surface-2, #f1f5f9);
+  color: var(--color-primary, #3b6fe8);
+  border-color: var(--color-primary, #3b6fe8);
+}
+.pdf-thumb-zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pdf-thumb-zoom-pct {
+  font-size: 10px;
+  color: var(--color-foreground-3, #94a3b8);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+}
+
 .pdf-thumb-panel-list {
   flex: 1;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: var(--space-3);
 }
 
@@ -303,8 +364,14 @@ onBeforeUnmount(() => {
   cursor: pointer;
   user-select: none;
   border-radius: var(--radius-md);
+  /* Phase 13.37: 卡片宽度按 thumbScale 占侧栏百分比,不超出缩略栏 */
+  width: calc(var(--thumb-scale, 0.4) * 100%);
+  max-width: 100%;
+  min-width: 60px;
+  flex-shrink: 0;
   transition: background var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    transform var(--duration-fast) var(--ease-out),
+    width 160ms var(--ease-out);
 }
 
 .pdf-thumb-card:hover {
@@ -385,13 +452,14 @@ onBeforeUnmount(() => {
 
 /* 当前页左侧高亮条 */
 .pdf-thumb-active-bar {
+  /* Phase 13.37: 选中指示从左侧竖线改为底部横线 */
   position: absolute;
-  left: -3px;
-  top: 4px;
-  bottom: 4px;
-  width: 3px;
+  left: 4px;
+  right: 4px;
+  bottom: -3px;
+  height: 3px;
   background: var(--color-primary);
-  border-radius: 0 2px 2px 0;
+  border-radius: 2px 2px 0 0;
   pointer-events: none;
 }
 

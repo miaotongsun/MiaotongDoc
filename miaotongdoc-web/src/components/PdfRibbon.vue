@@ -39,11 +39,7 @@
           <RibbonBtn icon="save" label="保存" @click="$emit('save')" />
           <RibbonBtn icon="share" label="另存为" @click="$emit('save-as-new')" />
           <RibbonBtn icon="print" label="打印" @click="$emit('print')" />
-          <RibbonBtn icon="export" label="导出" @click="$emit('export-menu')" />
-        </RibbonGroup>
-        <RibbonGroup label="分享">
-          <RibbonBtn icon="share" label="复制链接" @click="$emit('share')" />
-          <RibbonBtn icon="signature" label="发送签署" @click="$emit('send-sign')" />
+          <RibbonBtn icon="export" label="导出" @click="$emit('export-menu', $event)" />
         </RibbonGroup>
         <RibbonGroup label="保护">
           <RibbonBtn icon="menu" label="加密" @click="$emit('protect')" />
@@ -110,8 +106,22 @@
             :class="{ 'is-active': activeColor === c }"
             :style="{ background: c }"
             :aria-label="`颜色 ${c}`"
+            :title="`颜色 ${c}`"
             @click="$emit('select-color', c)"
           />
+          <label
+            class="ribbon-color-custom"
+            :title="`自定义颜色`"
+            :aria-label="`自定义颜色`"
+          >
+            <input
+              type="color"
+              :value="activeColor"
+              aria-label="自定义颜色选择"
+              @input="onCustomColor"
+            />
+            <span class="ribbon-color-custom-plus">+</span>
+          </label>
         </RibbonGroup>
       </div>
 
@@ -120,7 +130,6 @@
         <RibbonGroup label="整理">
           <RibbonBtn icon="organize" label="组织页面" :active="rightPanel === 'reorganize'" @click="$emit('toggle-panel', 'reorganize')" />
           <RibbonBtn icon="insert" label="插入空白" @click="$emit('page-insert')" />
-          <RibbonBtn icon="insertFile" label="从文件插入" @click="$emit('page-insert-from-file')" />
         </RibbonGroup>
         <RibbonGroup label="旋转">
           <RibbonBtn icon="rotate" label="旋转当前页" @click="$emit('rotate-current')" />
@@ -131,12 +140,8 @@
           <RibbonBtn icon="extract" label="拆分" @click="$emit('split-pdf')" />
           <RibbonBtn icon="extract" label="提取当前页" @click="$emit('page-extract')" />
         </RibbonGroup>
-        <RibbonGroup label="裁剪">
-          <RibbonBtn icon="crop" label="裁剪页" @click="$emit('crop-page')" />
-        </RibbonGroup>
         <RibbonGroup label="装饰">
           <RibbonBtn icon="watermark" label="水印" @click="$emit('watermark')" />
-          <RibbonBtn icon="watermark" label="去水印" @click="$emit('remove-watermark')" />
           <RibbonBtn icon="header" label="页眉页脚" @click="$emit('header-footer')" />
         </RibbonGroup>
         <RibbonGroup label="优化">
@@ -174,40 +179,24 @@
         </RibbonGroup>
       </div>
 
-      <!-- AI -->
-      <div v-show="activeTab === 'ai'" class="pdf-ribbon-row">
-        <RibbonGroup label="助手">
-          <RibbonBtn icon="ai" label="AI 对话" @click="$emit('open-ai')" />
-          <RibbonBtn icon="ai" label="页摘要" @click="$emit('ai-summarize')" />
-          <RibbonBtn icon="ai" label="翻译选区" @click="$emit('ai-translate')" />
-          <RibbonBtn icon="ai" label="全文摘要" @click="$emit('ai-full-summary')" />
+      <!-- AI(Phase 14.U8:重设计,17+ 按钮精简到 8 个 PDF 场景核心) -->
+      <div v-show="activeTab === 'ai'" class="pdf-ribbon-row pdf-ribbon-ai">
+        <RibbonGroup label="对话">
+          <RibbonBtn icon="ai" label="AI 助手" @click="$emit('open-ai')" />
+          <RibbonBtn icon="translate" label="翻译选区" @click="$emit('ai-translate')" />
+          <RibbonBtn icon="summarize" label="全文摘要" @click="$emit('ai-full-summary')" />
         </RibbonGroup>
-        <RibbonGroup label="视觉">
-          <RibbonBtn icon="vqa" label="框选问答" @click="$emit('ai-vqa')" />
-          <RibbonBtn icon="vqa" label="识别图片说明" @click="$emit('ai-image-desc')" />
+        <RibbonGroup label="结构">
+          <RibbonBtn icon="outline" label="智能目录" @click="$emit('ai-auto-outline')" />
+          <RibbonBtn icon="contract" label="合同条款" @click="$emit('ai-extract-terms')" />
         </RibbonGroup>
-        <RibbonGroup label="文档">
-          <RibbonBtn icon="ai" label="合同条款抽取" @click="$emit('ai-extract-terms')" />
-          <RibbonBtn icon="ai" label="OCR 结果优化" @click="$emit('ai-optimize-ocr')" />
-          <RibbonBtn icon="ai" label="智能重写" @click="$emit('ai-rewrite')" />
-          <RibbonBtn icon="ai" label="续写生成" @click="$emit('ai-generate')" />
-        </RibbonGroup>
-        <RibbonGroup label="目录">
-          <RibbonBtn icon="panelOutline" label="智能目录" @click="$emit('ai-auto-outline')" />
-          <RibbonBtn icon="panelOutline" label="查看大纲" :active="rightPanel === 'outline'" @click="$emit('ai-view-outline')" />
-        </RibbonGroup>
-        <RibbonGroup label="提取">
-          <RibbonBtn icon="ai" label="智能提取" @click="$emit('ai-extract-structured')" />
-          <RibbonBtn icon="export" label="提取图片" @click="$emit('extract-images')" />
-          <RibbonBtn icon="ai" label="关键词" @click="$emit('ai-keywords')" />
+        <RibbonGroup label="编辑">
+          <RibbonBtn icon="rewrite" label="智能重写" @click="$emit('ai-rewrite')" />
+          <RibbonBtn icon="proofread" label="纠错" @click="$emit('ai-proofread')" />
         </RibbonGroup>
         <RibbonGroup label="识别">
-          <RibbonBtn icon="vqa" label="OCR 快速" @click="$emit('ocr-recognize', 'mobile')" />
-          <RibbonBtn icon="vqa" label="OCR 高精度" @click="$emit('ocr-recognize', 'server')" />
-        </RibbonGroup>
-        <RibbonGroup label="批注">
-          <RibbonBtn icon="ai" label="AI 批注建议" @click="$emit('ai-annotate')" />
-          <RibbonBtn icon="ai" label="纠错" @click="$emit('ai-proofread')" />
+          <RibbonBtn icon="ocr" label="OCR 快速识别" @click="$emit('ocr-recognize', 'mobile')" />
+          <RibbonBtn icon="ocr" label="OCR 高精度识别" @click="$emit('ocr-recognize', 'server')" />
         </RibbonGroup>
       </div>
     </div>
@@ -255,9 +244,10 @@ const emit = defineEmits<{
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void
   (e: 'page-insert' | 'page-insert-from-file'): void
-  (e: 'watermark' | 'header-footer' | 'export-menu'): void
+  (e: 'watermark' | 'header-footer'): void
+  (e: 'export-menu', evt: MouseEvent): void
   /** Phase 13.23: 新增功能按钮 */
-  (e: 'save-as-new' | 'export-menu' | 'redact' | 'compress' | 'remove-watermark'): void
+  (e: 'save-as-new' | 'redact' | 'compress' | 'remove-watermark'): void
   (e: 'fill-form' | 'rotate-current' | 'crop-page' | 'split-pdf'): void
   (e: 'ai-summarize' | 'ai-translate' | 'ai-full-summary' | 'ai-rewrite' | 'ai-generate'): void
   (e: 'ai-vqa' | 'ai-image-desc' | 'ai-extract-terms' | 'ai-optimize-ocr' | 'ai-extract-structured'): void
@@ -283,7 +273,6 @@ const editTools = [
   { id: 'comment' as AnnotationTool, label: '评论', icon: 'comment', shortcut: 'C' },
   { id: 'draw' as AnnotationTool, label: '画笔', icon: 'draw', shortcut: 'P' },
   { id: 'eraser' as AnnotationTool, label: '橡皮', icon: 'eraser', shortcut: 'E' },
-  { id: 'vqa' as AnnotationTool, label: '识图', icon: 'vqa', shortcut: 'Q' },
 ]
 
 // Phase 10: 形状工具(图章/矩形/椭圆/箭头/直线/下划线/删除线)
@@ -340,7 +329,12 @@ const viewModes = [
   { id: 'facing' as ViewMode, label: '双页', icon: 'facing' },
 ]
 
-const colorPalette = ['#FACC15', '#34D399', '#F87171', '#60A5FA', '#A78BFA', '#F472B6']
+const colorPalette = ['#FACC15', '#34D399', '#F87171', '#60A5FA', '#A78BFA', '#F472B6', '#FB923C', '#22D3EE']
+
+function onCustomColor(e: Event) {
+  const v = (e.target as HTMLInputElement).value
+  emit('select-color', v)
+}
 
 const showColorRow = computed(() =>
   ['highlight', 'comment', 'draw'].includes(props.activeTool),
@@ -470,5 +464,55 @@ const showShapeColors = computed(() =>
 .ribbon-stamp-input:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+/* Phase 14.U13: 颜色栏补齐 — 8 色调色板 + 自定义颜色 */
+.ribbon-color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 2px solid var(--color-border, #e2e8f0);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+.ribbon-color-swatch:hover {
+  transform: scale(1.1);
+  border-color: var(--color-foreground-3, #94a3b8);
+}
+.ribbon-color-swatch.is-active {
+  border-color: var(--color-primary, #3b6fe8);
+  box-shadow: 0 0 0 2px var(--color-primary-soft, #ebf1fe);
+  transform: scale(1.1);
+}
+.ribbon-color-custom {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 2px dashed var(--color-border, #e2e8f0);
+  cursor: pointer;
+  margin-left: 4px;
+  background: var(--color-surface, #fff);
+  overflow: hidden;
+}
+.ribbon-color-custom:hover {
+  border-color: var(--color-primary, #3b6fe8);
+}
+.ribbon-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.ribbon-color-custom-plus {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-foreground-3, #94a3b8);
+  pointer-events: none;
 }
 </style>

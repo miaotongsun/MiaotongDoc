@@ -662,6 +662,46 @@ public class DocumentService {
         return "documents/" + datePath + "/" + docKey + "/v" + version + "." + fileType;
     }
 
+    /**
+     * Phase 13.29: 从已有 PDF 字节创建新文档(提取到新文档 / 合并到新文档用)
+     */
+    @Transactional
+    public Document createPdfFromBytes(String title, byte[] pdfBytes, Long userId) {
+        String docKey = UUID.randomUUID().toString();
+        String filePath = saveFile(docKey, 1, "pdf", pdfBytes);
+        String hash = FileHashUtil.calculateSHA256(pdfBytes);
+
+        Document doc = new Document();
+        doc.setDocKey(docKey);
+        doc.setTitle(title != null && !title.isBlank() ? title : "未命名 PDF");
+        doc.setDocType("pdf");
+        doc.setFilePath(filePath);
+        doc.setFileType("pdf");
+        doc.setFileSize((long) pdfBytes.length);
+        doc.setFileHash(hash);
+        doc.setOwnerUserId(userId);
+        doc.setStatus("draft");
+        doc.setCurrentVersion(1);
+        Long deptId = userRepository.findById(userId).map(User::getDepartmentId).orElse(null);
+        doc.setDepartmentId(deptId);
+        doc = documentRepository.save(doc);
+
+        DocumentVersion initialVersion = new DocumentVersion();
+        initialVersion.setDocumentId(doc.getId());
+        initialVersion.setVersionNumber(1);
+        initialVersion.setFilePath(filePath);
+        initialVersion.setFileSize((long) pdfBytes.length);
+        initialVersion.setFileHash(hash);
+        initialVersion.setChangeSummary("初始版本");
+        initialVersion.setCreatedBy(userId);
+        versionRepository.save(initialVersion);
+
+        auditService.log(userId, "CREATE", "DOCUMENT", doc.getId(), null);
+        activityService.log(userId, doc.getId(), "CREATE", null);
+
+        return doc;
+    }
+
     // ==================== PDF 文字编辑 ====================
 
     /**

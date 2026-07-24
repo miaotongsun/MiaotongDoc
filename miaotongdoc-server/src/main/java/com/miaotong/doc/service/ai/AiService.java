@@ -112,6 +112,24 @@ public class AiService {
         return (model != null && !model.isEmpty()) ? model : "Qwen36-35B-A3B";
     }
 
+    /**
+     * Phase 13.37: 检查 LLM 是否已配置(apiKey 有效即视为已配置,不限 baseUrl)
+     * 用于 AI 功能(智能目录等)调用前预检,给用户明确提示
+     */
+    public boolean isConfigured() {
+        String key = aiProxyService.getApiKey();
+        return key != null && !key.isBlank() && !"sk-placeholder".equals(key);
+    }
+
+    /** Phase 13.38: 获取当前 LLM 配置摘要(脱敏),用于错误提示 */
+    public String getConfigSummary() {
+        String url = aiProxyService.getTargetUrl();
+        String model = getCurrentModel();
+        String key = aiProxyService.getApiKey();
+        String keyMask = (key == null || key.isEmpty()) ? "未设置" : (key.length() > 8 ? key.substring(0, 4) + "..." + key.substring(key.length() - 4) : "***");
+        return "baseUrl=" + (url == null || url.isEmpty() ? "未设置" : url) + ", model=" + model + ", apiKey=" + keyMask;
+    }
+
     private String getBaseUrl() {
         String baseUrl = aiProxyService.getTargetUrl();
         if (baseUrl == null || baseUrl.isEmpty()) {

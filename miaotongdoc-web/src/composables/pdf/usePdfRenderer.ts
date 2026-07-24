@@ -60,6 +60,10 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   const scale = ref(options.initialScale ?? 1.2)
   const pageWidth = ref(0)
   const pageHeight = ref(0)
+  // Phase 13.35: 缩略图缩放可动态调整(侧栏 +/- 按钮)
+  const thumbScale = ref(options.thumbScale ?? 0.4)
+  // Phase 13.30: 每页独立尺寸(支持多尺寸页文档,如从文件导入的不同尺寸页)
+  const pageSizes = ref<Map<number, { w: number; h: number }>>(new Map())
   const loading = ref(false)
   const error = ref<Error | null>(null)
   // Phase 11.8: 缩略图渲染并发锁
@@ -151,6 +155,8 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     canvasEl.height = Math.ceil(viewport.height)
     pageWidth.value = canvasEl.width
     pageHeight.value = canvasEl.height
+    // Phase 13.30: 存每页 raw 尺寸(去 scale),支持多尺寸页
+    pageSizes.value.set(pageNum, { w: viewport.width / scale.value, h: viewport.height / scale.value })
     await page.render({ canvasContext: canvasEl.getContext('2d')!, viewport }).promise
 
     if (textLayerEl) {
@@ -264,14 +270,15 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   /** 批量渲染所有缩略图 */
   async function renderAllThumbs(
     thumbElMap: Map<number, HTMLCanvasElement>,
+    force = false,
   ): Promise<void> {
     const doc = pdfDoc.value
     if (!doc) return
     // Phase 11.8: 防止并发调用导致同一 canvas 多次 render() 报错
-    if (thumbsRendering) return
+    if (thumbsRendering && !force) return
     thumbsRendering = true
     try {
-      const ts = options.thumbScale ?? 0.4
+      const ts = thumbScale.value
       for (let i = 1; i <= totalPages.value; i++) {
         const page = await doc.getPage(i)
         const viewport = page.getViewport({ scale: ts })
@@ -334,6 +341,11 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     scale.value = Math.max(0.3, Math.min(newScale, 4))
   }
 
+  /** Phase 13.35: 设置缩略图缩放比(侧栏 +/- 用),返回新值供调用方重渲染 */
+  function setThumbScale(newScale: number) {
+    thumbScale.value = Math.max(0.15, Math.min(newScale, 1.0))
+  }
+
   /** 销毁 PDF 文档，释放 worker */
   function destroy() {
     console.log('[renderer] destroy called (soft — 不取消进行中的 load)')
@@ -353,6 +365,8 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     scale,
     pageWidth,
     pageHeight,
+    pageSizes,
+    thumbScale,
     loading,
     error,
     // actions
@@ -365,6 +379,7 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     zoomOut,
     fitWidth,
     setScale,
+    setThumbScale,
     destroy,
   }
 }

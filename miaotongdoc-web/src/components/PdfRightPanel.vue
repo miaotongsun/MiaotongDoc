@@ -20,7 +20,6 @@
           role="tab"
           @click="activeTab = t.id"
         >
-          <PdfIcon :name="t.icon" :size="14" />
           <span>{{ t.label }}</span>
         </button>
       </div>
@@ -29,6 +28,12 @@
       </button>
     </header>
 
+    <!-- Phase 14.U10: 功能应用提示区(顶部小卡片,说明此 tab 用途) -->
+    <div v-show="!collapsed && activeTip" class="pdf-rp-tip">
+      <span>💡</span>
+      <span>{{ activeTip.text }}</span>
+    </div>
+
     <!-- 内容 -->
     <div v-show="!collapsed" class="pdf-rp-body">
       <!-- Tab 1: 大纲/书签 -->
@@ -36,6 +41,11 @@
         <div v-if="outline.length === 0" class="pdf-rp-empty">
           <PdfIcon name="panelOutline" :size="32" />
           <p>该 PDF 无大纲</p>
+          <p class="pdf-rp-empty-hint">PDF 未内嵌目录书签</p>
+          <button class="pdf-rp-empty-action" @click="$emit('generate-outline')">
+            <PdfIcon name="ai" :size="14" />
+            <span>AI 生成智能目录</span>
+          </button>
         </div>
         <ul v-else class="pdf-rp-tree">
           <li
@@ -139,6 +149,7 @@
               <div class="pdf-rp-ann-user">{{ ann.userName }} · {{ formatTime(ann.createdAt) }}</div>
               <div v-if="ann.content" class="pdf-rp-ann-text">{{ ann.content }}</div>
               <div v-else-if="ann.stampText" class="pdf-rp-ann-stamp" :style="{ color: ann.color }">{{ ann.stampText }}</div>
+              <div v-else-if="ann.type && ['rectangle','ellipse','arrow','line','underline','strikethrough','highlight','draw'].includes(ann.type)" class="pdf-rp-ann-text pdf-rp-ann-empty-text">{{ typeLabel(ann.type) }}标注</div>
               <div v-else class="pdf-rp-ann-text pdf-rp-ann-empty-text">(无文本内容)</div>
             </div>
           </li>
@@ -169,7 +180,11 @@
         <div v-else-if="filteredFormFields.length === 0" class="pdf-rp-empty">
           <PdfIcon name="panelForm" :size="32" />
           <p>{{ formFields.length === 0 ? '该 PDF 无表单字段' : '该类型无字段' }}</p>
-          <p class="pdf-rp-empty-hint" v-if="formFields.length === 0">AcroForm 表单字段会自动识别</p>
+          <p class="pdf-rp-empty-hint" v-if="formFields.length === 0">仅 AcroForm 交互式表单可识别(普通文本非表单)</p>
+          <button class="pdf-rp-empty-action" v-if="formFields.length === 0" :disabled="formLoading" @click="loadFormFields">
+            <span v-if="formLoading">识别中...</span>
+            <span v-else>重新识别表单</span>
+          </button>
         </div>
         <ul v-else class="pdf-rp-form-list">
           <li
@@ -275,6 +290,8 @@ const emit = defineEmits<{
   (e: 'form-filled', blob: Blob): void
   /** Phase 13.26: 表单 in-place 填充后通知父组件 reload */
   (e: 'form-filled-inplace'): void
+  /** Phase 13.36: 大纲为空时,触发 AI 生成智能目录 */
+  (e: 'generate-outline'): void
 }>()
 
 const activeTab = ref(props.initialTab || 'outline')
@@ -285,6 +302,21 @@ const tabs = [
   { id: 'form' as const, label: '表单', icon: 'panelForm' },
   { id: 'info' as const, label: '信息', icon: 'menu' },
 ]
+
+/** Phase 14.U10: 功能应用提示(顶部小卡片) */
+const tips: Record<string, { text: string }> = {
+  outline: { text: '文档书签/目录。点击跳转到对应页面;空时可在 AI tab 生成。' },
+  search: { text: '全文关键字搜索。输入词后自动检索,点击结果跳页定位。' },
+  annotations: { text: '我的全部批注(高亮/评论/形状/图章)。可按类型筛选、删除、跳转。' },
+  form: { text: 'PDF 表单字段识别与填充。仅 AcroForm 交互式表单可识别。' },
+  info: { text: '文档元信息:标题、作者、创建时间、页数等。' },
+}
+const activeTip = computed(() => tips[activeTab.value] || null)
+
+/** Phase 13.31: 父组件切换 initialTab 时,同步 activeTab(避免重复点击切不到) */
+watch(() => props.initialTab, (t) => {
+  if (t && t !== activeTab.value) activeTab.value = t
+})
 
 // 大纲
 const outline = ref<Array<{ title: string; level: number; page: number }>>([])
@@ -633,6 +665,19 @@ function formatSize(bytes: number): string {
 }
 .pdf-rp-collapse:hover { background: var(--color-surface); color: var(--color-foreground); }
 
+/* Phase 14.U10: 功能应用提示 */
+.pdf-rp-tip {
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #f0f7ff 0%, #e8f0fe 100%);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-foreground-2, #475569);
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 .pdf-rp-body {
   flex: 1;
   overflow-y: auto;
@@ -847,6 +892,32 @@ function formatSize(bytes: number): string {
   color: var(--color-foreground-3);
   opacity: 0.7;
   margin-top: 4px;
+}
+
+/* Phase 13.36: 空状态操作按钮(生成目录/重新识别) */
+.pdf-rp-empty-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-primary, #3b6fe8);
+  border-radius: 6px;
+  background: var(--color-primary-soft, #ebf1fe);
+  color: var(--color-primary, #3b6fe8);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.pdf-rp-empty-action:hover:not(:disabled) {
+  background: var(--color-primary, #3b6fe8);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.pdf-rp-empty-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .pdf-rp-ann-list {

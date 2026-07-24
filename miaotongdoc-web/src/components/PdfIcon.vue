@@ -68,6 +68,14 @@ const ICONS: Record<string, string> = {
   panelForm:    'M4 5h16v4H4zM4 13h10v6H4zM16 13h4v6h-4z',
   // ===== AI =====
   ai:        'M12 2l2.4 6.6L21 10l-5.4 4.6L17 22l-5-3.5L7 22l1.4-7.4L3 10l6.6-1.4z',
+  translate: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
+  summarize: 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5',
+  outline:   'M4 6h16M4 6h6v1H4zM4 12h12v1H4zM4 18h10v1H4zM4 18h4v1H4z',
+  contract:  'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M9 14l2 2 4-4',
+  rewrite:   'M3 21l3-3 11-11-3-3L3 17v4zM14 7l3 3M17 4l3 3',
+  proofread: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5M8 11l2 2 4-4',
+  ocr:       'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 8h10M7 12h10M7 16h6M18 18l-2-2 2-2',
+  diff:      'M8 4l-4 8 4 8M16 4l4 8-4 8M14 4l-4 16',
   // ===== 关闭 =====
   close:     'M18 6L6 18M6 6l12 12',
   // ===== 通用 =====

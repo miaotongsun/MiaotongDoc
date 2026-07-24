@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { triggerDownload as dlTrigger, buildDownloadName as dlName } from '@/lib/download'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pdfApi } from '@/api/pdf'
 
@@ -98,18 +99,7 @@ const position = computed(() => {
   return { top, left: `${props.anchor.x}px` }
 })
 
-function triggerDownload(blob: Blob, defaultName: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = defaultName
-  document.body.appendChild(a)
-  a.click()
-  setTimeout(() => {
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }, 0)
-}
+
 
 async function onConvert(format: 'md' | 'docx' | 'txt' | 'png') {
   emit('close')
@@ -117,8 +107,8 @@ async function onConvert(format: 'md' | 'docx' | 'txt' | 'png') {
   try {
     const blob = await pdfApi.convert(props.docId, { targetFormat: format })
     const ext = format === 'docx' ? 'docx' : format
-    const name = `${(props.filename || 'document').replace(/\.pdf$/i, '')}.${ext}`
-    triggerDownload(blob, name)
+    const name = dlName(`convert-${ext}`, ext, props.filename)
+    dlTrigger(blob, name)
     ElMessage.success(`已导出 ${name}`)
   } catch (e) {
     ElMessage.error(`导出失败:${(e as Error).message}`)
@@ -142,7 +132,7 @@ async function onCompress() {
     if (!level) return
     busy.value = true
     const blob = await pdfApi.compress(props.docId, { level: level as 'high' | 'medium' | 'low' })
-    triggerDownload(blob, `${props.filename || 'document'}_compressed.pdf`)
+    dlTrigger(blob, dlName('compress', 'pdf', props.filename))
     ElMessage.success('已压缩')
   } catch (e) {
     ElMessage.error(`压缩失败:${(e as Error).message}`)
@@ -169,7 +159,7 @@ async function onEncrypt() {
     }
     busy.value = true
     const blob = await pdfApi.encrypt(props.docId, { password })
-    triggerDownload(blob, `${props.filename || 'document'}_encrypted.pdf`)
+    dlTrigger(blob, dlName('encrypt', 'pdf', props.filename))
     ElMessage.success('已加密')
   } catch (e) {
     ElMessage.error(`加密失败:${(e as Error).message}`)
@@ -192,7 +182,7 @@ async function onDecrypt() {
     if (!password) return
     busy.value = true
     const blob = await pdfApi.decrypt(props.docId, { password })
-    triggerDownload(blob, `${props.filename || 'document'}_decrypted.pdf`)
+    dlTrigger(blob, dlName('decrypt', 'pdf', props.filename))
     ElMessage.success('已解密')
   } catch (e) {
     ElMessage.error(`解密失败:${(e as Error).message}`)

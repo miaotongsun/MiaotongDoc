@@ -237,7 +237,7 @@ public class PdfToolService {
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 source.save(baos);
-                log.info("提取页面完成: docId={}, pages={}", documentId, pages.size());
+                log.info("提取页面完成: docId={}, 请求页={}, 保留页数={}", documentId, pages, source.getNumberOfPages());
                 return baos.toByteArray();
             }
         } catch (BusinessException e) {
@@ -246,6 +246,109 @@ public class PdfToolService {
             log.error("提取页面失败: docId={}", documentId, e);
             throw new BusinessException("提取页面失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * Phase 13.29: 提取页面到新文档(非破坏性)
+     * 提取指定页生成新 PDF + 创建新 Document,返回新 docId
+     */
+    public Long extractPagesToNew(Long docId, List<Integer> pages, String newTitle, Long userId) {
+        Document source = documentService.getDocument(docId);
+        validatePdf(source);
+        byte[] pdfBytes = extractPages(docId, pages);
+        String title = (newTitle != null && !newTitle.isBlank()) ? newTitle : (source.getTitle() + "_提取");
+        Document newDoc = documentService.createPdfFromBytes(title, pdfBytes, userId);
+        log.info("提取页面到新文档完成: source={}, newDoc={}, pages={}", docId, newDoc.getId(), pages.size());
+        return newDoc.getId();
+    }
+
+    /**
+     * Phase 13.29: 高级合并(按页区间 + 目标 new/overwrite)
+     * @param documents [{docId, pageRanges}] 每个文档的页区间(如 "1-3,5" 或 null=全部)
+     * @param targetMode "new" 或 "overwrite"
+     * @param targetDocId overwrite 时的目标文档 ID
+     * @param newTitle new 时的新文档标题
+     */
+    public Map<String, Object> mergeAdvanced(List<Map<String, Object>> documents, String targetMode,
+                                             Long targetDocId, String newTitle, Long userId) {
+        if (documents == null || documents.isEmpty()) {
+            throw new BusinessException("至少需要 1 个文档");
+        }
+        try {
+            PDFMergerUtility merger = new PDFMergerUtility();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            merger.setDestinationStream(baos);
+
+            for (Map<String, Object> entry : documents) {
+                Long docId = ((Number) entry.get("docId")).longValue();
+                String ranges = (String) entry.get("pageRanges");
+                Document doc = documentService.getDocument(docId);
+                validatePdf(doc);
+                byte[] pdfBytes = storageService.load(doc.getFilePath());
+                byte[] docBytes;
+                if (ranges == null || ranges.isBlank()) {
+                    // 全部页
+                    docBytes = pdfBytes;
+                } else {
+                    // 按页区间提取
+                    try (PDDocument source = Loader.loadPDF(pdfBytes)) {
+                        List<Integer> pages = parsePageRanges(ranges, source.getNumberOfPages());
+                        if (pages.isEmpty()) {
+                            throw new BusinessException("文档 " + doc.getTitle() + " 的页区间无效: " + ranges);
+                        }
+                        docBytes = extractPages(docId, pages);
+                    }
+                }
+                merger.addSource(new RandomAccessReadBuffer(docBytes));
+            }
+            merger.mergeDocuments(IOUtils.createMemoryOnlyStreamCache());
+            byte[] result = baos.toByteArray();
+
+            if ("overwrite".equals(targetMode)) {
+                if (targetDocId == null) throw new BusinessException("覆盖模式需指定目标文档");
+                String filePath = replacePdfBytes(targetDocId, result, "merge-advanced");
+                log.info("高级合并(覆盖)完成: target={}, size={}", targetDocId, result.length);
+                return Map.of("success", true, "filePath", filePath, "targetDocId", targetDocId);
+            } else {
+                String title = (newTitle != null && !newTitle.isBlank()) ? newTitle : "合并文档";
+                Document newDoc = documentService.createPdfFromBytes(title, result, userId);
+                log.info("高级合并(新文档)完成: newDoc={}, size={}", newDoc.getId(), result.length);
+                return Map.of("success", true, "docId", newDoc.getId(), "filePath", newDoc.getFilePath());
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("高级合并失败: {}", e.getMessage(), e);
+            throw new BusinessException("高级合并失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 13.29: 解析页区间字符串 "1-3,5,7-9" -> List<Integer>(1-based 页码)
+     */
+    public List<Integer> parsePageRanges(String ranges, int totalPages) {
+        List<Integer> pages = new ArrayList<>();
+        if (ranges == null || ranges.isBlank()) return pages;
+        for (String seg : ranges.split(",")) {
+            seg = seg.trim();
+            if (seg.isEmpty()) continue;
+            try {
+                if (seg.contains("-")) {
+                    String[] parts = seg.split("-");
+                    int from = Integer.parseInt(parts[0].trim());
+                    int to = Integer.parseInt(parts[1].trim());
+                    for (int p = from; p <= to; p++) {
+                        if (p >= 1 && p <= totalPages) pages.add(p);
+                    }
+                } else {
+                    int p = Integer.parseInt(seg);
+                    if (p >= 1 && p <= totalPages) pages.add(p);
+                }
+            } catch (NumberFormatException e) {
+                log.warn("无效页码片段: {}", seg);
+            }
+        }
+        return pages;
     }
 
     /**
@@ -1067,7 +1170,39 @@ public class PdfToolService {
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("title", item.getTitle());
             node.put("level", level);
-            node.put("page", 1);  // 简化:页码=1,后续可用反射完善
+            // Phase 14.U10: 解析真实 destination 页码(不再硬编码 1)
+            int page = 1;
+            try {
+                Object dest = item.getDestination();
+                if (dest instanceof PDPage) {
+                    // 找到 page 在 pdf pages 中的索引
+                    for (int i = 0; i < pdf.getNumberOfPages(); i++) {
+                        if (pdf.getPage(i) == dest) { page = i + 1; break; }
+                    }
+                } else if (dest instanceof PDPage) {
+                    for (int i = 0; i < pdf.getNumberOfPages(); i++) {
+                        if (pdf.getPage(i) == dest) { page = i + 1; break; }
+                    }
+                } else {
+                    // PDActionGoTo / PDPageDestination / PDOutlineNode 等:
+                    // 尝试反射 getPage() / getDestination() 兼容各种 PDFBox 3.x 类型
+                    try {
+                        java.lang.reflect.Method m = dest.getClass().getMethod("getPage");
+                        Object p2 = m.invoke(dest);
+                        if (p2 instanceof PDPage) {
+                            PDPage pp = (PDPage) p2;
+                            for (int i = 0; i < pdf.getNumberOfPages(); i++) {
+                                if (pdf.getPage(i) == pp) { page = i + 1; break; }
+                            }
+                        }
+                    } catch (Exception ignore) {
+                        // 反射失败,page 保持 1
+                    }
+                }
+            } catch (Exception e) {
+                // destination 解析失败,fallback page=1
+            }
+            node.put("page", page);
             acc.add(node);
             if (item.hasChildren()) {
                 Object child = item.getFirstChild();
@@ -1084,33 +1219,46 @@ public class PdfToolService {
      * 去水印
      * @param mode "annotation" 删 watermark annotation;"cover" 白矩形覆盖(降级)
      */
+    /**
+     * Phase 14.U4: 一键去水印 —— 同时清理 annotation watermark + 白矩形覆盖整页(覆盖自家 addWatermark)
+     * "annotation" 模式:仅删 annotation
+     * "all" 模式:annotation + 白矩形覆盖整页(默认)
+     */
     public byte[] removeWatermark(Long docId, String mode) {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
+        boolean fullCover = !"annotation".equalsIgnoreCase(mode);
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
                 int removed = 0;
-                if ("annotation".equals(mode)) {
-                    // 删 watermark/annotation
-                    for (PDPage page : pdf.getPages()) {
-                        List<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> anns = page.getAnnotations();
-                        java.util.Iterator<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> it = anns.iterator();
-                        while (it.hasNext()) {
-                            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation a = it.next();
-                            String nm = a.getAnnotationName();
-                            String sub = a.getSubtype();
-                            if (sub != null && (sub.contains("Watermark") || (nm != null && nm.toLowerCase().contains("watermark")))) {
-                                it.remove();
-                                removed++;
-                            }
+                for (PDPage page : pdf.getPages()) {
+                    // 1) 删 annotation
+                    java.util.Iterator<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> it =
+                        page.getAnnotations().iterator();
+                    while (it.hasNext()) {
+                        org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation a = it.next();
+                        String nm = a.getAnnotationName();
+                        String sub = a.getSubtype();
+                        if (sub != null && (sub.contains("Watermark") || sub.contains("Stamp")) ||
+                            (nm != null && (nm.toLowerCase().contains("watermark") || nm.toLowerCase().contains("stamp")))) {
+                            it.remove();
+                            removed++;
+                        }
+                    }
+                    // 2) Phase 14.U13: APPEND 白矩形(在最上层,真正盖住 APPEND 水印)
+                    if (fullCover) {
+                        PDRectangle box = page.getMediaBox();
+                        try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+                            cs.setNonStrokingColor(1f, 1f, 1f);
+                            cs.addRect(0, 0, box.getWidth(), box.getHeight());
+                            cs.fill();
                         }
                     }
                 }
-                // cover 模式:无法精确定位水印,提示用户用 redact 手动框选
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 pdf.save(baos);
-                log.info("去水印完成: docId={}, mode={}, removed={}", docId, mode, removed);
+                log.info("去水印完成: docId={}, mode={}, 删annotation={}, 全覆盖={}", docId, mode, removed, fullCover);
                 return baos.toByteArray();
             }
         } catch (Exception e) {
@@ -1126,6 +1274,13 @@ public class PdfToolService {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         Map<String, Object> resp = new LinkedHashMap<>();
+        // Phase 13.37: 预检 LLM 是否配置,未配置直接返回明确提示
+        if (!aiService.isConfigured()) {
+            resp.put("success", false);
+            resp.put("error", "LLM 未配置,无法生成智能目录。请在「管理后台 → AI 配置」设置 Provider(API 地址 + API Key)后重试");
+            log.warn("智能目录: LLM 未配置, docId={}", docId);
+            return resp;
+        }
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
             // 1. 取全文 text(带页码)
@@ -1140,11 +1295,32 @@ public class PdfToolService {
                 }
             }
             // 2. 喂 LLM 生成 JSON 目录
-            String prompt = "分析以下 PDF 全文(已按页标注 [Page N]),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数),\"level\":层级(0=一级,1=二级)}。只输出 JSON,不要解释。全文:\n" +
+            String prompt = "分析以下 PDF 全文(已按页标注 [Page N]),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数),\"level\":层级(0=一级,1=二级)}。只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" +
                     fullText.substring(0, Math.min(fullText.length(), 12000));
             String llmOut = aiService.generate(prompt);
+            // Phase 13.36: 检测 LLM 调用失败(chat 异常时返回"AI 服务调用失败"字符串)
+            if (llmOut == null || llmOut.isBlank()) {
+                resp.put("success", false);
+                resp.put("error", "LLM 返回空结果。请检查:1) 模型名称是否正确 2) API Key 是否有效 3) 网络是否可达。当前配置: " + aiService.getConfigSummary());
+                log.warn("智能目录: LLM 返回空, docId={}, 配置={}", docId, aiService.getConfigSummary());
+                return resp;
+            }
+            if (llmOut.startsWith("AI 服务调用失败")) {
+                resp.put("success", false);
+                resp.put("error", "AI 服务调用失败:" + llmOut + "。当前配置: " + aiService.getConfigSummary() + "。请在「管理后台->AI 配置」检查 Provider");
+                log.warn("智能目录: LLM 调用异常, docId={}, out={}", docId, llmOut.substring(0, Math.min(llmOut.length(), 200)));
+                return resp;
+            }
             // 3. 解析 JSON
             List<Map<String, Object>> outline = parseOutlineJson(llmOut);
+            // Phase 13.35: outline 为空时,大概率 LLM 未配置或返回非 JSON,给出明确提示
+            if (outline.isEmpty()) {
+                resp.put("success", false);
+                resp.put("error", "AI 未返回有效目录(可能 LLM 未配置或文档无清晰章节)。LLM 原始输出: "
+                        + (llmOut == null ? "null" : llmOut.substring(0, Math.min(llmOut.length(), 200))));
+                log.warn("智能目录为空: docId={}, llmOutLen={}", docId, llmOut == null ? 0 : llmOut.length());
+                return resp;
+            }
             resp.put("outline", outline);
             // 4. 写入 PDF outline 落盘
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
@@ -1179,11 +1355,13 @@ public class PdfToolService {
     private List<Map<String, Object>> parseOutlineJson(String llmOut) {
         List<Map<String, Object>> result = new ArrayList<>();
         if (llmOut == null) return result;
+        // Phase 13.36: 去除 markdown 代码块包裹(LLM 常返回 ```json ... ```)
+        String cleaned = llmOut.replaceAll("```json", "").replaceAll("```", "").trim();
         // 提取第一个 [ 到最后一个 ]
-        int s = llmOut.indexOf('[');
-        int e = llmOut.lastIndexOf(']');
+        int s = cleaned.indexOf('[');
+        int e = cleaned.lastIndexOf(']');
         if (s < 0 || e < 0) return result;
-        String json = llmOut.substring(s, e + 1);
+        String json = cleaned.substring(s, e + 1);
         try {
             com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
             List<?> list = om.readValue(json, List.class);
@@ -1317,9 +1495,21 @@ public class PdfToolService {
         for (Map.Entry<Integer, List<Map<String, Object>>> e : byPage.entrySet()) {
             int pageNum = e.getKey();
             StringBuilder sb = new StringBuilder();
+            // Phase 14.U10: 在 text token 间插入空格,避免相邻字符拼成乱码
+            String prev = null;
             for (Map<String, Object> p : e.getValue()) {
                 String text = (String) p.get("text");
-                if (text != null) sb.append(text);
+                if (text == null || text.isEmpty()) continue;
+                // 启发式:前一个 token 末尾是字母/数字 且当前 token 开头是字母/数字,加空格
+                if (sb.length() > 0 && prev != null) {
+                    char lastCh = sb.charAt(sb.length() - 1);
+                    char firstCh = text.charAt(0);
+                    boolean lastAlnum = Character.isLetterOrDigit(lastCh);
+                    boolean firstAlnum = Character.isLetterOrDigit(firstCh);
+                    if (lastAlnum && firstAlnum) sb.append(' ');
+                }
+                sb.append(text);
+                prev = text;
             }
             String haystack = caseSensitive ? sb.toString() : sb.toString().toLowerCase();
             int idx = 0;
@@ -1440,38 +1630,73 @@ public class PdfToolService {
      * @param rotation 旋转角度(度)
      * @param pages 页码列表,空 = 全部
      */
-    public byte[] addWatermark(Long docId, String text, double opacity, double rotation, List<Integer> pages) {
+    /**
+     * Phase 14.U2+U4: 添加水印,支持 5 种位置 + 灵活旋转 + clearExisting 覆盖
+     * @param position  'tile'|'header'|'footer'|'center'|'diagonal'
+     * @param clearExisting true 时先白矩形覆盖整个页面 + 删除 watermark annotation(可重复调用覆盖)
+     */
+    public byte[] addWatermark(Long docId, String text, double opacity, double rotation, String position, float fontSize, boolean clearExisting, List<Integer> pages) {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
             List<Integer> targetPages = (pages == null || pages.isEmpty())
                 ? allPages(pdf) : pages;
+            String pos = (position == null || position.isBlank()) ? "diagonal" : position;
             for (int pageNum : targetPages) {
                 if (pageNum < 1 || pageNum > pdf.getNumberOfPages()) continue;
                 PDPage page = pdf.getPage(pageNum - 1);
                 PDRectangle box = page.getMediaBox();
+                if (clearExisting) {
+                    clearPageOverlay(pdf, page);
+                }
                 try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
                     org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState gs = new org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState();
                     gs.setNonStrokingAlphaConstant((float) Math.max(0, Math.min(1, opacity)));
                     cs.setGraphicsStateParameters(gs);
-                    cs.saveGraphicsState();
-                    float fontSize = Math.max(40f, Math.min(box.getWidth(), box.getHeight()) / 6f);
-                    float x = box.getWidth() / 2f;
-                    float y = box.getHeight() / 2f;
-                    double rad = Math.toRadians(rotation);
-                    cs.transform(new org.apache.pdfbox.util.Matrix(
-                        (float) Math.cos(rad), (float) Math.sin(rad),
-                        (float) -Math.sin(rad), (float) Math.cos(rad),
-                        x, y));
-                    cs.beginText();
-                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), fontSize);
-                    cs.showText(text == null ? "" : text);
-                    cs.endText();
-                    cs.restoreGraphicsState();
+                    float fs = (fontSize <= 0) ? Math.max(40f, Math.min(box.getWidth(), box.getHeight()) / 6f) : fontSize;
+                    switch (pos) {
+                        case "header": {
+                            float cx = box.getWidth() / 2f;
+                            float cy = box.getHeight() - fs - 12f;
+                            drawText(cs, text, cx, cy, 0, fs);
+                            break;
+                        }
+                        case "footer": {
+                            float cx = box.getWidth() / 2f;
+                            float cy = 12f + fs / 2f;
+                            drawText(cs, text, cx, cy, 0, fs);
+                            break;
+                        }
+                        case "center": {
+                            float cx = box.getWidth() / 2f;
+                            float cy = box.getHeight() / 2f;
+                            drawText(cs, text, cx, cy, 0, fs);
+                            break;
+                        }
+                        case "tile": {
+                            int cols = Math.max(1, (int) (box.getWidth() / 240));
+                            int rows = Math.max(1, (int) (box.getHeight() / 200));
+                            double tileRot = Math.toRadians(rotation);
+                            for (int r = 0; r < rows; r++) {
+                                for (int c = 0; c < cols; c++) {
+                                    float x = (c + 0.5f) * (box.getWidth() / cols);
+                                    float y = (r + 0.5f) * (box.getHeight() / rows);
+                                    drawText(cs, text, x, y, tileRot, fs * 0.6f);
+                                }
+                            }
+                            break;
+                        }
+                        default: { // diagonal
+                            float cx = box.getWidth() / 2f;
+                            float cy = box.getHeight() / 2f;
+                            drawText(cs, text, cx, cy, Math.toRadians(rotation), fs);
+                        }
+                    }
                 }
             }
             byte[] out = newDocBytes(pdf, "watermark");
             replacePdfBytes(docId, out, "watermark");
+            log.info("水印: docId={}, pos={}, rot={}, clear={}, pages={}", docId, pos, rotation, clearExisting, targetPages.size());
             return out;
         } catch (Exception e) {
             log.error("水印失败: docId={}, text={}", docId, text, e);
@@ -1479,10 +1704,31 @@ public class PdfToolService {
         }
     }
 
+    /** 工具:在 (x,y) 处按弧度旋转绘制文字(居中锚点) */
+    private void drawText(PDPageContentStream cs, String text, float x, float y, double rad, float fontSize) throws java.io.IOException {
+        cs.saveGraphicsState();
+        if (rad != 0) {
+            cs.transform(new org.apache.pdfbox.util.Matrix(
+                (float) Math.cos(rad), (float) Math.sin(rad),
+                (float) -Math.sin(rad), (float) Math.cos(rad),
+                x, y));
+        } else {
+            cs.transform(new org.apache.pdfbox.util.Matrix(1, 0, 0, 1, x, y));
+        }
+        cs.beginText();
+        cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), fontSize);
+        // 居中:用 font.getStringWidth(text) / 1000 * fontSize 估算宽度,但为简化用 -text.length()*0.5*size 作粗略偏移
+        float offset = -(text == null ? 0 : text.length()) * fontSize * 0.25f;
+        cs.newLineAtOffset(offset, -fontSize * 0.3f);
+        cs.showText(text == null ? "" : text);
+        cs.endText();
+        cs.restoreGraphicsState();
+    }
+
     /**
-     * 添加页眉/页脚文字
+     * 添加页眉/页脚文字(Phase 14.U2:支持 clearExisting 覆盖模式)
      */
-    public byte[] addHeaderFooter(Long docId, String position, String content, double fontSize, List<Integer> pages) {
+    public byte[] addHeaderFooter(Long docId, String position, String content, double fontSize, boolean clearExisting, List<Integer> pages) {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
@@ -1496,6 +1742,9 @@ public class PdfToolService {
                 String resolved = content == null ? "" : content
                     .replace("{page}", String.valueOf(pageNum))
                     .replace("{total}", String.valueOf(total));
+                if (clearExisting) {
+                    clearPageOverlay(pdf, page);
+                }
                 try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
                     float y = "footer".equalsIgnoreCase(position) ? 24f : box.getHeight() - 24f;
                     cs.beginText();
@@ -1507,6 +1756,7 @@ public class PdfToolService {
             }
             byte[] out = newDocBytes(pdf, position);
             replacePdfBytes(docId, out, position);
+            log.info("页眉页脚: docId={}, pos={}, clear={}, pages={}", docId, position, clearExisting, targetPages.size());
             return out;
         } catch (Exception e) {
             log.error("页眉页脚失败: docId={}, position={}", docId, position, e);
@@ -1518,6 +1768,65 @@ public class PdfToolService {
         List<Integer> all = new ArrayList<>();
         for (int i = 1; i <= pdf.getNumberOfPages(); i++) all.add(i);
         return all;
+    }
+
+    /**
+     * Phase 14.U4: 清除页面覆盖层
+     * - annotation 删除(Watermark/Stamp 等)
+     * - 用白色矩形覆盖整页(覆盖 APPEND 模式水印)
+     *
+     * 注意:addWatermark/addHeaderFooter 后续画新内容前,会再次调用此方法。
+     * 用 PREPEND 让白矩形在最底层,新内容(APPEND)画在白矩形之上 → 视觉上"清空旧水印+画新水印"。
+     * 而独立的 removeWatermark 路径(无后续画新内容)需要确保白矩形在最上层(APPEND),因此本方法
+     * 由 addWatermark/addHeaderFooter 调用时使用 PREPEND,由 removeWatermark 单独处理时使用 APPEND。
+     * 见下方 removeWatermark / clearPageOverlayAppend 实现。
+     */
+    private void clearPageOverlay(PDDocument pdf, PDPage page) throws java.io.IOException {
+        // 1) 删 watermark / stamp 等 annotation
+        java.util.Iterator<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> it =
+            page.getAnnotations().iterator();
+        while (it.hasNext()) {
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation a = it.next();
+            String sub = a.getSubtype();
+            String nm = a.getAnnotationName();
+            if ((sub != null && (sub.contains("Watermark") || sub.contains("Stamp"))) ||
+                (nm != null && (nm.toLowerCase().contains("watermark") || nm.toLowerCase().contains("stamp")))) {
+                it.remove();
+            }
+        }
+        // 2) 用白色矩形覆盖整个页面(PREPEND → 在底层,后续 APPEND 内容画在上面)
+        PDRectangle box = page.getMediaBox();
+        try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.PREPEND, true, true)) {
+            cs.setNonStrokingColor(1f, 1f, 1f);
+            cs.addRect(0, 0, box.getWidth(), box.getHeight());
+            cs.fill();
+        }
+    }
+
+    /**
+     * Phase 14.U13: 一键去水印专用 —— APPEND 白矩形(在最上层,盖住原 APPEND 水印)
+     * 区别于 clearPageOverlay(PREPEND,用于"替换"场景)
+     */
+    private void clearPageOverlayAppend(PDDocument pdf, PDPage page) throws java.io.IOException {
+        // 1) 删 annotation
+        java.util.Iterator<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation> it =
+            page.getAnnotations().iterator();
+        while (it.hasNext()) {
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation a = it.next();
+            String sub = a.getSubtype();
+            String nm = a.getAnnotationName();
+            if ((sub != null && (sub.contains("Watermark") || sub.contains("Stamp"))) ||
+                (nm != null && (nm.toLowerCase().contains("watermark") || nm.toLowerCase().contains("stamp")))) {
+                it.remove();
+            }
+        }
+        // 2) 白矩形 APPEND(在最上层,真正盖住水印)
+        PDRectangle box = page.getMediaBox();
+        try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+            cs.setNonStrokingColor(1f, 1f, 1f);
+            cs.addRect(0, 0, box.getWidth(), box.getHeight());
+            cs.fill();
+        }
     }
 
     /**
@@ -1907,17 +2216,30 @@ public class PdfToolService {
             List<byte[]> result = new ArrayList<>();
             try (PDDocument source = Loader.loadPDF(pdfBytes)) {
                 int totalPages = source.getNumberOfPages();
+                log.info("区间拆分开始: docId={}, ranges={}, 总页数={}, 段数={}", documentId, ranges, totalPages, segments.size());
                 for (int[] seg : segments) {
                     if (seg[0] < 1 || seg[1] > totalPages || seg[0] > seg[1]) {
                         log.warn("跳过无效区间: {} - {} (总 {} 页)", seg[0], seg[1], totalPages);
                         continue;
                     }
-                    int from = seg[0] - 1, to = seg[1]; // PDDocument.extract 用 [from, to)
-                    byte[] part = extractPages(documentId, java.util.stream.IntStream.rangeClosed(seg[0], seg[1]).boxed().toList());
-                    result.add(part);
+                    // Phase 13.36: 改用 importPage 方式逐页导入新文档(替代原地删除的 extractPages)
+                    // 每段生成独立 PDF,含该区间所有页
+                    try (PDDocument part = new PDDocument()) {
+                        int imported = 0;
+                        for (int p = seg[0]; p <= seg[1]; p++) {
+                            part.importPage(source.getPage(p - 1));
+                            imported++;
+                        }
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        part.save(baos);
+                        byte[] partBytes = baos.toByteArray();
+                        log.info("区间拆分段: [{}-{}], 导入页数={}, part页数={}, bytes={}",
+                                seg[0], seg[1], imported, part.getNumberOfPages(), partBytes.length);
+                        result.add(partBytes);
+                    }
                 }
             }
-            log.info("区间拆分 PDF: docId={}, ranges={}, segments={}", documentId, ranges, result.size());
+            log.info("区间拆分完成: docId={}, ranges={}, 生成PDF数={}", documentId, ranges, result.size());
             return result;
         } catch (Exception e) {
             log.error("区间拆分失败", e);
@@ -1926,7 +2248,58 @@ public class PdfToolService {
     }
 
     /**
-     * 批量提取选中页面,返回单个 PDF
+     * Phase 13.37: 替换页面 - 用源 PDF 的指定页替换目标文档的选中页
+     * targetPages 有序(如 [2,5]),sourceStartPage 为源 PDF 起始页(1-based),
+     * 源 PDF 从 sourceStartPage 开始取 targetPages.size() 页,逐页替换
+     */
+    public String replacePages(Long docId, List<Integer> targetPages, byte[] sourceBytes, int sourceStartPage) {
+        Document doc = documentService.getDocument(docId);
+        validatePdf(doc);
+        if (targetPages == null || targetPages.isEmpty()) {
+            throw new BusinessException("未选择要替换的目标页");
+        }
+        try {
+            byte[] targetBytes = storageService.load(doc.getFilePath());
+            try (PDDocument target = Loader.loadPDF(targetBytes);
+                 PDDocument source = Loader.loadPDF(sourceBytes);
+                 PDDocument result = new PDDocument()) {
+                int totalTarget = target.getNumberOfPages();
+                int totalSource = source.getNumberOfPages();
+                // 验证源页范围
+                for (int i = 0; i < targetPages.size(); i++) {
+                    int tp = targetPages.get(i);
+                    int sp = sourceStartPage + i;
+                    if (tp < 1 || tp > totalTarget) throw new BusinessException("目标页 " + tp + " 超出范围(共 " + totalTarget + " 页)");
+                    if (sp < 1 || sp > totalSource) throw new BusinessException("源页 " + sp + " 超出范围(源 PDF 共 " + totalSource + " 页),源起始页过大");
+                }
+                // 重建文档:目标页在 targetPages 中则用源对应页替换,否则保留原页
+                for (int i = 0; i < totalTarget; i++) {
+                    int pageNum = i + 1;
+                    int idx = targetPages.indexOf(pageNum);
+                    if (idx >= 0) {
+                        int sp = sourceStartPage + idx;
+                        result.importPage(source.getPage(sp - 1));
+                    } else {
+                        result.importPage(target.getPage(i));
+                    }
+                }
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                result.save(baos);
+                String newFilePath = replacePdfBytes(docId, baos.toByteArray(), "replace-pages");
+                log.info("替换页面完成: docId={}, targetPages={}, sourceStart={}, 源总页={}",
+                        docId, targetPages, sourceStartPage, totalSource);
+                return newFilePath;
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("替换页面失败: docId={}", docId, e);
+            throw new BusinessException("替换页面失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 13.31: 保留方法签名兼容旧调用,实际由 Controller 层组装 zip
      */
     public byte[] extractPagesBatch(Long documentId, List<Integer> pages) {
         return extractPages(documentId, pages);

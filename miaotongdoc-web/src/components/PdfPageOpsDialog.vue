@@ -56,17 +56,31 @@
         </el-form>
       </el-tab-pane>
 
-      <!-- 水印 -->
+      <!-- 水印(Phase 14.U4:重设计) -->
       <el-tab-pane label="水印" name="watermark">
         <el-form label-width="100px">
           <el-form-item label="水印文字">
-            <el-input v-model="watermark.text" placeholder="CONFIDENTIAL" maxlength="32" />
+            <el-input v-model="watermark.text" placeholder="CONFIDENTIAL / 公司机密 / 仅供..." maxlength="32" />
           </el-form-item>
           <el-form-item label="不透明度">
             <el-slider v-model="watermark.opacity" :min="0.05" :max="1" :step="0.05" show-input :show-input-controls="false" />
           </el-form-item>
-          <el-form-item label="旋转角度">
-            <el-slider v-model="watermark.rotation" :min="-90" :max="90" :step="5" show-input :show-input-controls="false" />
+          <el-form-item label="位置">
+            <el-select v-model="watermark.position" style="width: 100%">
+              <el-option label="对角(经典)" value="diagonal" />
+              <el-option label="页眉" value="header" />
+              <el-option label="页脚" value="footer" />
+              <el-option label="居中" value="center" />
+              <el-option label="平铺(防截图)" value="tile" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="旋转角度" v-if="watermark.position !== 'header' && watermark.position !== 'footer'">
+            <el-slider v-model="watermark.rotation" :min="0" :max="90" :step="15" show-input :show-input-controls="false" />
+            <div style="font-size:11px;color:var(--color-foreground-3);margin-top:2px">0/15/30/45/60/75/90 度,灵活水平</div>
+          </el-form-item>
+          <el-form-item label="字号">
+            <el-input-number v-model="watermark.fontSize" :min="20" :max="200" :step="10" />
+            <span style="margin-left:8px;font-size:11px;color:var(--color-foreground-3)">默认自动</span>
           </el-form-item>
           <el-form-item label="应用范围">
             <el-radio-group v-model="watermark.target">
@@ -74,10 +88,22 @@
               <el-radio :value="1">当前页({{ currentPage }})</el-radio>
             </el-radio-group>
           </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="watermark.clearExisting">
+              覆盖已有水印(重复操作时勾选,避免叠加图层)
+            </el-checkbox>
+          </el-form-item>
+          <el-divider style="margin: 12px 0" />
+          <div style="display:flex;gap:8px">
+            <el-button type="warning" :loading="loading" @click="onRemoveWatermark" style="flex:1">
+              <span style="font-weight:600">⚡ 一键去水印</span>
+              <div style="font-size:11px;margin-top:2px">覆盖所有页面水印,不可撤销</div>
+            </el-button>
+          </div>
         </el-form>
       </el-tab-pane>
 
-      <!-- 页眉页脚 -->
+      <!-- 页眉页脚(Phase 14.U2:加 clearExisting) -->
       <el-tab-pane label="页眉页脚" name="headerFooter">
         <el-form label-width="100px">
           <el-form-item label="位置">
@@ -98,6 +124,11 @@
               <el-radio :value="1">当前页({{ currentPage }})</el-radio>
             </el-radio-group>
           </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="hf.clearExisting">
+              覆盖已有页眉/页脚(默认勾选,可重复操作)
+            </el-checkbox>
+          </el-form-item>
         </el-form>
       </el-tab-pane>
     </el-tabs>
@@ -111,7 +142,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { pdfApi } from '@/api/pdf'
 
 const props = defineProps<{
@@ -142,13 +173,17 @@ const watermark = ref({
   text: 'CONFIDENTIAL',
   opacity: 0.3,
   rotation: 45,
+  position: 'diagonal' as 'diagonal' | 'header' | 'footer' | 'center' | 'tile',
+  fontSize: 0,
   target: 0,
+  clearExisting: true,
 })
 const hf = ref({
   position: 'footer' as 'header' | 'footer',
   content: 'Page {page} of {total}',
   fontSize: 10,
   target: 0,
+  clearExisting: true,
 })
 
 const title = computed(() => {
@@ -189,9 +224,12 @@ async function onConfirm() {
         text: watermark.value.text,
         opacity: watermark.value.opacity,
         rotation: watermark.value.rotation,
+        position: watermark.value.position,
+        fontSize: watermark.value.fontSize,
+        clearExisting: watermark.value.clearExisting,
         pages,
       })
-      ElMessage.success('已添加水印')
+      ElMessage.success(watermark.value.clearExisting ? '已替换水印' : '已追加水印')
       emit('success', 'watermark')
     } else if (activeTab.value === 'headerFooter') {
       const pages = hf.value.target === 1 ? [props.currentPage] : allPages()
@@ -199,14 +237,37 @@ async function onConfirm() {
         position: hf.value.position,
         content: hf.value.content,
         fontSize: hf.value.fontSize,
+        clearExisting: hf.value.clearExisting,
         pages,
       })
-      ElMessage.success(`已添加${hf.value.position === 'header' ? '页眉' : '页脚'}`)
+      ElMessage.success(`${hf.value.clearExisting ? '已替换' : '已追加'}${hf.value.position === 'header' ? '页眉' : '页脚'}`)
       emit('success', 'header-footer')
     }
     visible.value = false
   } catch (e: any) {
     ElMessage.error(e?.message || '操作失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+/** Phase 14.U4: 一键去水印 */
+async function onRemoveWatermark() {
+  try {
+    await ElMessageBox.confirm(
+      '将清除文档所有水印(自家+自带)。白矩形覆盖整页可能影响背景图。',
+      '一键去水印',
+      { type: 'warning', confirmButtonText: '确认清除', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  loading.value = true
+  try {
+    await pdfApi.removeWatermark(props.docId, 'all')
+    ElMessage.success('去水印完成')
+    emit('success', 'watermark-remove')
+    visible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.message || '去水印失败')
   } finally {
     loading.value = false
   }

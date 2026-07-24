@@ -14,7 +14,7 @@
     - emit ready(canvasEl, textLayerEl, pageEl) 给父组件建立 refs Map
 -->
 <template>
-  <article class="pdf-page-card" :class="{ 'is-editing': isEditing }" :style="cardStyle">
+  <article class="pdf-page-card" :class="{ 'is-editing': isEditing }" :style="cardStyle" :data-page-num="pageNum">
     <header class="pdf-page-card-header">
       <div class="pdf-page-card-title">第 {{ pageNum }} 页 / 共 {{ totalPages }} 页</div>
       <div class="pdf-page-card-meta">

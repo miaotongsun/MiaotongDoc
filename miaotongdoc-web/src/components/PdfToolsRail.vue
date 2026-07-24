@@ -91,12 +91,11 @@ const emit = defineEmits<{
   (e: 'select-tool', tool: AnnotationTool): void
   (e: 'export'): void
   (e: 'print'): void
-  (e: 'share'): void
-  (e: 'send-sign'): void
   (e: 'open-ai'): void
   (e: 'toggle-panel', panel: 'outline' | 'annotations'): void
   (e: 'organize'): void
   (e: 'toggle-collapse'): void
+  (e: 'compare'): void
 }>()
 
 type RailAction = {
@@ -107,12 +106,11 @@ type RailAction = {
   active?: () => boolean
 }
 
+/** Phase 14.U11: 重设计 — top 3 + tools 5 + bottom 2 = 10 个 */
 const topActions: RailAction[] = [
-  { id: 'export', label: '导出 PDF', icon: 'export', handler: () => emit('export') },
+  { id: 'export', label: '导出', icon: 'export', handler: () => emit('export') },
   { id: 'organize', label: '组织页面', icon: 'organize', handler: () => emit('organize'), active: () => !!props.organizeOpen },
   { id: 'print', label: '打印', icon: 'print', handler: () => emit('print') },
-  { id: 'share', label: '分享', icon: 'share', handler: () => emit('share') },
-  { id: 'send-sign', label: '发送签署', icon: 'signature', handler: () => emit('send-sign') },
 ]
 
 const toolActions: RailAction[] = [
@@ -144,15 +142,9 @@ const toolActions: RailAction[] = [
     handler: () => emit('select-tool', 'rectangle'),
     active: () => props.activeTool === 'rectangle',
   },
-  {
-    id: 'stamp',
-    label: '图章',
-    icon: 'stamp',
-    handler: () => emit('select-tool', 'stamp'),
-    active: () => props.activeTool === 'stamp',
-  },
 ]
 
+/** Phase 14.U11: 底部 3 个核心入口(AI / 对比 / 面板),去冗余 */
 const bottomActions: RailAction[] = [
   {
     id: 'ai',
@@ -162,15 +154,15 @@ const bottomActions: RailAction[] = [
     active: () => props.aiVisible,
   },
   {
-    id: 'panel-annotations',
-    label: '批注面板',
-    icon: 'panelComment',
-    handler: () => emit('toggle-panel', 'annotations'),
-    active: () => props.rightPanel === 'annotations',
+    id: 'compare',
+    label: '文档对比',
+    icon: 'diff',
+    handler: () => emit('compare'),
+    active: () => false,
   },
   {
     id: 'panel-outline',
-    label: '大纲',
+    label: '面板',
     icon: 'panelOutline',
     handler: () => emit('toggle-panel', 'outline'),
     active: () => props.rightPanel === 'outline',
@@ -311,12 +303,36 @@ const bottomActions: RailAction[] = [
 .pdf-rail-btn.is-active::before {
   content: '';
   position: absolute;
-  left: -1px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 3px;
   background: var(--color-primary);
-  border-radius: 0 2px 2px 0;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Phase 13.39: hover 浅色短横线 + 点击由短变长动画 */
+.pdf-rail-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 0;
+  height: 2px;
+  background: var(--color-primary);
+  border-radius: 2px 2px 0 0;
+  transform: translateX(-50%);
+  transition: width 220ms var(--ease-out, ease);
+  pointer-events: none;
+  opacity: 0;
+}
+.pdf-rail-btn:hover:not(.is-active)::after {
+  width: 40%;
+  opacity: 0.35;
+}
+.pdf-rail-btn:active:not(.is-active)::after {
+  width: 90%;
+  opacity: 0.6;
 }
 
 .pdf-rail-btn:focus-visible {

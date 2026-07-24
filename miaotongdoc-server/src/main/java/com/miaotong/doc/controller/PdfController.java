@@ -27,7 +27,8 @@ public class PdfController {
     private final DocumentService documentService;
     private final StorageService storageService;
     private final PdfToolService pdfToolService;
-    
+    private final PdfCompareService pdfCompareService;
+
     private final DoclingService doclingService;
     private final PdfRecognizeService pdfRecognizeService;
 
@@ -213,6 +214,95 @@ public class PdfController {
     }
 
     /**
+     * Phase 13.29: 提取页面到新文档(非破坏性,生成新 Document)
+     * POST /api/pdf/{id}/pages/extract-to-new
+     * body: { pages: [1,2], title?: "新文档标题" }
+     * 返回: { success, docId, message }
+     */
+    @PostMapping("/{id}/pages/extract-to-new")
+    public ResponseEntity<Map<String, Object>> extractPagesToNew(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        try {
+            @SuppressWarnings("unchecked")
+            List<Number> pagesNum = (List<Number>) body.get("pages");
+            if (pagesNum == null || pagesNum.isEmpty()) {
+                throw new BusinessException("请选择至少 1 页");
+            }
+            List<Integer> pages = pagesNum.stream().map(Number::intValue).toList();
+            String newTitle = (String) body.get("title");
+            Long userId = getCurrentUserId();
+            Long newDocId = pdfToolService.extractPagesToNew(id, pages, newTitle, userId);
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "docId", newDocId,
+                "message", "已提取 " + pages.size() + " 页到新文档"
+            ));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("提取页面到新文档失败: docId={}", id, e);
+            throw new BusinessException("提取到新文档失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 13.29: 高级合并(页区间 + 目标 new/overwrite)
+     * POST /api/pdf/merge-advanced
+     * body: { documents: [{docId, pageRanges}], target: {mode: 'new'|'overwrite', docId?, title?} }
+     */
+    @PostMapping("/merge-advanced")
+    public ResponseEntity<Map<String, Object>> mergeAdvanced(@RequestBody Map<String, Object> body) {
+        try {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> documents = (List<Map<String, Object>>) body.get("documents");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> target = (Map<String, Object>) body.get("target");
+            if (documents == null || documents.isEmpty()) {
+                throw new BusinessException("至少需要 1 个文档");
+            }
+            String mode = target != null && "overwrite".equals(target.get("mode")) ? "overwrite" : "new";
+            Long targetDocId = target != null && target.get("docId") != null
+                ? ((Number) target.get("docId")).longValue() : null;
+            String newTitle = target != null ? (String) target.get("title") : null;
+            Long userId = getCurrentUserId();
+            Map<String, Object> result = pdfToolService.mergeAdvanced(documents, mode, targetDocId, newTitle, userId);
+            return ResponseEntity.ok(result);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("高级合并失败", e);
+            throw new BusinessException("高级合并失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 14.U6: 文档对比 —— 逐页文本 LCS diff
+     * POST /api/pdf/compare { docIdA, docIdB }
+     */
+    @PostMapping("/compare")
+    public ResponseEntity<Map<String, Object>> compare(@RequestBody Map<String, Object> body) {
+        try {
+            Object aObj = body.get("docIdA");
+            Object bObj = body.get("docIdB");
+            if (!(aObj instanceof Number) || !(bObj instanceof Number)) {
+                throw new BusinessException("docIdA / docIdB 必填");
+            }
+            Long docIdA = ((Number) aObj).longValue();
+            Long docIdB = ((Number) bObj).longValue();
+            return ResponseEntity.ok(pdfCompareService.compare(docIdA, docIdB));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("文档对比失败", e);
+            throw new BusinessException("文档对比失败: " + e.getMessage());
+        }
+    }
+
+    /**
      * 拆分 PDF
      */
     @PostMapping("/{id}/split")
@@ -326,6 +416,34 @@ public class PdfController {
     }
 
     /**
+     * Phase 13.37: 替换页面 - 用上传 PDF 的指定页替换目标文档选中页
+     * POST /api/pdf/{id}/pages/replace (multipart)
+     *   targetPages: "2,5" 逗号分隔的目标页
+     *   sourceStartPage: 源 PDF 起始页(1-based)
+     *   file: 源 PDF 文件
+     */
+    @PostMapping("/{id}/pages/replace")
+    public ResponseEntity<Map<String, Object>> replacePages(
+            @PathVariable Long id,
+            @RequestParam("targetPages") String targetPagesStr,
+            @RequestParam("sourceStartPage") int sourceStartPage,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {
+        if (file == null || file.isEmpty()) throw new BusinessException("未上传源 PDF 文件");
+        List<Integer> targetPages = new ArrayList<>();
+        for (String s : targetPagesStr.split(",")) {
+            String t = s.trim();
+            if (!t.isEmpty()) targetPages.add(Integer.parseInt(t));
+        }
+        byte[] sourceBytes = file.getBytes();
+        String filePath = pdfToolService.replacePages(id, targetPages, sourceBytes, sourceStartPage);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "已替换 " + targetPages.size() + " 页",
+            "filePath", filePath
+        ));
+    }
+
+    /**
      * 重排页面(Phase 3:原子化)
      */
     @PostMapping("/{id}/pages/reorder")
@@ -412,28 +530,32 @@ public class PdfController {
         String text = (String) body.getOrDefault("text", "CONFIDENTIAL");
         double opacity = body.get("opacity") instanceof Number ? ((Number) body.get("opacity")).doubleValue() : 0.3;
         double rotation = body.get("rotation") instanceof Number ? ((Number) body.get("rotation")).doubleValue() : 45;
+        // Phase 14.U4: position/fontSize/clearExisting
+        String position = (String) body.getOrDefault("position", "diagonal");
+        float fontSize = body.get("fontSize") instanceof Number ? ((Number) body.get("fontSize")).floatValue() : 0;
+        boolean clearExisting = body.get("clearExisting") instanceof Boolean ? (Boolean) body.get("clearExisting") : true;
         @SuppressWarnings("unchecked")
         List<Number> rawPages = (List<Number>) body.get("pages");
         List<Integer> pages = new ArrayList<>();
         if (rawPages != null) for (Number n : rawPages) pages.add(n.intValue());
-        byte[] newBytes = pdfToolService.addWatermark(id, text, opacity, rotation, pages);
+        byte[] newBytes = pdfToolService.addWatermark(id, text, opacity, rotation, position, fontSize, clearExisting, pages);
         return ResponseEntity.ok(Map.of(
             "success", true,
-            "message", "已添加水印",
+            "message", clearExisting ? "已替换水印" : "已添加水印(追加)",
             "bustUrl", newBytes != null ? System.currentTimeMillis() : null
         ));
     }
 
     /**
-     * Phase 13.23: 去水印
-     * POST /api/pdf/{id}/watermark/remove { mode: "annotation"|"cover" }
+     * Phase 13.23 + 14.U4: 去水印
+     * POST /api/pdf/{id}/watermark/remove { mode: "annotation"|"all" }
      */
     @PostMapping("/{id}/watermark/remove")
     public ResponseEntity<Map<String, Object>> removeWatermark(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
-        String mode = body.getOrDefault("mode", "annotation").toString();
+        String mode = body.getOrDefault("mode", "all").toString();
         byte[] newBytes = pdfToolService.removeWatermark(id, mode);
         String newFilePath = pdfToolService.replacePdfBytes(id, newBytes, "remove-watermark");
         return ResponseEntity.ok(Map.of(
@@ -494,14 +616,16 @@ public class PdfController {
         String position = (String) body.getOrDefault("position", "footer");
         String content = (String) body.getOrDefault("content", "Page {page} of {total}");
         double fontSize = body.get("fontSize") instanceof Number ? ((Number) body.get("fontSize")).doubleValue() : 10;
+        // Phase 14.U2: clearExisting 默认 true(覆盖模式)
+        boolean clearExisting = body.get("clearExisting") instanceof Boolean ? (Boolean) body.get("clearExisting") : true;
         @SuppressWarnings("unchecked")
         List<Number> rawPages = (List<Number>) body.get("pages");
         List<Integer> pages = new ArrayList<>();
         if (rawPages != null) for (Number n : rawPages) pages.add(n.intValue());
-        byte[] newBytes = pdfToolService.addHeaderFooter(id, position, content, fontSize, pages);
+        byte[] newBytes = pdfToolService.addHeaderFooter(id, position, content, fontSize, clearExisting, pages);
         return ResponseEntity.ok(Map.of(
             "success", true,
-            "message", "已添加页眉页脚",
+            "message", clearExisting ? "已替换页眉页脚" : "已追加页眉页脚",
             "bustUrl", newBytes != null ? System.currentTimeMillis() : null
         ));
     }
@@ -1177,6 +1301,13 @@ public class PdfController {
             @RequestBody Map<String, String> body) throws java.io.IOException {
         String ranges = body.getOrDefault("ranges", "");
         List<byte[]> parts = pdfToolService.splitByRanges(id, ranges);
+        // Phase 13.38: 只有一个 PDF 时直接返回 PDF,不打包 zip
+        if (parts.size() == 1) {
+            HttpHeaders h = new HttpHeaders();
+            h.setContentType(MediaType.APPLICATION_PDF);
+            h.setContentDisposition(ContentDisposition.attachment().filename("split.pdf").build());
+            return new ResponseEntity<>(parts.get(0), h, HttpStatus.OK);
+        }
         byte[] zip = buildZip(parts, "part");
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("application/zip"));
@@ -1185,22 +1316,40 @@ public class PdfController {
     }
 
     /**
-     * 批量提取页面为单个 PDF(按页序号 list)
+     * 批量提取选中页面为多个 PDF,打包 zip(每页一份独立 PDF)
      * POST /api/pdf/{id}/extract-pages-batch { pages: [1,3,5] }
      */
     @PostMapping("/{id}/extract-pages-batch")
     public ResponseEntity<byte[]> extractPagesBatch(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody Map<String, Object> body) throws java.io.IOException {
         @SuppressWarnings("unchecked")
         List<Number> raw = (List<Number>) body.get("pages");
         List<Integer> pages = new ArrayList<>();
         if (raw != null) for (Number n : raw) pages.add(n.intValue());
-        byte[] pdfBytes = pdfToolService.extractPagesBatch(id, pages);
+        if (pages.isEmpty()) {
+            return new ResponseEntity<>(new byte[0], HttpStatus.BAD_REQUEST);
+        }
+        // Phase 13.31: 改为"每页一份 PDF → 打包 zip",而非单 PDF;
+        // 用户期望"提取 N 页为 zip" = N 个独立 PDF 文件
+        // Phase 13.38: 只提取 1 页时直接返回单 PDF,不打包 zip
+        if (pages.size() == 1) {
+            byte[] onePage = pdfToolService.extractPages(id, java.util.List.of(pages.get(0)));
+            HttpHeaders h = new HttpHeaders();
+            h.setContentType(MediaType.APPLICATION_PDF);
+            h.setContentDisposition(ContentDisposition.attachment().filename("extracted-page.pdf").build());
+            return new ResponseEntity<>(onePage, h, HttpStatus.OK);
+        }
+        List<byte[]> pdfList = new java.util.ArrayList<>();
+        for (int p : pages) {
+            byte[] onePage = pdfToolService.extractPages(id, java.util.List.of(p));
+            pdfList.add(onePage);
+        }
+        byte[] zip = buildZip(pdfList, "page");
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("extracted.pdf").build());
-        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+        headers.setContentType(MediaType.parseMediaType("application/zip"));
+        headers.setContentDisposition(ContentDisposition.attachment().filename("extracted-pages.zip").build());
+        return new ResponseEntity<>(zip, headers, HttpStatus.OK);
     }
 
     /**
