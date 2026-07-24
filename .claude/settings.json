@@ -242,7 +242,9 @@
       "Read(//d/tiany/stycode/**)",
       "Read(//c/Windows/Fonts/**)",
       "Bash(mkdir -p /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts && cp /c/Windows/Fonts/msyh.ttc /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts/NotoSansSC-Regular.ttf && ls -la /d/tiany/stycode/MiaotongDoc/miaotongdoc-server/src/main/resources/fonts/)",
-      "Read(//d/tiany/stycode/Miaotongdoc-web/src/components/PdfTextEditorLayer.vue/miaotongdoc-web/src/components/**)"
+      "Read(//d/tiany/stycode/Miaotongdoc-web/src/components/PdfTextEditorLayer.vue/miaotongdoc-web/src/components/**)",
+      "Bash(curl -s -X POST http://localhost:9004/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"10000000\",\"password\":\"123456\"}')",
+      "Bash(curl -s -I \"http://localhost:9004/api/documents/466/file\" -H \"Authorization: Bearer eyJhbGciOiJIUzM4NCJ9.eyJqdGkiOiIzYTM1NzllYi0wZjZlLTRhNmUtODc5Ny0zN2ZjZTEyYjMzOGYiLCJzdWIiOiIxIiwiZW1wbG95ZWVJZCI6IjEwMDAwMDAwIiwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc4NDg5MTE0OSwiZXhwIjoxNzg0ODk4MzQ5fQ.37DfweP7Y5f1xc_j_jr0_HttY6z4a6rqKZo7v-cBySzw3caVvoJJ7EMElpHG_T8r\")"
     ],
     "additionalDirectories": [
       "\\tmp",

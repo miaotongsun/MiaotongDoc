@@ -10,6 +10,14 @@
 |---|---|---|
 | `playwright` npm 包 | `miaotongdoc-web/node_modules/playwright/` | 项目内,版本锁定 1.61.1 |
 | Chromium 浏览器 | **`D:\Tools\ms-playwright\`** (Windows)<br>`~/Tools/ms-playwright/` (macOS/Linux) | **跨项目共享工具目录**,根盘 `Tools/`,不受系统清理影响 |
+| 测试脚本 | `tests/phase14-e2e.mjs` | 固化 E2E 测试(团队共享) |
+| 报告输出 | `tests/phase14-e2e-report.md` | 本地生成,gitignore 排除 |
+| 截图 | `tests/screenshots/*.png` | 本地生成,gitignore 排除 |
+
+| 组件 | 路径 | 说明 |
+|---|---|---|
+| `playwright` npm 包 | `miaotongdoc-web/node_modules/playwright/` | 项目内,版本锁定 1.61.1 |
+| Chromium 浏览器 | **`D:\Tools\ms-playwright\`** (Windows)<br>`~/Tools/ms-playwright/` (macOS/Linux) | **跨项目共享工具目录**,根盘 `Tools/`,不受系统清理影响 |
 | 测试报告 | `tests/phase14-e2e-report.md` | 本地生成,gitignore 排除 |
 | 截图 | `tests/screenshots/*.png` | 本地生成,gitignore 排除 |
 
@@ -104,6 +112,8 @@ step('xxx 按钮可点', true)
 
 新增的截图统一用 `SCREENSHOTS_DIR` 变量,不要硬编码路径。
 
+**临时调试**(一次性探索):写到 `tests/local/`,不入 git。
+
 ## 常见问题
 
 ### 1. `page.goto` 超时(ERR_CONNECTION_REFUSED)
@@ -169,11 +179,11 @@ miaotongdoc-web/tests/
     └── README.md
 ```
 
-## 测试脚本两类位置
+**测试脚本两类位置**:
 
 | 位置 | git | 用途 |
 |---|---|---|
 | `tests/*.mjs`(根) | ✅ 入库 | 固化的 E2E 测试,CI 跑,团队共享 |
-| `tests/local/*.mjs` | ❌ 不入库 | 临时调试、一次性实验、个人探索 |
+| `tests/local/*.mjs` | ❌ 不入库 | 临时调试、一次性实验 |
 
-**新功能测试场景** → 先在 `tests/local/` 验证,稳定后移到 `tests/` 根并提交。
+新功能测试场景 → 先在 `tests/local/` 验证,稳定后移到 `tests/` 根并提交。

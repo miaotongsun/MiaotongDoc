@@ -2838,3 +2838,38 @@ Phase 13.26 的手型工具有两个 bug:
   - 智能目录 / OCR:调 `pdfApi.autoOutline()` / `pdfApi.recognizePaddle()`
 - 所有按钮依赖 LLM API(需在管理后台配置);OCR 依赖 PaddleOCR/Docling 服务容器
 
+
+### Phase 14.U14 — 自动化测试准备(未完成)(2026-07-24)
+
+**说明**:用户要求用 Playwright 等测试工具模拟用户验证 Phase 14 全部功能。本次会话:
+1. 安装 `playwright` 包(package.json + package-lock.json 含测试依赖)
+2. 创建 [tests/phase14-e2e.mjs](miaotongdoc-web/tests/phase14-e2e.mjs):覆盖 11 项单元的 E2E 测试脚本
+   - 登录 + 打开 PDF
+   - Ribbon 5 tab(开始/编辑/页面/视图/AI)
+   - AI tab 8 按钮 + OCR 2 按钮(快速/高精度)
+   - OCR 消息文案(不应含 PaddleOCR)
+   - 编辑 tab 颜色栏(≥6 swatch,自定义 color input)
+   - 视图 tab 缩放按钮
+   - 右面板 5 tab(去图标)
+   - ToolsRail 10 按钮
+   - 导出弹窗位置(Home tab + ToolsRail)
+   - 打印功能触发
+   - 去水印按钮
+3. 使用系统 Chrome: `C:/Program Files/Google/Chrome/Application/chrome.exe`
+
+**阻塞原因**:
+- Chromium 自动下载超时(`npx playwright install chromium`),网络下载慢
+- Docker Desktop daemon `error during connect`,无法启动容器,Nginx + 后端不可用
+- 没有运行中的服务,Playwright 无法实际渲染页面
+
+**已验证**(静态):
+- `dist/assets/DocEditor-*.js` 含 15 个 Phase 14 特征字符串(OCR 快速/高精度/一键去水印/智能目录/合同条款/翻译选区/全文摘要/纠错/智能重写/文档对比/AI 助手/颜色选择/ribbon-color-swatch/ribbon-color-custom/PdfCompareDialog)
+- Vue 编译器 ts 编译通过(Vue-tsc 0 error)
+- Maven 后端编译通过(0 error)
+- 代码审查全部完成
+
+**建议**:Docker daemon 恢复后:
+1. `docker compose up -d nginx web-server`
+2. `node miaotongdoc-web/tests/phase14-e2e.mjs`
+3. 查看 `tests/phase14-e2e-report.md` 自动生成的报告
+
