@@ -1,13 +1,14 @@
 # MiaotongDoc 开发参考手册
 
-> **版本**: v1.0.3 | **维护者**: Claude Code
+> **版本**: v1.3.0 | **维护者**: Claude Code
 > **项目**: 企业级多格式在线文档协作与签署平台
-> **最后更新**: 2026年7月18日
+> **最后更新**: 2026年7月23日
 
 ---
 
 ## 📋 目录
 
+- [🎯 核心执行规范](#-核心执行规范claude-每次开发必读)（Claude 每次开发必读）
 - [快速开始](#快速开始)
 - [项目架构](#项目架构)
 - [技术栈](#技术栈)
@@ -19,11 +20,55 @@
 - [更新部署包](#更新部署包)
 - [内网迁移部署](#内网迁移部署)（详细方案见 [DEPLOY.md](DEPLOY.md)）
 - [开发规范](#开发规范)
+- [工程标准](#工程标准)（含 [测试策略](#9-测试策略)、[危险操作确认机制](#危险操作确认机制)）
+- [开发计划与决策](plans/README.md)（所有开发计划/ADR/经验沉淀在 `plans/`）
 - [调试技巧](#调试技巧)
 - [常见问题](#常见问题)
 - [安全指南](#安全指南)
 - [性能优化](#性能优化)
 - [扩展开发](#扩展开发)
+
+---
+
+## 🎯 核心执行规范（Claude 每次开发必读）
+
+> **这是开发流程的"宪法摘要"**。每次接到开发任务，**先读完这 30 行再动手**。
+> 详细规范见 [§工程标准](#工程标准) 和 [§8 AI 行为规范](#8-ai-行为规范)。
+
+### 六阶段（缺一不可）
+
+```
+① 需求分析 → ② 计划设计 → ③ 代码实现 → ④ 代码审查 → ⑤ 功能验证 → ⑥ 文档归档
+   G1 确认       G2 批准       G3 自检       G4 通过      G5 通过      G6 归档
+```
+
+**每阶段都有质量门禁**，不通过不能进入下一阶段。详见 [§工程标准 §2](#2-开发六阶段)。
+
+### 5 条铁律
+
+| # | 铁律 | 落地动作 |
+|---|---|---|
+| 1 | **先理解再动手** | 接到需求后，**先输出 3-5 句"我理解的需求摘要"**，等用户确认再进入计划 |
+| 2 | **完成要自检** | 完成后输出"✅ 完成自检报告"：对照 G3/G4/G5 逐项勾选，未通过的明确说"未做" |
+| 3 | **文档同步** | 改动触发 §8 规则 9 清单时，**同 commit 同步 CLAUDE.md + plans/** |
+| 4 | **commit 不主动** | 默认不 `git add/commit/push`，输出建议 message 让用户决定 |
+| 5 | **plan 实时同步** | 每次操作 plans/ 后**立即**更新 `plans/README.md` 总看板 + 该计划状态摘要 |
+
+### 任务复杂度分级（决定走哪个流程）
+
+| 等级 | 判断标准 | 流程 |
+|---|---|---|
+| 🟢 简单 | 单文件、≤10 行、纯 bugfix | 跳过计划，直接修 → 自检 → 验证 |
+| 🟡 中等 | 2-5 文件、逻辑修改 | 口头/简短计划（TodoWrite）→ 实现 → 自检 → 验证 |
+| 🔴 复杂 | 多文件、新功能、架构变更、数据库迁移 | **必须写** `plans/YYYY-MM-DD-xxx.md` 计划文档 |
+
+### 不要做的事（红线）
+
+- ❌ 跳过门禁直接进入下一阶段
+- ❌ "应该没问题"式验证（必须命令+输出）
+- ❌ 主动 `git commit/push`（除非用户明确说"提交吧"）
+- ❌ `rm -rf`、`docker compose down -v`、改 V1-V26 已发布 Flyway、`git push -f`（必须先用 AskUserQuestion 确认）
+- ❌ 写完代码不输出自检报告
 
 ---
 
@@ -165,9 +210,12 @@ MiaotongDoc/
 ├── miaotongdoc-web/                # Vue 3 前端
 │   └── src/
 │       ├── api/                    # API 模块 (22个)
-│       ├── components/             # 组件 (41个)
-│       ├── router/                 # 路由 (8条)
+│       ├── components/             # 组件 (43个)
+│       ├── composables/            # 组合式函数 (12个: 1个通用 + 11个PDF)
+│       ├── router/                 # 路由配置
 │       ├── stores/                 # 状态管理 (4个)
+│       ├── styles/                 # 样式 (1个CSS)
+│       ├── types/                  # 类型声明 (2个)
 │       ├── utils/                  # 工具函数 (8个)
 │       └── views/                  # 页面 (8个)
 │
@@ -175,26 +223,34 @@ MiaotongDoc/
 │   └── src/main/java/com/miaotong/doc/
 │       ├── config/                 # 配置类 (15个)
 │       ├── controller/             # 控制器 (29个)
-│       ├── entity/                 # 实体类 (25个)
+│       ├── entity/                 # 实体类 (26个)
 │       ├── repository/             # 数据仓库 (25个)
-│       ├── service/                # 业务服务 (30个)
-│       └── websocket/              # WebSocket (3个)
+│       ├── service/                # 业务服务 (38个: 30个根级 + 5个AI + 3个存储)
+│       ├── websocket/              # WebSocket (3个)
+│       ├── dto/                    # 数据传输对象 (21个)
+│       ├── exception/              # 异常处理 (3个)
+│       ├── util/                   # 工具类 (6个)
+│       ├── scheduler/              # 定时任务 (2个)
+│       ├── event/                  # 事件 (1个)
+│       └── constants/              # 常量 (1个)
 │
 ├── MiaotongDoc-Docker/             # Docker 部署
-│   ├── docker-compose.yml          # 13 个服务编排
+│   ├── docker-compose.yml          # 16 个服务编排
 │   ├── deploy.sh                   # 分阶段启动脚本（A→E）
-│   └── app/                        # 构建产物（前端/后端/编辑器/yjs/docling/ocr）
+│   └── app/                        # 构建产物 (9个目录)
 │
 ├── MiaotongDoc-Editor/             # MTOffice 定制
 │   ├── Dockerfile
-│   ├── branding/                   # 品牌 Logo
-│   ├── fonts/                      # 中文字体
-│   └── plugins/                    # 插件
+│   ├── branding/                   # 品牌 Logo (5个SVG)
+│   ├── fonts/                      # 中文字体 (22个)
+│   └── plugins/                    # 插件 (652个文件, 含ai-plugin + signing)
 │
-├── MiaotongDoc-AI/                 # AI 插件
-├── setup-linux-host.sh             # Linux 宿主机一键基线配置（生产部署前运行）
+├── MiaotongDoc-AI/                 # AI 插件 (651个文件, Editor ai-plugin 镜像)
+├── CLAUDE.md                       # 本文件 (开发参考手册)
 ├── DEPLOY.md                       # 详细内网部署指南
-└── CLAUDE.md                       # 本文件
+├── SYSTEM_AUDIT.md                 # 系统审查报告
+├── CHANGELOG.md                    # 变更日志
+└── CLAUDE.md                       # 本文件 (开发参考手册)
 ```
 
 ### 前端关键文件
@@ -206,29 +262,119 @@ MiaotongDoc/
 | `src/stores/user.ts` | 用户状态管理 |
 | `src/views/Home.vue` | 主页（核心页面） |
 | `src/views/DocEditor.vue` | 文档编辑页 |
-| `src/components/MarkdownEditor.vue` | Markdown 编辑器 |
+| `src/views/Admin.vue` | 管理后台 |
+| `src/views/Login.vue` | 登录页 |
+| `src/views/SigningTask.vue` | 签署任务列表 |
+| `src/views/ContractList.vue` | 合同列表 |
+| `src/views/ContractDetail.vue` | 合同详情 |
+| `src/views/ActivityFeed.vue` | 协作动态 |
+| `src/components/MarkdownEditor.vue` | Markdown 编辑器 (Tiptap) |
 | `src/components/DocumentEditor.vue` | MTOffice 编辑器 |
-| `src/components/PdfEditor.vue` | **PDF 编辑器 V3 主壳**(Phase 7-12) |
+| `src/components/CommentPanel.vue` | 评论面板 |
+| `src/components/ShareDialog.vue` | 共享对话框 |
+| `src/components/VersionHistory.vue` | 版本历史 |
+| `src/components/SigningBar.vue` | 签署工具栏 |
+| `src/components/SigningDialog.vue` | 签署对话框 |
+| `src/components/ContractCreateDialog.vue` | 合同创建对话框 |
+| `src/components/ContractSubmitDialog.vue` | 合同提交审批对话框 |
+| `src/components/AiPanel.vue` | AI 聊天面板 |
+| `src/components/NotificationBell.vue` | 通知铃铛 |
+| `src/components/CollaborationBar.vue` | 协作用户栏 |
+| `src/components/MentionInput.vue` | @提及输入框 |
+| `src/components/DocCard.vue` | 文档卡片 |
+| `src/components/CreateDocDialog.vue` | 创建文档对话框 |
+| `src/components/MergeDialog.vue` | 文档合并对话框 |
+| **PDF 编辑器 V3** (Phase 7-13) |
+| `src/components/PdfEditor.vue` | PDF 编辑器 V3 主壳 |
 | `src/components/PdfRibbon.vue` | PDF 多 tab 顶栏 |
-| `src/components/PdfThumbPanel.vue` | PDF 缩略图侧栏(2x 高清+懒加载+拖拽) |
-| `src/components/PdfCanvas.vue` | PDF 单页渲染容器(4 层堆叠) |
+| `src/components/PdfThumbPanel.vue` | PDF 缩略图侧栏 (2x 高清+懒加载+拖拽) |
+| `src/components/PdfCanvas.vue` | PDF 单页渲染容器 (4 层堆叠) |
 | `src/components/PdfToolsRail.vue` | PDF 右侧快捷工具栏 |
-| `src/components/PdfRightPanel.vue` | PDF 右侧任务面板(大纲/搜索/批注/表单/信息) |
-| `src/components/PdfPageOpsDialog.vue` | PDF 页面操作(插入/裁剪/水印/页眉页脚) |
-| `src/components/PdfSignatureDialog.vue` | PDF 签名创建(键入/绘制/上传) |
-| `src/components/PdfSecurityDialog.vue` | PDF 保护(加密/解密) |
-| `src/composables/pdf/usePdfRenderer.ts` | PDF.js 渲染封装(worker 本地化+cMap) |
+| `src/components/PdfRightPanel.vue` | PDF 右侧任务面板 (大纲/搜索/批注/表单/信息) |
+| `src/components/PdfFloatingToolbar.vue` | PDF 浮动工具栏 |
+| `src/components/PdfPageOpsDialog.vue` | PDF 页面操作 (插入/裁剪/水印/页眉页脚) |
+| `src/components/PdfSignatureDialog.vue` | PDF 签名创建 (键入/绘制/上传) |
+| `src/components/PdfSecurityDialog.vue` | PDF 保护 (加密/解密) |
+| `src/components/PdfAiFloatPanel.vue` | PDF AI 浮动面板 |
+| `src/components/PdfOcrLayer.vue` | PDF OCR 识别层 |
+| `src/components/PdfTextEditorLayer.vue` | PDF 文本编辑层 |
+| `src/components/PdfCanvasContextMenu.vue` | PDF 画布右键菜单 |
+| `src/components/PdfSaveModeDialog.vue` | PDF 保存模式对话框 |
+| `src/components/PdfCreateDialog.vue` | PDF 创建对话框 |
+| `src/components/PdfPageOpsMenu.vue` | PDF 页面操作菜单 |
+| `src/components/PdfExportMenu.vue` | PDF 导出菜单 |
+| `src/components/PdfAiMenu.vue` | PDF AI 菜单 |
+| `src/components/PdfThumbnailContextMenu.vue` | PDF 缩略图右键菜单 |
+| `src/components/PdfIcon.vue` | PDF 图标组件 |
+| `src/components/PdfTermsPanel.vue` | PDF 术语面板 |
+| `src/components/PdfToolbar.vue` | PDF 工具栏 |
+| `src/composables/useAiChat.ts` | AI 聊天组合式函数 |
+| `src/composables/pdf/usePdfRenderer.ts` | PDF.js 渲染封装 (worker 本地化+cMap) |
+| `src/composables/pdf/usePdfAnnotation.ts` | PDF 标注 |
+| `src/composables/pdf/usePdfTextEditor.ts` | PDF 文本编辑 |
+| `src/composables/pdf/usePdfCollaborate.ts` | PDF 协同 |
+| `src/composables/pdf/usePdfViewMode.ts` | PDF 视图模式 |
+| `src/composables/pdf/usePdfAiVision.ts` | PDF AI 视觉 |
+| `src/composables/pdf/usePdfAiFloat.ts` | PDF AI 浮动 |
+| `src/composables/pdf/usePdfExtractTerms.ts` | PDF 术语提取 |
+| `src/composables/pdf/usePdfOcrProgress.ts` | PDF OCR 进度 |
+| `src/composables/pdf/usePdfOptimizeOcr.ts` | PDF OCR 优化 |
+| `src/composables/pdf/usePdfPageOps.ts` | PDF 页面操作 |
 
 ### 后端关键文件
 
 | 文件 | 用途 |
 |------|------|
-| `config/SecurityConfig.java` | 安全配置 |
-| `config/JwtAuthFilter.java` | JWT 过滤器 |
-| `controller/DocumentController.java` | 文档 API |
+| `config/SecurityConfig.java` | Spring Security 安全配置 |
+| `config/JwtAuthFilter.java` | JWT 认证过滤器 |
+| `config/CorsConfig.java` | CORS 跨域配置 |
+| `config/WebSocketConfig.java` | WebSocket 配置 |
+| `config/StorageConfig.java` | 存储配置 (MinIO/Local) |
+| `config/RedisConfig.java` | Redis 缓存配置 |
+| `controller/DocumentController.java` | 文档管理 API |
+| `controller/AuthController.java` | 用户认证 API |
+| `controller/AdminController.java` | 管理后台 API |
+| `controller/PdfController.java` | PDF 工具 API |
+| `controller/SigningController.java` | 电子签署 API |
+| `controller/ContractController.java` | 合同管理 API |
+| `controller/ShareController.java` | 文档共享 API |
+| `controller/CommentController.java` | 评论协作 API |
+| `controller/AiProxyController.java` | AI 代理 API |
+| `controller/AiChatSseController.java` | AI 聊天 SSE 流式 API |
+| `controller/FolderController.java` | 文件夹管理 API |
+| `controller/VersionController.java` | 版本管理 API |
+| `controller/NotificationController.java` | 通知 API |
+| `controller/AuditController.java` | 审计日志 API |
+| `controller/SsoController.java` | SSO 单点登录 API |
+| `controller/WatermarkController.java` | 水印配置 API |
+| `controller/TemplateController.java` | 模板管理 API |
+| `controller/FolderTemplateController.java` | 文件夹模板 API |
+| `controller/PdfExtractTermsSseController.java` | PDF 术语提取 SSE |
+| `controller/PdfOptimizeOcrSseController.java` | PDF OCR 优化 SSE |
+| `controller/PdfVisionSseController.java` | PDF 视觉分析 SSE |
 | `service/DocumentService.java` | 文档业务逻辑 |
-| `service/storage/StorageService.java` | 存储接口 |
-| `websocket/PresenceWebSocketHandler.java` | 在线状态 |
+| `service/AiService.java` | AI 业务逻辑 (service/ai/) |
+| `service/PdfToolService.java` | PDF 工具服务 |
+| `service/storage/StorageService.java` | 存储接口抽象 |
+| `service/storage/MinioStorageService.java` | MinIO 存储实现 |
+| `service/storage/FileSystemStorageService.java` | 本地文件系统存储实现 |
+| `service/UserService.java` | 用户业务逻辑 |
+| `service/PresenceService.java` | 在线状态服务 |
+| `service/ShareService.java` | 共享权限服务 |
+| `service/SigningService.java` | 签署服务 |
+| `service/ContractService.java` | 合同服务 |
+| `service/ContractParser.java` | 合同 AI 解析 |
+| `service/DoclingService.java` | Docling 文档解析 |
+| `service/OcrService.java` | OCR 服务 |
+| `service/PaddleOcrClient.java` | PaddleOCR 客户端 |
+| `util/JwtUtil.java` | JWT 工具类 |
+| `util/EditorJwtUtil.java` | 编辑器 JWT 工具类 |
+| `util/FileHashUtil.java` | 文件哈希工具 |
+| `util/FileValidator.java` | 文件校验工具 |
+| `exception/GlobalExceptionHandler.java` | 全局异常处理 |
+| `exception/BusinessException.java` | 业务异常 |
+| `scheduler/ContractExpirationScheduler.java` | 合同过期定时任务 |
+| `scheduler/OnlyOfficeCleanupScheduler.java` | 编辑器缓存清理定时任务 |
 
 ---
 
@@ -250,7 +396,7 @@ MiaotongDoc/
 | 用户管理 | 登录、注册、角色、部门 | `/api/auth`, `/api/admin` |
 | SSO | OAuth2 单点登录 | `/api/sso` |
 | AI 功能 | 问答、摘要、翻译、改写 | `/api/ai` |
-| **PDF 编辑器 V3** | Ribbon/缩略图/ToolsRail/标注/页面操作/OCR/表单/签名/加密 | `/api/pdf` |
+| **PDF 编辑器 V3** | Ribbon/缩略图/ToolsRail/标注/页面操作/OCR/表单/签名/加密/创建 | `/api/pdf` |
 
 ### 文档状态机
 
@@ -312,10 +458,13 @@ draft (草稿)
 |------|------|------|
 | POST | `/create` | 创建文档 |
 | POST | `/upload` | 上传文件 |
+| POST | `/{id}/upload-image` | 上传图片到文档 |
+| POST | `/{id}/mention` | @提及用户 |
 | GET | `/list` | 文档列表（支持分页、排序、筛选） |
 | GET | `/{id}` | 文档详情 |
 | GET | `/{id}/config` | MTOffice 编辑器配置 |
 | GET | `/{id}/file` | 下载文件 |
+| GET | `/file/**` | 文件直链服务 |
 | GET | `/{id}/export/pdf` | 导出 PDF |
 | PUT | `/{id}/rename` | 重命名 |
 | DELETE | `/{id}` | 软删除（移入回收站） |
@@ -323,13 +472,134 @@ draft (草稿)
 | POST | `/{id}/move` | 移动到文件夹 |
 | POST | `/{id}/versions` | 创建版本 |
 | PUT | `/{id}/star` | 收藏/取消收藏 |
+| PUT | `/{id}/restore` | 恢复指定版本 |
 | GET | `/trash` | 回收站列表 |
-| POST | `/{id}/restore` | 恢复文档 |
+| POST | `/{id}/restore` | 从回收站恢复 |
 | DELETE | `/{id}/permanent` | 永久删除 |
 | DELETE | `/trash/empty` | 清空回收站 |
 | POST | `/export/zip` | 批量导出 ZIP |
 | POST | `/reindex` | 重建索引 |
 | GET | `/suggest` | 搜索建议 |
+
+### 文件夹模块 (`/api/folders`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 文件夹列表（树形结构） |
+| POST | `/` | 创建文件夹 |
+| PUT | `/{id}` | 更新文件夹（名称、颜色） |
+| DELETE | `/{id}` | 删除文件夹 |
+| PUT | `/reorder` | 文件夹排序 |
+| GET | `/{id}/download` | 下载文件夹内所有文档 |
+
+### 版本管理模块 (`/api/versions`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/{docId}` | 版本列表 |
+| GET | `/{docId}/{versionNumber}` | 版本详情 |
+| GET | `/{docId}/{versionNumber}/download` | 下载指定版本 |
+| GET | `/{docId}/{versionNumber}/preview` | 预览指定版本 |
+| POST | `/{docId}/{versionNumber}/restore` | 恢复到指定版本 |
+
+### 评论模块 (`/api/comments`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/` | 创建评论 |
+| GET | `/document/{docId}` | 获取文档评论列表 |
+| PUT | `/{id}/resolve` | 解决评论 |
+| DELETE | `/{id}` | 删除评论 |
+
+### 通知模块 (`/api/notifications`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 通知列表 |
+| PUT | `/{id}/read` | 标记已读 |
+| PUT | `/read-all` | 全部标记已读 |
+| GET | `/unread-count` | 未读计数 |
+
+### 部门模块 (`/api/departments`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 部门列表 |
+| GET | `/tree` | 部门树形结构 |
+| GET | `/{id}/children` | 子部门列表 |
+| POST | `/` | 创建部门 |
+| PUT | `/{id}` | 更新部门 |
+| DELETE | `/{id}` | 删除部门 |
+
+### 在线状态模块 (`/api/presence`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/document/{docId}` | 获取文档在线用户 |
+| POST | `/document/{docId}/join` | 加入文档 |
+| POST | `/document/{docId}/leave` | 离开文档 |
+| POST | `/document/{docId}/heartbeat` | 心跳维持 |
+
+### 协作动态模块 (`/api/activities`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/feed` | 协作动态流 |
+| GET | `/document/{docId}` | 文档协作历史 |
+
+### Markdown 模块 (`/api/markdown`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/{id}/content` | 获取 Markdown 内容 |
+| POST | `/{id}/save` | 保存 Markdown 内容 |
+
+### 模板模块 (`/api/templates`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 模板列表 |
+| GET | `/{id}` | 模板详情 |
+| POST | `/` | 创建模板 |
+| PUT | `/{id}` | 更新模板 |
+| DELETE | `/{id}` | 删除模板 |
+| GET | `/{id}/download` | 下载模板 |
+| GET | `/categories` | 模板分类列表 |
+| POST | `/categories` | 创建模板分类 |
+| DELETE | `/categories/{id}` | 删除模板分类 |
+
+### 文件夹模板模块 (`/api/folder-templates`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 文件夹模板列表 |
+| GET | `/{id}` | 文件夹模板详情 |
+| POST | `/` | 创建文件夹模板 |
+| PUT | `/{id}` | 更新文件夹模板 |
+| DELETE | `/{id}` | 删除文件夹模板 |
+| PUT | `/reorder` | 文件夹模板排序 |
+
+### 水印模块 (`/api/watermark`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/config` | 获取水印配置 |
+| PUT | `/config` | 更新水印配置 |
+| GET | `/preview` | 预览水印效果 |
+
+### 审计日志模块 (`/api/audit`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/document/{docId}` | 文档审计日志 |
+| GET | `/me` | 我的操作记录 |
+| GET | `/all` | 全部审计日志（管理员） |
+
+### 编辑器回调模块 (`/api/callback`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/editor` | MTOffice 编辑器回调 |
 
 ### 共享模块 (`/api/shares`)
 
@@ -382,42 +652,105 @@ draft (草稿)
 | PUT | `/users/{id}/status` | 启用/禁用 |
 | PUT | `/users/{id}/reset-password` | 重置密码 |
 
+### SSO 模块 (`/api/sso`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/providers` | 获取 SSO 提供商列表 |
+| GET | `/callback` | SSO 回调处理 |
+| POST | `/logout` | SSO 登出 |
+
 ### AI 模块 (`/api/ai`)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/proxy` | LLM API 代理 |
-| GET | `/models` | 模型列表 |
+| POST | `/proxy` | LLM API 代理（通用） |
+| POST | `/refresh-models` | 刷新模型列表 |
 | GET | `/config` | AI 配置 |
+| GET | `/settings` | AI 设置 |
+| GET | `/test` | AI 连接测试 |
+| POST | `/test/chat` | AI 聊天测试（SSE） |
+| POST | `/chat/stream` | AI 聊天（SSE 流式） |
 
-### PDF 工具模块 (`/api/pdf`) — Phase 11-12 新增
+### AI 文档模块 (`/api/documents/{id}/ai`)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| POST | `/chat-stream` | 文档 AI 聊天（SSE 流式） |
+| POST | `/chat` | 文档 AI 聊天 |
+| POST | `/summarize` | 文档摘要 |
+| POST | `/translate` | 文档翻译 |
+| POST | `/rewrite` | 文档改写 |
+| POST | `/generate` | 文档生成 |
+| POST | `/generate-stream` | 文档生成（SSE 流式） |
+
+### AI 提供商管理 (`/api/admin/ai/providers`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 提供商列表 |
+| GET | `/{id}` | 提供商详情 |
+| GET | `/{id}/reveal-key` | 查看密钥 |
+| POST | `/` | 创建提供商 |
+| PUT | `/{id}` | 更新提供商 |
+| DELETE | `/{id}` | 删除提供商 |
+| POST | `/{id}/set-default` | 设为默认 |
+| POST | `/refresh` | 刷新配置 |
+| POST | `/fetch-models` | 拉取模型列表 |
+| POST | `/test-connection` | 测试连接 |
+
+### PDF 工具模块 (`/api/pdf`)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| **PDF 创建** | | |
+| POST | `/create/blank` | **13.1** 创建空白 PDF |
+| POST | `/create/from-images` | **13.2** 从图片创建 PDF |
+| **PDF 信息** | | |
 | GET | `/{id}/info` | PDF 基本信息(页数/尺寸/版本) |
 | GET | `/{id}/metadata` | PDF 元数据(标题/作者/创建时间) |
+| GET | `/{id}/outline` | PDF 大纲/书签结构 |
 | GET | `/{id}/text` | 全文提取 |
 | GET | `/{id}/pages/{pageNum}/text` | 单页文本 |
+| GET | `/{id}/markdown` | 导出为 Markdown |
+| GET | `/{id}/text-positions` | 文本位置信息 |
+| GET | `/{id}/recognize-status` | OCR 识别状态查询 |
+| **PDF 编辑** | | |
+| POST | `/{id}/text-edits` | 保存文本编辑 |
+| GET | `/{id}/text-edits` | 获取文本编辑记录 |
+| POST | `/{id}/export-edited` | 导出编辑后的 PDF |
+| POST | `/{id}/save-as-new` | 另存为新文档 |
 | POST | `/{id}/convert` | 转 docx/md/png/txt |
+| **页面操作** | | |
 | POST | `/merge` | 多文档合并 |
 | POST | `/{id}/split` | 拆分 |
+| POST | `/{id}/split-by-ranges` | 按页码范围拆分 |
 | POST | `/{id}/pages/rotate` | 旋转页面 |
-| POST | `/{id}/pages/delete` | 删除页面 |
+| DELETE | `/{id}/pages/{pageNum}` | 删除单页 |
 | POST | `/{id}/pages/extract` | 提取页面 |
+| POST | `/{id}/extract-pages-batch` | 批量提取页面 |
 | POST | `/{id}/pages/reorder` | 重排页面 |
 | POST | `/{id}/pages/insert-blank` | 插入空白页 |
 | POST | `/{id}/pages/crop` | 裁剪页面 |
+| **PDF 安全** | | |
 | POST | `/{id}/watermark` | 添加水印 |
 | POST | `/{id}/header-footer` | 添加页眉页脚 |
-| POST | `/{id}/compress` | 压缩 PDF |
-| GET | `/{id}/form-fields` | **12.1** 表单字段识别 |
-| POST | `/{id}/form-fields/fill` | **12.2** 表单填充 |
-| POST | `/{id}/signature` | **12.3** 签名图片嵌入 |
-| POST | `/{id}/encrypt` | **12.4** 密码加密 |
-| POST | `/{id}/decrypt` | **12.4** 密码解密 |
-| POST | `/{id}/redact` | **12.4** 密文遮盖 |
+| POST | `/{id}/encrypt` | 密码加密 |
+| POST | `/{id}/decrypt` | 密码解密 |
+| POST | `/{id}/redact` | 密文遮盖 |
+| **PDF 表单与签名** | | |
+| GET | `/{id}/form-fields` | 表单字段识别 |
+| POST | `/{id}/form-fields/fill` | 表单填充 |
+| POST | `/{id}/signature` | 签名图片嵌入 |
+| **OCR 识别** | | |
+| POST | `/{id}/recognize` | OCR 识别 |
 | POST | `/{id}/recognize-paddle` | PaddleOCR 识别 |
-| POST | `/{id}/search` | 全文搜索 |
+| POST | `/{id}/recognize-old` | OCR 旧版接口 |
+| **搜索** | | |
+| GET | `/{id}/search` | 全文搜索 |
+| POST | `/{id}/search` | 全文搜索 (POST) |
+| **压缩** | | |
+| POST | `/{id}/compress` | 压缩 PDF |
 
 ### 响应格式
 
@@ -472,9 +805,13 @@ draft (草稿)
 | `mt_document` | 文档主表（doc_key、类型、状态、版本、收藏、文件夹） |
 | `mt_document_share` | 文档共享表（4 级权限） |
 | `mt_document_version` | 文档版本表 |
-| `mt_folder` | 文件夹表（无限层级、颜色标记） |
+| `mt_document_index` | 文档全文索引表 |
 | `mt_document_template` | 文档模板表 |
+| `mt_folder` | 文件夹表（无限层级、颜色标记） |
+| `mt_folder_template` | 文件夹模板关联表 |
+| `mt_template_category` | 模板分类表 |
 | `mt_watermark_config` | 水印配置表 |
+| `mt_pdf_task` | PDF 任务表（OCR/识别状态跟踪） |
 
 #### 评论与协作表
 
@@ -484,6 +821,12 @@ draft (草稿)
 | `mt_mention` | @提及关联表 |
 | `mt_activity` | 协作动态表 |
 | `mt_notification` | 通知表 |
+
+#### AI 功能表
+
+| 表名 | 用途 |
+|------|------|
+| `mt_ai_provider` | AI 提供商配置表（模型地址、密钥） |
 
 #### 签署与合同表
 
@@ -545,7 +888,7 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 
 ## 部署指南
 
-### Docker 服务清单（15 个容器）
+### Docker 服务清单（16 个容器）
 
 | 服务 | 容器名 | 端口 | IP | 用途 |
 |------|--------|------|-----|------|
@@ -877,6 +1220,974 @@ feat(document): 添加文档版本管理功能
 fix(signing): 修复签署超期检查逻辑
 docs(readme): 更新部署文档
 ```
+
+---
+
+## 工程标准
+
+> 本文定义了从需求到交付的完整开发生命周期，是 Claude Code 每次开发调用的执行标准。
+> 核心理念借鉴自：Google Engineering Practices、Amazon Working Backwards、Kent Beck TDD、Martin Fowler Refactoring、Michael Nygard ADR、OWASP、Clean Architecture。
+
+### 0. 核心原则
+
+| # | 原则 | 说明 | 来源 |
+|---|------|------|------|
+| 1 | **文档先行** | 先写设计文档，再写代码。代码是设计的实现，不是设计本身 | Google Design Docs, Amazon Working Backwards |
+| 2 | **小步提交** | 每次改动只解决一个问题，提交粒度要小（< 200 行）。小步快跑，频繁集成 | Google Small CLs, Trunk-Based Development |
+| 3 | **测试代言** | 业务逻辑必须有测试保护。无测试的代码等于"不知道能不能跑" | Kent Beck TDD |
+| 4 | **架构可见** | 每个架构决策都要记录上下文和理由。不写 ADR 等于没做决策 | Michael Nygard ADR |
+| 5 | **安全内置** | 安全不是事后补的，是设计时就考虑进去的。参数化查询、权限校验、日志脱敏是默认行为，不是加分项 | OWASP, Microsoft SDL |
+| 6 | **验证闭环** | 每项功能必须经过"计划→实现→验证→归档"的完整闭环，缺失任何一环都不算完成 | Scrum Definition of Done |
+
+### 1. 角色与职责
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                             角色分工矩阵                                         │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                    │              │                             │
+│  你 (Human)                        │  Claude (AI)  │  共同                      │
+│  ───────────────────               │  ──────────   │  ──────                    │
+│  • 提出需求 / 定义问题              │  • 方案设计     │  • 需求澄清                │
+│  • 评审并批准计划                   │  • 代码实现     │  • 代码审查                │
+│  • 验收功能 / 确认效果              │  • 编写文档     │  • 架构决策                │
+│  • 提供业务领域知识                 │  • 进度跟踪     │  • 安全审计                │
+│  • 部署上线决策                     │  • 代码审查     │  • 测试策略                │
+│                                    │  • 功能验证     │                             │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. 开发六阶段
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       开发六阶段 + 质量门禁                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ① 需求分析 ──→ ② 计划设计 ──→ ③ 代码实现 ──→ ④ 代码审查 ──→ ⑤ 验证 ──→ ⑥ 归档 │
+│      │              │              │              │            │          │    │
+│      门禁1          门禁2          门禁3          门禁4        门禁5      门禁6 │
+│     需求确认        计划批准        实现自检        审查通过    验证通过   归档完成│
+│                                                                              │
+│  ←←←←←←←←←←←←←←←←←← 迭代反馈循环（验证失败则回退到对应阶段） →→→→→→→→→→→→→→→→→│
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### 阶段 ①：需求分析 — "理解问题"
+
+**目标**：在动手之前，彻底理解要解决的问题是什么、为什么、影响谁。
+
+**做法**：
+
+| 步 | 动作 | 输出 |
+|----|------|------|
+| 1.1 | **阅读上下文**：扫一遍相关代码、配置、API、现有文档，理解当前状态 | 已知信息清单 |
+| 1.2 | **影响范围分析**：该改动会动到哪些层？用[变更影响矩阵](#变更影响矩阵)判断 | 影响范围列表 |
+| 1.3 | **逆向思考**：如果这个功能做错了，最坏的结果是什么？边界在哪里？ | 边界条件清单 |
+| 1.4 | **记录决策**：非显而易见的业务逻辑结论，用 `/memory` 持久化 | 记忆文件 |
+
+**输出文档**：需求分析摘要（2-5 句话 + 受影响文件列表）
+
+**质量门禁 G1 — 需求确认**：
+- [ ] 需求是否清晰无歧义？
+- [ ] 影响范围是否已穷举？
+- [ ] 是否有未澄清的假设需要用户确认？
+
+> **复杂度评估**：需求分析结束后，判断任务复杂度，决定是否进入计划阶段：
+> | 等级 | 判断标准 | 是否要计划 |
+> |------|---------|-----------|
+> | 🟢 简单 | 单文件、≤10 行改动、纯 bugfix | 跳过计划，直接编码 |
+> | 🟡 中等 | 2-5 文件、涉及逻辑修改 | 口头计划（EnterPlanMode）或短文计划 |
+> | 🔴 复杂 | 多文件、新功能、架构变更、数据库迁移 | 必须写正式计划文档 |
+
+---
+
+#### 阶段 ②：计划设计 — "设计方案"
+
+**目标**：编码前将方案想清楚，用文档固化，避免"边写边想"导致返工。
+
+**做法**：
+
+| 步 | 动作 | 输出 |
+|----|------|------|
+| 2.1 | **方案拟定**：设计 1-2 种技术方案，对比优劣，给出推荐 | 方案对比 |
+| 2.2 | **架构决策记录**：如果涉及架构级选择，写 ADR（见[ADR 模板](#架构决策记录-adr)） | 追加到 CLAUDE.md |
+| 2.3 | **BDD 场景**：用 Given/When/Then 描述关键业务场景 | 场景清单 |
+| 2.4 | **编写计划文档**：按模板追加到 CLAUDE.md 末尾 | 计划文档 |
+| 2.5 | **更新计划索引**：在 CLAUDE.md 末尾的计划列表中登记 | 索引更新 |
+
+**计划文档结构**（正式计划）：
+
+```
+📋 需求            — 一句话说清做什么
+🎯 目标            — 可衡量的完成标准
+🔧 方案            — 技术方案 + 关键决策理由
+📁 涉及文件         — 所有改动的文件清单（增/删/改）
+📝 实现步骤         — 可操作的分步计划（可勾选）
+🧪 测试策略         — 单元测试 / 集成测试 / 手动测试
+⚠️ 风险与回退       — 潜在风险 + 回退方案
+✅ 验证标准         — 如何验证功能正确（与 G5 对应）
+```
+
+**质量门禁 G2 — 计划批准**：
+- [ ] 方案是否覆盖了所有需求？
+- [ ] 边界条件是否已考虑？
+- [ ] 风险是否有应对方案？
+- [ ] 验证标准是否可操作？
+
+---
+
+#### 阶段 ③：代码实现 — "写出代码"
+
+**目标**：遵循架构约束，写出可读、可维护、安全的代码。
+
+**做法**：
+
+**3.1 编码纪律**
+
+| 原则 | 具体要求 |
+|------|---------|
+| **单一职责** | 一个函数/类只做一件事。如果做不到，说明需要拆 | 参考：SRP |
+| **开闭原则** | 对扩展开放，对修改关闭。新增功能尽量不修改现有代码 | 参考：OCP |
+| **最少知识** | 不链式调用超过 2 层（`a.b.c()` 即坏味道） | 参考：Law of Demeter |
+| **防御编程** | 所有外部输入必须校验，所有 null 必须处理 | 参考：Defensive Programming |
+| **失败快速** | 错误尽早暴露，不吞异常 | 参考：Fail Fast |
+| **DRY** | 同样的逻辑只写一次。三次重复即需抽象 | 参考：DRY |
+
+**3.2 分层规范**
+
+```
+后端分层（不可跳过层）：
+  Controller → Service → Repository
+      ↑           ↑          ↑
+  参数校验     业务逻辑    数据访问
+
+前端分层（不可跳过层）：
+  View/Component → API/Store → Axios
+      ↑               ↑          ↑
+  页面渲染         状态管理      HTTP
+```
+
+**3.3 安全编码（默认行为）**
+
+| 检查项 | 说明 |
+|--------|------|
+| ✅ SQL 注入防护 | 必须用参数化查询，禁止字符串拼接 |
+| ✅ XSS 防护 | 所有用户输入输出必须转义 |
+| ✅ 权限校验 | 每个 API 接口都必须校验操作权限，不依赖前端隐藏 |
+| ✅ 日志脱敏 | 密码、Token、身份证号等敏感信息禁止打印 |
+| ✅ 输入校验 | 所有外部输入做类型、长度、格式校验 |
+
+**3.4 进度跟踪**
+
+- 编码开始时用 `TodoWrite` 创建任务列表
+- 每完成一步，更新状态：`pending` → `in_progress` → `completed`
+- 遇到阻塞时，记录问题并请求用户确认
+
+**示例**：
+```
+[✅] 创建数据库迁移脚本 V27__add_signing_table.sql
+[🔄] 实现后端签署 API (SigningController)
+[⏳] 实现前端签署页面组件
+[⏳] 集成测试与验证
+```
+
+**质量门禁 G3 — 实现自检**：
+- [ ] 代码是否符合分层架构？（没有跳过层）
+- [ ] 是否遵循了安全编码规范？（SQL/XSS/权限）
+- [ ] 是否处理了 null 和异常路径？
+- [ ] 日志是否合理（不缺失、不冗余、不泄露敏感信息）？
+- [ ] 是否有未使用的导入、变量、死代码？
+
+---
+
+#### 阶段 ④：代码审查 — "检查代码"
+
+**目标**：用审查者的视角重新审视代码，发现逻辑缺陷、安全隐患、可维护性问题。
+
+**做法**：
+
+**4.1 自审查清单**（每次改动后执行）：
+
+| 维度 | 检查项 |
+|------|--------|
+| **正确性** | 逻辑是否覆盖了所有分支？边界条件是否处理？ |
+| **安全性** | 是否有 SQL 注入风险？权限校验是否遗漏？有无敏感信息泄露？ |
+| **可读性** | 命名是否清晰？是否需要注释来解释"为什么"而不是"是什么"？ |
+| **简洁性** | 是否有重复代码？是否有过度设计？是否有可简化的逻辑？ |
+| **健壮性** | 空值、越界、异常输入是否处理？错误提示是否友好？ |
+| **兼容性** | 是否破坏了向后兼容？是否需要版本迁移？ |
+
+**4.2 审查流程**：
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ 自审查    │ ──→ │ /code-   │ ──→ │ 修复审查  │ ──→ │ 最终确认  │
+│ (清单)    │     │ review   │     │ 发现的问题 │     │          │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+```
+
+**质量门禁 G4 — 审查通过**：
+- [ ] 自审查清单所有项通过
+- [ ] `/code-review` 报告无 P0/P1 级别问题
+- [ ] 所有审查发现的问题已修复或确认接受
+
+---
+
+#### 阶段 ⑤：功能验证 — "证明它能跑"
+
+**目标**：用实际证据证明功能按预期工作，不只是"看起来没问题"。
+
+**做法**：
+
+**5.1 验证金字塔**
+
+```
+        ╱╲
+       ╱  ╲         手动验证（UI 效果、业务流程）
+      ╱    ╲        ─── 用户最终确认
+     ╱──────╲
+    ╱        ╲     集成验证（API 请求/响应、数据库状态）
+   ╱          ╲    ─── Claude 自动执行
+  ╱────────────╲
+ ╱              ╲  代码级验证（逻辑正确性、边界条件、错误处理）
+╱                ╲ ─── Claude 自动执行
+```
+
+**5.2 验证流程**：
+
+| 步 | 动作 | 谁做 |
+|----|------|------|
+| 5.1 | **代码级验证**：逐行审查关键逻辑，确认边界条件和错误处理正确 | Claude |
+| 5.2 | **集成验证**：调用真实 API，检查请求/响应、数据库状态变更 | Claude |
+| 5.3 | **回归验证**：检查改动是否影响相关已有功能 | Claude |
+| 5.4 | **用户验收**：展示效果，确认是否符合预期 | 你 |
+
+**5.3 验证内容**：
+
+```
+功能验证清单（对照计划阶段定义的验证标准逐项检查）：
+  [ ] 功能是否按预期工作
+  [ ] 边界条件是否已处理（空值、超长、特殊字符、并发）
+  [ ] 错误场景是否优雅降级（友好提示，不崩溃）
+  [ ] 权限校验是否正确（不同角色访问结果符合预期）
+  [ ] 数据一致性（数据库状态变更正确，无脏数据）
+  [ ] 性能是否可接受（响应时间无明显劣化）
+  [ ] 用户界面是否友好（布局、提示、交互反馈）
+```
+
+**5.4 验证记录**：在计划文档末尾更新 `✅ 验证结果` 表格
+
+**质量门禁 G5 — 验证通过**：
+- [ ] 所有验证项通过
+- [ ] 回归验证无副作用
+- [ ] 用户已确认验收
+
+---
+
+#### 阶段 ⑥：文档归档 — "让知识留下"
+
+**目标**：确保这次改动的知识不会丢失，下一个开发者（包括未来 3 个月的你自己）能理解为什么这么做。
+
+**做法**：
+
+**6.1 文档同步**（对照清单检查）：
+
+| 文档 | 是否需要更新 | 判断标准 |
+|------|------------|---------|
+| `CLAUDE.md` | 新增关键文件/API/配置/功能时 | 如果项目结构发生变化 |
+| 计划文档 | 每次开发 | 追加到 CLAUDE.md 末尾 |
+| 架构决策 | 有架构级选择时 | 追加到 CLAUDE.md 末尾 |
+| `README.md` | 对外接口或使用方式变化时 | 如果用户能看到变化 |
+| 记忆文件 | 业务逻辑结论非显而易见时 | 如果不记下来下次会忘 |
+
+**6.2 提交规范**：
+
+```
+格式：类型(模块): 一句话描述
+
+类型: feat / fix / refactor / test / docs / style / chore / perf / security
+
+内容要求：
+  1. 第一行：类型 + 范围 + 一句话
+  2. 空一行
+  3. 正文：列出关键变更点（每行一个）
+  4. 空一行
+  5. 引用：Plan / ADR / Issue 引用
+
+示例：
+feat(signing): 添加电子签署功能
+
+- 实现签署任务的创建/确认/拒绝/取消全流程
+- 新增 mt_signing_task 和 mt_signing_record 表
+- 签署完成后文档状态自动变更为 signed
+- 签署记录包含签署人 IP、UA、文档哈希校验
+
+关联计划：plans/2026-07-22-signing-feature.md
+关联 ADR：plans/ADR-001-signing-state-machine.md
+```
+
+**6.3 经验总结**：在 `plans/experience.md` 或本次计划的 `📝 经验总结` 章节添加，记录：
+- 这次开发中踩了什么坑？
+- 有什么可以复用到下次的知识？
+- 有什么流程可以改进？
+
+**质量门禁 G6 — 归档完成**：
+- [ ] 相关文档已更新（CLAUDE.md / plans/xxx.md）
+- [ ] 提交信息符合规范并引用了 `plans/` 路径
+- [ ] 经验总结已记录
+
+---
+
+### 3. 文档体系
+
+**所有非源码文档统一写在 [`plans/`](plans/README.md) 目录**，CLAUDE.md 只承载项目参考手册（架构、API、约定）这类**稳定的、所有人看的**内容。
+
+```
+plans/
+├── README.md                                # 约定 + 索引
+├── YYYY-MM-DD-<feature>.md                  # 开发计划 + 执行 + 验证
+├── ADR-NNN-<title>.md                       # 架构决策
+├── experience.md                            # 经验汇总（跨任务复用）
+└── <legacy>.md                              # 历史设计文档（保留，标状态）
+```
+
+完整命名规范、frontmatter 模板、状态机、必含章节见 [plans/README.md](plans/README.md)。
+
+#### 文档归属速查
+
+| 写什么 | 写哪里 | 何时写 |
+|---|---|---|
+| 项目结构、API、规范、约定 | CLAUDE.md | 改动触发 §8 规则 9 时 |
+| 一次开发的完整过程（计划+执行+验证）| `plans/YYYY-MM-DD-xxx.md` | G6 门禁通过时 |
+| 架构级选择 | `plans/ADR-NNN-xxx.md` | 涉及架构选择时 |
+| 跨任务复用的踩坑/经验 | `plans/experience.md` | 多次任务都遇到时 |
+| 用户偏好/非显而易见业务逻辑 | `/memory`（MEMORY.md 索引）| 发现会忘的事实时 |
+| commit 自动记录 | `dev-log/YYYY-MM-DD.md` | post-commit hook 自动 |
+| 用户可见版本变更 | `CHANGELOG.md` | 提交前手动补 |
+
+#### 架构决策记录 (ADR)
+
+架构决策记录用于记录每次架构级选择的背景、方案和后果。参考 Michael Nygard 的 ADR 模式：
+
+```markdown
+# ADR-{NNN}: {决策标题}
+
+> 日期：YYYY-MM-DD | 状态：已接受 / 已废弃 / 已替代
+
+## 上下文
+
+[描述需要做决策的背景和动机]
+
+## 决策
+
+[我们决定采用什么方案]
+
+## 理由
+
+[为什么选这个方案，不选其他方案]
+
+## 后果
+
+[这个决策带来的正面和负面影响]
+
+## 替代方案
+
+[考虑过的其他方案及未选理由]
+```
+
+#### 计划文档模板
+
+> 借鉴自 [`plans/pdf-editor-v3.md`](../plans/pdf-editor-v3.md)（1951 行优秀实践）+ 本项目经验。
+> 完整章节说明见 [`plans/README.md`](../plans/README.md)。
+
+```markdown
+# <计划标题>
+
+> **状态**: 规划中 / 进行中 / 已完成 / 已废弃
+> **创建日期**: YYYY-MM-DD
+> **维护者**: Claude Code / <人名>
+> **关联代码**: <涉及文件列表>
+> **关联 ADR**: ADR-NNN（如有）
+
+---
+
+## 📊 状态摘要
+
+> 本节由 Claude 自动维护，请勿手动修改进度数字。
+
+**进度**: ████████░░ 80% (8/10 步完成)
+**验证**: ✅ 已通过（6/7 项）
+**最近变更**: YYYY-MM-DD-HH:MM — <变更概述>
+
+| 维度 | 状态 |
+|---|---|
+| 实现步骤 | N/M |
+| 验证项 | X/Y ✅ |
+| 临时需求 | N（已合并 X / 待评估 Y）|
+| 经验沉淀 | N 条 |
+
+---
+
+## 🔄 临时需求与变更
+
+| 时间 | 来源 | 内容 | 状态 |
+|---|---|---|---|
+| YYYY-MM-DD-HH:MM | 用户/测试发现 | <需求描述> | ✅ 已合并 / 📋 待评估 |
+
+---
+
+## 一、Context — 现状
+
+> 借鉴 pdf-editor-v3：让接手的人 30 秒看懂背景。
+
+### 已完成（如有前置工作）
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| <前置> | <简述> | ✅ |
+
+### 用户原始反馈（如有）
+
+| # | 反馈 | 状态 |
+|---|------|------|
+| P1 | <原始需求> | ✅ 已修复 / ⏳ 待办 |
+
+---
+
+## 二、整体策略（大型任务必填）
+
+> 多阶段任务的路线图，每阶段独立可交付。
+
+```
+阶段 1（X 周）→ <产出>
+阶段 2（X 周）→ <产出>
+阶段 3（X 周）→ <产出>
+```
+
+**当前进度**：阶段 N / M
+
+---
+
+## 📋 需求
+
+[一句话描述需求]
+
+## 🎯 目标
+
+[可衡量的完成标准]
+
+## 🔧 方案
+
+[技术方案描述，包括架构设计、关键决策理由]
+
+### 方案对比
+
+| 方案 | 优点 | 缺点 | 推荐 |
+|------|------|------|------|
+| A | ... | ... | ✅ |
+| B | ... | ... | ❌ |
+
+### 关键技术决策（架构选择时填写）
+
+- **决策 1**：选 X 而非 Y，理由是...
+- **决策 2**：用模式 P 而非 Q，理由是...
+
+## 📁 涉及文件
+
+### Critical Files（关键文件，⭐ 标注）
+
+- ⭐ `xxx/yyy/Xxx.java` - 新增/修改（核心逻辑）
+
+### 后端
+
+- `src/main/java/...` - 新增/修改/删除（理由）
+
+### 前端
+
+- `src/api/...` - 新增/修改/删除（理由）
+
+### 数据库
+
+- `V27__add_new_table.sql` - 新增/修改（理由）
+
+## 📝 实现步骤
+
+> 按执行顺序排列，每步完成后勾选（进度自动算）
+
+### 阶段 N（如有）：<阶段名>
+
+- [ ] 子步骤 1
+- [ ] 子步骤 2
+
+### 阶段 N+1：<阶段名>
+
+- [ ] 子步骤 3
+
+## 🧪 测试策略
+
+- 单元测试覆盖：*核心逻辑方法*
+- 集成测试覆盖：*API 端点（curl + psql）*
+- 手动测试覆盖：*UI 交互流程*
+- 验证分层参考 [§9 测试策略](#9-测试策略)
+
+## ⚠️ 风险与回退
+
+| 风险 | 概率 | 影响 | 应对 | 回退方案 |
+|------|------|------|------|---------|
+| ... | 低/中/高 | 低/中/高 | ... | ... |
+
+## ✅ 验证标准
+
+> 与 G5 对应，验证通过后在此勾选
+
+- [ ] 标准 1
+- [ ] 标准 2
+
+---
+
+## ✅ 验证结果
+
+> 验证日期：YYYY-MM-DD | 验证人：Claude Code
+
+### API 验证（集成）
+
+| 验证项 | 命令 | 期望 | 实际 | 结论 |
+|---|---|---|---|---|
+| 接口 200 | `curl ...` | 200 | 200 | ✅ |
+| 权限拒绝 | `curl ...` | 403 | 403 | ✅ |
+| 数据落库 | `psql ...` | 1 行 | 1 行 | ✅ |
+
+### UI 验证（手动）
+
+| 验证项 | 操作 | 期望 | 实际 | 结论 |
+|---|---|---|---|---|
+| 页面渲染 | 浏览器访问 | UI 正常 | UI 正常 | ✅ |
+| 交互流程 | 点击按钮 | 流程通顺 | 流程通顺 | ✅ |
+
+### 回归验证
+
+- [ ] 旧功能 1 未受影响
+- [ ] 旧功能 2 未受影响
+
+## 📝 经验总结
+
+### 踩坑
+- ...
+
+### 教训（如借鉴自大型项目可加此节）
+- ...
+
+### 复用
+- ...
+
+### 流程改进
+- ...
+
+---
+
+## 📦 交付清单
+
+### 已完成文件
+
+- ⭐ `xxx/Xxx.java` - <简述>
+- `xxx/Yyy.vue` - <简述>
+
+### 待办（如未全部完成）
+
+- [ ] <待办项>
+
+### 上线检查项
+
+- [ ] 配置文件已更新（.env / application.yml）
+- [ ] 数据库迁移已执行（Flyway 自动）
+- [ ] Docker 镜像已重建（如涉及）
+- [ ] CLAUDE.md 已同步（API / 表 / 配置变更）
+- [ ] 用户验收通过
+
+---
+
+## 变更日志
+
+- YYYY-MM-DD-HH:MM 创建
+- YYYY-MM-DD-HH:MM 进入进行中
+- YYYY-MM-DD 完成（commit: <hash>）
+```
+
+> **章节裁剪指南**：
+> - 小型任务（单文件 < 10 行）：可省略"一、Context"、"二、整体策略"、"📦 交付清单"
+> - 无架构选择：可省略"关键技术决策"
+> - 无前期工作：可省略"已完成"
+```
+
+---
+
+### 4. 质量门禁总表
+
+每个阶段结束后，必须通过对应的质量门禁才能进入下一阶段：
+
+```
+阶段 ① → G1 需求确认     → 阶段 ②
+阶段 ② → G2 计划批准     → 阶段 ③
+阶段 ③ → G3 实现自检     → 阶段 ④
+阶段 ④ → G4 审查通过     → 阶段 ⑤
+阶段 ⑤ → G5 验证通过     → 阶段 ⑥
+阶段 ⑥ → G6 归档完成     → 完成
+```
+
+---
+
+### 5. 变更影响矩阵
+
+开发前快速判断改动范围：
+
+| 改动类型 | 前端 | 后端 | 数据库 | 配置 | 部署 | 文档 |
+|---------|------|------|--------|------|------|------|
+| 新增页面/组件 | ✅ | - | - | - | 构建 | 可选 |
+| 新增 API 接口 | ✅ | ✅ | 可选 | - | 重启后端 | API 文档 |
+| 新增数据库表 | - | ✅ | ✅ | - | Flyway 迁移 | 表结构 |
+| 修改业务逻辑 | 可选 | ✅ | 可选 | - | 重启后端 | 可选 |
+| 安全加固 | 可选 | ✅ | - | - | 重启后端 | 安全指南 |
+| 修改配置 | - | - | - | ✅ | 重启容器 | 配置文档 |
+| 部署脚本 | - | - | - | ✅ | 执行脚本 | 部署文档 |
+| 数据库迁移 | - | ✅ | ✅ | - | Flyway 自动 | 迁移文档 |
+
+---
+
+### 6. 验证命令速查
+
+| 验证场景 | 命令 |
+|---------|------|
+| 后端 API 正常 | `curl -s -X POST "http://localhost:9004/api/auth/login" -H "Content-Type: application/json" -d '{"username":"10000000","password":"123456"}'` |
+| 数据库状态 | `docker exec miaotongdoc-postgres psql -U miaotong -d miaotongdocdb -c "SELECT ..."` |
+| 容器状态 | `docker compose ps \| grep healthy` |
+| 后端日志 | `docker compose logs --tail=50 web-server` |
+| 前端构建 | `npm run build` |
+| 代码审查 | 在 Claude 中运行 `/code-review` |
+
+---
+
+### 7. 常见场景速查
+
+| 场景 | 流程 | 关键门禁 |
+|------|------|---------|
+| 修复一个 bug | ① 需求分析 → ③ 代码实现 → ④ 审查 → ⑤ 验证 → ⑥ 归档 | G3, G4, G5 |
+| 添加一个简单页面 | ① 需求分析 → ② 计划（口头）→ ③ 实现 → ④ 审查 → ⑤ 验证 → ⑥ 归档 | G2, G4, G5 |
+| 新功能模块（前后端+数据库） | ① 需求分析 → ② 计划（正式文档+ADR）→ ③ 实现 → ④ 审查 → ⑤ 验证 → ⑥ 归档 | G1-G6 全部 |
+| 架构重构 | ① 需求分析 → ② 计划（正式文档+ADR）→ ③ 实现（分阶段）→ ④ 审查 → ⑤ 验证 → ⑥ 归档 | G1-G6 全部，可能多次迭代 |
+| 数据库迁移 | ① 需求分析 → ② 计划（ADR）→ ③ 实现 → ④ 审查 → ⑤ 验证（回滚测试）→ ⑥ 归档 | G2, G4, G5（回滚验证必做） |
+
+---
+
+### 8. AI 行为规范
+
+以下规范约束 Claude Code 在每次开发调用中的行为：
+
+1. **流程强制**：严格按照六阶段 + 六门禁执行，不允许跳过任何阶段或门禁
+2. **文档先行**：中等以上复杂度任务，必须先写计划文档再编码
+3. **进度可见**：编码过程中用 `TodoWrite` 维护可见的任务列表
+4. **验证闭环**：每项功能完成，必须用真实请求/响应验证，不能只"看代码没问题"
+5. **文档同步**：项目结构变化时，同步更新 CLAUDE.md 相关章节
+6. **记忆机制**：用户反馈非显而易见的业务逻辑，用 `/memory` 记录
+7. **问题上报**：遇到模糊需求或阻塞问题，立即确认，不自行假设
+8. **提交规范**：提交信息必须包含 `Plan:` 引用，方便追溯
+9. **CLAUDE.md 同步纪律**：当改动影响项目结构时，**必须**在 commit 前同步更新 CLAUDE.md
+10. **commit 不主动执行**：除非用户明确说"提交吧/提交代码"，否则不主动 `git add` / `git commit` / `git push`。完成后用文字提示 commit message，由用户决定是否执行
+11. **plans/ 实时同步**：每次操作 plans/ 目录（新建/修改/完成计划、状态变更、临时需求追加）后，**必须**立即更新 `plans/README.md` 的"项目总看板"+ 更新该计划的 `📊 状态摘要`。不延迟到下次提交。
+
+#### 9.0 文档同步纪律（展开）
+
+> 这是规则 5（文档同步）的**硬性细化**：保证 CLAUDE.md 与 plans/ 都不与代码脱节。
+> CLAUDE.md 同步**结构性变化**，plans/ 同步**过程性记录**，两者职责分明。
+
+**CLAUDE.md 触发清单**（任意一项命中即需要同步 CLAUDE.md）：
+
+| 改动类型 | 同步哪些章节 |
+|---|---|
+| 新增/重命名/删除文件、目录 | 代码结构 |
+| 新增/修改/删除 API 接口、Controller、Service | API 接口、代码结构 |
+| 新增/修改数据库表或 Flyway 迁移（V*_*.sql）| 数据库设计 |
+| 修改配置文件（application.yml / docker-compose / nginx.conf / package.json / pom.xml）| 部署指南、技术栈、相关引用 |
+| 新增/修改 Docker 服务、端口、健康检查 | 部署指南、项目架构 |
+| 新增/修改前端组件、页面、路由 | 代码结构、API 接口 |
+
+**plans/ 触发清单**（任意一项命中即需要新建/更新 plans/ 文档）：
+
+| 改动类型 | 写哪里 |
+|---|---|
+| 任何 🟡 中等 / 🔴 复杂的开发任务 | 新建 `plans/YYYY-MM-DD-<feature>.md` |
+| 涉及架构级选择（JWT vs Session、状态机方案等）| 新建 `plans/ADR-NNN-<title>.md` |
+| 踩到值得跨任务复用的坑 | 追加到 `plans/experience.md` |
+
+**不触发**：
+- 纯业务逻辑 bugfix（小且无架构影响）
+- 纯样式调整
+- 注释修改
+- 单文件 < 10 行的小改动
+
+**做法**：
+- **小改动**：CLAUDE.md 更新与代码放在**同一 commit**
+- **大改动**：CLAUDE.md 更新紧随其后一个独立 commit（`docs(claude): 同步 xxx 变更`）
+- **plans/ 文档**：与 G6 归档同步，在 commit 之后或紧随其后 commit（`docs(plans): 新增 xxx 计划文档`）
+
+**门禁 G6 强化**：
+- [ ] 本次变更涉及的 CLAUDE.md 章节已同步（或确认 N/A）
+- [ ] 本次变更涉及的 plans/ 文档已写（或确认 N/A）
+- [ ] 触发清单逐项过完
+
+#### 10.0 commit 主动执行策略（展开）
+
+**默认行为**：
+- 完成代码改动后**不主动**执行 `git add` / `git commit` / `git push`
+- 用文字提示用户："建议的 commit message：..." + `git status` 输出
+- 等用户明确说"提交吧/提交代码/提交吧"再执行
+
+**例外（可主动执行）**：
+- 用户在当次会话内明确说"直接提交/不用问"
+- 上下文已有"授权本次会话不再问"的证据
+
+**永远不主动执行**（无论上下文如何）：
+- `git push --force` / `git push -f`
+- `git push` 到 main/master（除非用户明确要求）
+- 任何涉及 `rm -rf` / `docker compose down -v` / 改 V1-V26 迁移的操作（见 [危险操作确认机制](#危险操作确认机制)）
+
+#### 11.0 plans/ 实时同步（展开）
+
+> 保证 plans/ 目录里的信息**实时反映项目状态**，不依赖 commit 周期。
+
+**触发时机**（任意一项发生即必须同步）：
+| 事件 | 更新什么 |
+|---|---|
+| 新建计划文件 | 该计划 `📊 状态摘要` + `plans/README.md` 看板"统计概览/进行中" |
+| 状态变更（规划中→进行中→已完成）| 该计划 frontmatter + `📊 状态摘要` + 看板对应区域 |
+| 实现步骤勾选变化 | 该计划 `📊 状态摘要` 进度条 |
+| 验证结果新增一行 | 该计划 `📊 状态摘要` 验证数 + 看板（如适用）|
+| 新增临时需求 | 该计划 `🔄 临时需求与变更` 表格 + 看板"待评估临时需求"区 |
+| 新增经验沉淀 | `plans/experience.md` + 看板"经验汇总条目" |
+
+**做法**：
+- **同一消息内**：操作 plans/ 的同时**立即更新**看板与状态摘要，**不要等用户提醒**
+- **看板更新** = 改 `plans/README.md` 顶部"项目总看板"章节
+- **末尾追加**一行到 `plans/README.md` 的"看板更新记录"表（时间 + 内容 + 操作人）
+
+**门禁强化**：
+- [ ] 本次操作的 plans/ 文件状态摘要已更新
+- [ ] plans/README.md 总看板已同步
+- [ ] 看板更新记录已追加
+
+#### 13.0 AI 协作工具使用规范（展开）
+
+| 工具 | 何时用 | 何时不用 |
+|---|---|---|
+| **`/memory`** | 用户反馈非显而易见的业务逻辑（"这个项目里 X 永远等于 Y"）、项目特定的偏好、跨会话需要的事实 | 能从代码/git/CALUDE.md 推导出的一切；本会话临时信息 |
+| **`/skill`** | 用户输入 `/xxx` 显式调用，或任务匹配 skill 描述时 | 不要猜测未列出的 skill；不要把 Skill 当普通工具 |
+| **`AskUserQuestion`** | 需要用户做选择/确认时（方案分歧、API 选择、UI 文案等）| 有合理默认值且不关键时；用户已明确说"你来定" |
+| **`EnterPlanMode`** | 🔴 复杂任务（多文件、新功能、架构变更）| 🟢 简单 bugfix / 单行修改 |
+| **Explore agent** | 摸清一个模块怎么工作，需要读多个文件 | 只读 1-2 个已知文件时 |
+| **Plan agent** | 设计方案、识别关键文件、权衡架构 | 写代码（Plan 不写代码）|
+| **Workflow** | 用户明确说"ultracode/用 workflow/多 agent 编排" | 任务小、并行无收益时 |
+| **`TodoWrite`** | 任何 3 步以上的任务 | 1-2 步的小改动 |
+| **`Worktree`** | 用户明确要求，或并行 agent 会改同一文件 | 默认不用 |
+
+**多 agent 并行规则**：
+- 独立任务（多个 Explore / 多个 Plan / 多个并行修改）放在**一个消息里**多个 tool call，节省时间
+- 有依赖的任务必须串行（A 的输出是 B 的输入）
+- 同一个文件不能并行改（用 Worktree 隔离）
+
+#### 14.0 commit message 模板
+
+§6 提交规范的 message 模板里**追加复选框**：
+
+```
+<type>(<scope>): <subject>
+
+[正文：列出关键变更点]
+
+关联计划：[计划文档名]
+关联 ADR：[ADR 编号 + 标题]（如有）
+
+- [ ] CLAUDE.md 已同步（或 N/A）
+- [ ] 验证结果已记录（命令+期望+实际+结论）
+```
+
+### 9. 测试策略
+
+> "业务逻辑必须有测试保护。无测试的代码等于'不知道能不能跑'"——核心原则 3。
+> 本节定义本项目当前阶段的**测试基线、工具链、强制记录要求**。
+
+#### 9.1 当前测试基线
+
+| 层 | 现状 | 备注 |
+|---|---|---|
+| 后端单测 | ❌ 无 `src/test/java/` 测试文件 | `pom.xml` 已引入 `spring-boot-starter-test`（JUnit 5 + Mockito），框架就绪未使用 |
+| 前端单测 | ❌ 无 `.spec.ts` / `.test.ts` | `package.json` 未安装 vitest/jest |
+| 集成验证 | ✅ 主力 | `curl + psql + docker logs` 三板斧 |
+| E2E | ❌ 无自动化 | 依赖人工浏览器验收 |
+
+> **结论**：本项目 G5 验证**以集成验证为主**，单测在补齐阶段。当前不要求所有改动都有单测，但**核心 Service 方法、权限校验、状态机迁移**这三类必须有单测保护（详见 9.4）。
+
+#### 9.2 工具链速查
+
+**后端：**
+
+| 工具 | 命令 | 用途 |
+|---|---|---|
+| Maven 单测 | `mvn test` | 跑所有 Java 单测 |
+| Maven 单测（指定） | `mvn -Dtest=*XxxTest test` | 跑指定测试类（开发循环用）|
+| Maven 编译 | `mvn clean compile` | 验证编译通过 |
+| Maven 打包 | `mvn clean package -DskipTests` | 出 JAR（跳过测试）|
+| Jacoco | 待配置 | 覆盖率（建议下个迭代接入）|
+
+**前端：**
+
+| 工具 | 命令 | 用途 |
+|---|---|---|
+| 类型检查 | `npm run build` (= `vue-tsc && vite build`) | 含类型检查的完整构建 |
+| 快速构建 | `npx vite build` | 跳过 vue-tsc，10-20s 出 bundle |
+| 仅类型检查 | `npx vue-tsc --noEmit` | 不构建只检查类型（快）|
+| Lint | `npm run lint` | ESLint |
+| 单测 | 暂未启用 | 见 9.5 演进方向 |
+
+**集成验证：**
+
+| 工具 | 命令 | 用途 |
+|---|---|---|
+| API 调用 | `curl -s -X POST http://localhost:9004/...` | 真打后端 API |
+| JSON 解析 | `... \| jq '.data.field'` | 提取字段做断言 |
+| 数据库查询 | `docker exec miaotongdoc-postgres psql -U miaotong -d miaotongdocdb -c "..."` | 验数据状态 |
+| 容器健康 | `docker compose ps \| grep healthy` | 看启动是否就绪 |
+| 后端日志 | `docker compose logs --tail=50 web-server` | 查 Flyway / SQL / 异常 |
+| 性能 | `curl -w "%{time_total}\n" ...` | 看响应耗时 |
+
+**E2E（人工）：**
+
+| 工具 | 用途 |
+|---|---|
+| 浏览器手测 | UI 验收、用户视角测试 |
+| Vue DevTools | 组件树、Pinia 状态、事件追踪 |
+| 浏览器 DevTools | Network / WebSocket / Console |
+
+#### 9.3 按改动类型选测试策略
+
+| 改动类型 | 必做 | 可选 |
+|---|---|---|
+| **修 bug** | 复现 → 修复 → 回归（`mvn test` + `curl`）| 边界用例单测 |
+| **加 Service 方法** | 单测：正常/异常/边界 3 分支（JUnit 5 + Mockito）| @SpringBootTest 集成 |
+| **改 Controller** | `curl` 验证 HTTP 状态码 + 响应体 | @WebMvcTest 切片 |
+| **加新 API 模块** | `curl` 三态验证（200/403/404）+ `psql` 看 DB | 权限矩阵测试 |
+| **前端加组件** | 浏览器手测 + 截图 | vitest 组件测试（演进）|
+| **数据库迁移** | Flyway 自动 + `psql \d` 看新表 + `psql SELECT` 看数据 | 回滚脚本测试 |
+| **安全修复** | 权限矩阵 `curl`（admin/owner/share/无权限 4 角色）| 渗透测试 |
+| **重构（不改行为）** | 改动前后 `mvn test` + `curl` 一致 | 完整回归 |
+
+#### 9.4 必须有单测的三类代码
+
+1. **核心 Service 业务方法**：超过 3 个分支、状态机迁移、金额/权限计算
+2. **权限校验逻辑**：owner / share / admin 三种判定、防止越权
+3. **复杂状态机**：文档状态（draft→signing→signed）、合同审批（draft→pending→approved/rejected）
+
+> 单测是**保护**而非**装饰**：写之前先问"如果这块错了，谁会骂我？"——如果答案是用户/数据/钱，就写。
+
+#### 9.5 演进方向（下一个迭代）
+
+1. **后端补单测**：从核心 Service（DocumentService / SigningService / ContractService）开始，每个方法补 1 个 happy path + 1 个边界用例
+2. **前端接入 vitest**：先给 Pinia store 和工具函数（`utils/`）写单测，再扩展到组件
+3. **接入 Jacoco**：覆盖率门槛核心代码 ≥ 60%，关键路径 ≥ 80%
+4. **CI 集成**：跑测试不通过就不让合并
+
+#### 9.6 测试结果强制记录
+
+> **铁律**：**没有记录的验证 = 没验证**。G5 门禁**不通过**任何缺失记录的功能。
+
+每个计划文档的 `## ✅ 验证结果` 表格必须填完整：
+
+```markdown
+## ✅ 验证结果
+
+> 验证日期：YYYY-MM-DD | 验证人：Claude Code
+
+| 验证项 | 命令 | 期望 | 实际 | 结论 |
+|--------|------|------|------|------|
+| 后端编译 | `mvn clean compile` | BUILD SUCCESS | BUILD SUCCESS | ✅ |
+| 单测 | `mvn -Dtest=DocumentServiceTest test` | Tests run: 5, Failures: 0 | Tests run: 5, Failures: 0 | ✅ |
+| API 正常 | `curl -X POST .../api/documents` | 200 + data.id | 200 + data.id=42 | ✅ |
+| API 权限 | `curl -X POST .../api/admin/users` (普通用户) | 403 | 403 | ✅ |
+| DB 状态 | `psql -c "SELECT ..."` | 1 行 updated | 1 行 updated | ✅ |
+| 回归 | `mvn test` | 全绿 | 全绿 | ✅ |
+| 用户验收 | 浏览器手测 | UI 正确 | 通过 | ✅ |
+```
+
+**记录到哪里**：
+- 计划文档末尾（首选）
+- 关键回归结果可贴进 `commit message` 或 PR 描述
+- 重大 bug 修复的复现命令贴进 `## 📝 经验总结`
+
+**门禁 G5 强化**：
+- [ ] 所有验证项已记录（命令 + 期望 + 实际 + 结论）
+- [ ] 回归验证无副作用
+- [ ] 用户已确认验收
+- [ ] **没有"应该没问题"这类模糊描述，必须有证据**
+
+---
+
+## 危险操作确认机制
+
+> Claude Code 在以下场景**必须先停下来与用户确认**，不得自行执行。
+> 这一节是写给 Claude 的纪律，也是给用户的"预期管理"——什么场景会被打断。
+
+### 必须确认的操作清单
+
+| 操作 | 风险 | 确认话术示例 |
+|---|---|---|
+| `rm -rf <目录>` | 不可逆删除 | "确认要删除 `MiaotongDoc-Editor/plugins/old/`？该目录不在 git 跟踪里" |
+| `docker compose down` | 容器被删（数据卷保留，但容器状态丢失）| "确认 `docker compose down`？这会停止并删除所有容器，数据卷保留" |
+| `docker compose down -v` | **数据卷也删**（数据库/对象存储全清）| "⚠️ 这是带 `-v` 的 down，会删除命名卷。Postgres/MinIO 数据将永久丢失。确认吗？" |
+| `docker system prune -a` | 删除所有未用镜像/容器/网络 | "将删除所有未使用的 Docker 资源。确认吗？" |
+| `git reset --hard` | 未提交的改动全部丢失 | "确认 `--hard` reset？未提交的 N 个文件改动将永久丢失" |
+| `git push --force` / `git push -f` | 覆盖远程历史 | "确认 force push？远程 N 个 commit 将被覆盖" |
+| `git push` 到 main/master | 直接推主分支 | "确认直接推 main？建议走 PR 流程" |
+| `mvn clean` 删 target/ | 重建产物（不危险但耗时）| 静默执行即可，**不需要确认** |
+| 改 `.env` 密码/密钥 | 影响部署 | "确认改 `.env` 中的 `DB_PASSWORD`？需要同步更新所有引用文档" |
+| 改 Flyway V1-V26 已发布的迁移 | 历史数据不可迁移 | "确认修改 V5 迁移？已部署的环境无法回退到旧版本" |
+| `npm publish` / `mvn deploy` | 发布到公共仓库 | "确认发布到 npm/Maven Central？" |
+| 跑未知的 `.sh` 脚本 | 脚本行为不可知 | "先看脚本内容。确认执行吗？" |
+| 大批量文件改动（> 10 个文件）| 影响面广 | "本次改动涉及 N 个文件。确认范围？" |
+
+### 默认策略
+
+| 场景 | 策略 |
+|---|---|
+| 用户明确说"直接做/不用问/提交吧" | 当次会话内同类操作可豁免 |
+| 用户之前授权过同类操作 | 上下文内有证据即可，不重复确认 |
+| 纯只读操作（`ls` / `cat` / `git status` / `Read` / `Grep` / `Glob`）| **永不确认**，直接做 |
+| 创建新文件 / 改源代码 | **永不确认**，这是开发本职工作 |
+| 跑 `mvn test` / `npm run build` | **永不确认**，验证手段 |
+| 跑 `docker compose restart <已存在服务>` | 静默执行 |
+| 跑 `docker compose up -d <新服务>` | 简述新增服务 + 静默执行 |
+
+### 与用户的协作约定
+
+**Claude 这边**：
+1. 危险操作执行前**用一句话说明风险**，再调 `AskUserQuestion` 或文字确认
+2. 高风险操作（删数据/force push/改 V1-V26）必须用 `AskUserQuestion` 工具，不能纯文字问
+3. 给出**推荐选项**：通常是"先备份再操作"或"分两步走"
+
+**用户这边**：
+1. 明确说"授权本次会话内不再问同类问题"可以减少打断
+2. 明确说"这次直接做"可以单次豁免
+3. 默认信任 Claude 处理日常改动，**只在红线操作介入**
+
+### 红线（绝不执行）
+
+无论上下文如何，绝不自行执行：
+- `rm -rf /` 或 `rm -rf ~` 或 `rm -rf .*`（删家目录/根）dist和jar的部署文件例外，该目录不在 git 跟踪里" |
+- `dd if=/dev/zero of=/dev/sda`（毁磁盘）
+- `mkfs` 格式化磁盘
+- `chmod -R 777 /`
+- 向 main 分支 force push（除非用户明确要求并复述风险）
 
 ---
 
@@ -1276,12 +2587,12 @@ AI 功能通过 `AiProxyService` 代理转发，支持：
 
 | 文档 | 路径 | 说明 |
 |------|------|------|
-| **内网部署指南** | `DEPLOY.md` | **从零部署流程、启动顺序、故障排查、已知陷阱** |
-| 产品功能规划 | `FEATURE_DESIGN.md` | 7 个模块、页面清单、优先级排序 |
-| 系统架构文档 | `MiaotongDoc-Architecture.md` | 架构图、Docker 服务清单、问题排查 |
+| **开发计划与决策** | [`plans/README.md`](plans/README.md) | **所有开发计划、ADR、经验汇总的统一落点** |
+| **内网部署指南** | `DEPLOY.md` | 从零部署流程、启动顺序、故障排查、已知陷阱 |
 | 系统审查报告 | `SYSTEM_AUDIT.md` | 已开发功能、43 个问题、修复计划 |
-| Docker 部署文档 | `MiaotongDoc-Docker/README.md` | 详细部署指南 |
-| 编辑器说明 | `MiaotongDoc-Editor/README.md` | 编辑器镜像构建说明 |
+| 变更日志 | `CHANGELOG.md` | 项目版本变更记录 |
+| Docker 部署文档 | `MiaotongDoc-Docker/README.md` | 详细部署指南（如存在） |
+| 编辑器说明 | `MiaotongDoc-Editor/README.md` | 编辑器镜像构建说明（如存在） |
 | AI 插件变更日志 | `MiaotongDoc-AI/CHANGELOG.md` | AI 插件版本记录 |
 
 ---
