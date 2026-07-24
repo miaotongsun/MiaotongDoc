@@ -2327,3 +2327,514 @@ Phase 13.26 的手型工具有两个 bug:
 4. 表单 in-place:填充后落盘 reload(不下载);无 AcroForm 时提示
 5. 签名 in-place:放置后落盘 reload(不下载)
 6. 手型工具:切手型 -> 拖动平移文档(选不到文字 + 平移生效)
+
+---
+
+## 四十四、Phase 13.29 - 组织页面功能重构(提取/合并/缩放栏)(2026-07-22)
+
+### 临时需求(用户)
+1. 提取按钮逻辑不对:点击后应提示"保存到新文档 / 覆盖现有文档"
+2. 缩放按钮应放画布最首行中间
+3. 合并弹窗功能不完整,重新规划
+
+### 根因(Explore 诊断)
+- 提取:`onReorganizeExtract` -> `pdfApi.extractPages` -> 后端 `/pages/extract` 用 `replacePdfBytes` **直接覆盖**,无提示无另存
+- 合并:MergeDialog 仅 checkbox 选已有整文档,无上传/拖拽排序/页区间/预览/另存
+- 缩放:在 Ribbon 视图 tab,画布上方无浮动栏
+
+### 改动
+- **提取三模式**(PdfExtractModeDialog.vue 新建):点击提取 -> 弹窗选"保存为新文档/覆盖当前/下载 PDF"
+  - 新文档:后端 `/pages/extract-to-new`(PdfToolService.extractPagesToNew + DocumentService.createPdfFromBytes)-> 跳转新文档
+  - 覆盖:二次确认 -> `/pages/extract`(现有)-> reload
+  - 下载:`/extract-pages-batch`(现有返回 zip)-> 下载
+- **画布缩放栏**(PdfCanvasToolbar.vue 新建):画布顶部 sticky 居中胶囊(缩小/百分比下拉/放大/适合宽度/适合页面/实际大小),复用 renderer 缩放方法
+- **合并弹窗完整重写**(MergeDialog.vue):可拖拽排序(上下移动)+ 页区间输入(每文档"1-3,5")+ 从文档库搜索添加 + 上传本地 PDF + 目标(覆盖/新文档)+ 后端 `/merge-advanced`(PdfToolService.mergeAdvanced + parsePageRanges)
+- 后端新增:`DocumentService.createPdfFromBytes`、`PdfToolService.extractPagesToNew/mergeAdvanced/parsePageRanges`、`PdfController /pages/extract-to-new + /merge-advanced`
+
+### 验收结果(2026-07-22)
+- 画布缩放栏:✓ 顶部居中显示,点放大 canvas 宽度变大,百分比 140% 显示
+- 提取三模式:✓ 全选->提取->弹窗含"保存为新文档/覆盖当前文档/下载 PDF 文件"三选项
+- 合并弹窗:✓ 步骤提示 + 页区间输入(.md-range-input)+ 当前文档默认在列表 + "保存为新文档" + "上传本地 PDF"
+- 后端端点:`/pages/extract-to-new` 200 返回新 docId;`/merge-advanced` 200 返回新 docId
+- 回归 `verify-text-select.js`:3/3
+- 回归 `deep-verify-stageD.js`:23/23
+- 构建:前端 `npm run build` 0 error (43s) + 后端 `mvn clean package` 0 error (32s)
+- 部署:前端 dist 清空后拷入;后端 jar 替换;nginx + web-server 重启
+
+### 状态:已完成(2026-07-22)
+
+### Phase 13.29 修复(2026-07-22,提取/合并跳转 + 缩放位置 + 闪烁)
+用户反馈 3 问题,根因 + 修复:
+1. **提取/合并到新文档后页面没加载**:根因 `DocEditor.vue` 只有 onMounted 加载,无 watch(docId)。组件复用 router.push 后不重新加载。
+   - 修复:DocEditor 抽 loadDoc 函数 + `watch(docId)` 重新加载(重置 pdfLoaded/pdfFileUrl)
+   - `onExtractGotoNew`/`onMergeConfirmed`(new 模式)先关闭 overlay(organizeViewOpen/mergeDialogOpen)再 router.push
+2. **重复提取报错 400**:覆盖提取后当前文档页数变,组织页面 selected 仍含旧页码,再提取超范围 400。
+   - 修复:PdfOrganizePages defineExpose 加 `clearSelection`;`onExtractOverwriteReload` reload 后调 `clearSelection()` 清选区
+3. **排序页面闪烁**:TransitionGroup `pdf-org-grid-move` 350ms 动画 + `leave-active position:absolute` 导致拖拽时布局跳动闪烁。
+   - 修复:move 动画缩短到 120ms,enter/leave 移除动画,leave-active 改 position:static
+4. **组织页面缩放按钮位置**:原在 header 右侧,用户要求画布顶部居中。
+   - 修复:从 header 移除 `pdf-org-zoom`,在网格上方加 `pdf-org-zoom-bar`(flex justify-center 居中)
+
+### 验证结果
+- `verify-13-29-fix.js`: **5/5** -- 缩放栏网格顶部居中 + 提取到新文档跳转(/editor/433)+ 组织页面关闭 + 新文档 canvas 加载
+- `verify-merge-new.js`: 合并到新文档跳转(/editor/435)+ 新文档加载 ✓
+- 回归 `verify-text-select.js`: 3/3
+- 回归 `deep-verify-stageD.js`: 23/23
+- 构建:`npm run build` 0 error (40s)
+- 部署:前端 dist 清空后拷入;nginx 重启
+
+### Phase 13.30 - 6 项修复(2026-07-23)
+
+1. **提取下载后界面卡死**:`PdfExtractModeDialog` 下载模式未通知组织页面清 busy。加 `emit('done')`,`PdfEditor` 接 `@done` 调 `markDone`。
+2. **组织页面缩放按钮重设计**:原 `.pdf-org-zoom` CSS 残留(新 `.pdf-org-zoom-bar` CSS 未生效)。重设计为宽 100% 居中胶囊:32px 圆角 8px 按钮 + 阴影 + hover 蓝色高亮 + 64px 数值显示。
+3. **从文件导入页面尺寸错误**:`usePdfRenderer` `pageWidth/pageHeight` 单值 ref,所有 PdfCanvas 用第一页尺寸。改为 `pageSizes = ref<Map<number, {w, h}>>`,`renderPage` 存每页 raw 尺寸;`PdfEditor` 加 `getPageRawSize(pn)`,所有 PdfCanvas 模板改用每页独立尺寸。
+4. **提取当前页改三模式**:`onExtractCurrent` 改弹 `PdfExtractModeDialog`(与组织页提取一致)。
+5. **所有 PDF 下载文件名规范**:`buildDownloadName(op, ext)` = `${docTitle}_${op}_${YYYYMMDD-HHmmss}.${ext}`(去特殊字符)。替换 7 处:`PdfEditor`(filled/encrypt/decrypt)+ `PdfExtractModeDialog`(extract zip)+ `PdfOrganizePages`(pages-1-3 zip / split / split-ranges)+ `PdfExportMenu`(convert / compress / encrypt / decrypt)。
+6. **canvas toolbar 位置 + 缩放**:CSS `top: 12px; margin: 12px auto 24px`(原 8px 顶 8px 底),与文档留 24px 间距。缩放逻辑:点放大 → `onZoomIn` → `renderer.zoomIn` scale+0.2 + `reRenderAll` → canvas 实际宽度变大,百分比 > 100%(已验证)。
+
+### 验收结果(2026-07-23)
+- `verify-13-30.js`: **10/10** -- 提取当前页三模式 / 缩放栏居中+圆角+阴影+不在 header / toolbar 距文档 24px / 缩放 canvas 变大 / 下载文件名 `cov_extract_20260723-093407.zip` / 下载后组织页面 busy 已清
+- 回归 `verify-text-select.js`: 3/3
+- 回归 `deep-verify-stageD.js`: 23/23
+- 回归 `verify-13-29-fix.js`: 5/5
+- 构建: `npm run build` 0 error (50s)
+- 部署: 前端 dist 清空后拷入;nginx 重启
+
+### Phase 13.31 - canvas toolbar 重设计(Acrobat DC 风格)(2026-07-23)
+
+用户要求 toolbar 吸顶在画布最上方 + 丰富功能(选择/手型),参考 Acrobat DC。
+
+**改动**:
+- `PdfCanvasToolbar.vue` 重写,吸顶(position: sticky; top: 0)+ 三段布局:
+  - **左**:工具(选择/手型,is-active 高亮)
+  - **中**:页面导航(上一页/页码输入/总页数/下一页,页码输入 Enter 跳转)
+  - **右**:缩放(缩小/百分比下拉 25-400/放大/分隔/适合宽度/适合页面/实际大小)
+- CSS:flex space-between 全宽布局 + 底部 1px border + 阴影 + margin-bottom 12px
+- `PdfEditor.vue` 加 `onToolbarSetTool(tool)`(selectTool)+ `onToolbarGoPage(p)`(clamp 1-total + goToPage)
+- 模板传 :active-tool/:current-page/:total-pages + 新事件 @set-tool/@go-prev/@go-next/@go-page
+
+### 验收结果
+- `verify-toolbar.js`: **7/7** -- sticky 吸顶 / 三段布局 / 手型工具激活 + canvas 切到 move / 选择工具高亮 / 上下页 / 输入跳转 / 缩放 / sticky 滚动前后 top 不变(191)
+- `verify-13-30.js`: 10/10(回归)
+- `verify-text-select.js`: 3/3
+- `deep-verify-stageD.js`: 23/23
+- 构建: `npm run build` 0 error (43s)
+- 部署: nginx 重启
+
+### Phase 13.32 - 多处联动 + zip 修复 + 面板切 tab(2026-07-23)
+
+用户反馈 5 个问题:
+1. **canvas toolbar 按钮太分散**
+2. **索引页/下拉/上下工具栏当前页联动失效**(包括提取当前页不准)
+3. **组织页 zip 导出为空 / 提取下载有问题**
+4. **双栏模式栏间距太窄**
+5. **面板按钮功能无法测试**
+
+#### 改动
+
+**1. toolbar 紧凑化** (`PdfCanvasToolbar.vue`):
+- gap: 12px → 6px,padding: 6px 14px → 4px 10px
+- .pct-btn: height 30→26, min-width 30→26, padding 0 8px → 0 6px, gap 4→3, radius 6→4
+- .pct-group gap: 2→1
+- .pct-page-input: width 44→38, height 26→22, font 12→11
+- .pct-page-total: font 12→11
+- .pct-percent: min-width 60→50, font 12→11
+- .pct-sep: height 18→14, margin 4→2
+
+**2. 当前页联动** (`PdfThumbPanel.vue`):
+- 加 `watch(() => props.currentPage)` → `scrollIntoView({ block: 'nearest', behavior: 'smooth' })`
+- 缩略图卡片加 `data-page` 属性便于滚动定位
+- 缩略图高亮 (is-current class) 已基于 currentPage 计算,本来就联动
+- `onExtractCurrent` 用 `currentPage.value`(组织页内提取同样的弹模式选择弹窗)
+
+**3. zip 修复** (`PdfController.java`):
+- `POST /api/pdf/{id}/extract-pages-batch` 改为:每页生成独立 PDF → `buildZip` 打包 → 返回 `application/zip`
+- 文案: `extracted-pages.zip`
+- 文件名后缀统一 `*.zip`
+
+**前端** (`PdfExtractModeDialog.vue`):
+- 下载选项 title: "下载 PDF 文件" → "下载为 zip",desc: "每页一个独立 PDF 打包下载"
+
+**4. 双栏间距** (`PdfEditor.vue`):
+- `.pdf-facing-pair` 由 `display: grid; columns: 1fr var(--space-6) 1fr; gap: 0` 改为 `display: flex; gap: 32px`(更明显的栏间距,符合双栏阅读直觉)
+
+**5. 面板切 tab** (`PdfRightPanel.vue`):
+- 加 `watch(() => props.initialTab)`,外部切换时同步 `activeTab`(之前只读一次,父组件重复点同 tab 切不到)
+
+#### 验收(实施后)
+- verify-toolbar.js: 7/7(回归)
+- verify-13-30.js: 10/10(回归)
+- verify-text-select.js: 3/3
+- deep-verify-stageD.js: 23/23
+- 构建: `npm run build` 0 error
+- 部署: dist 清空后拷入 + nginx 重启
+
+
+### Phase 13.33 - 画布滚动驱动当前页联动(2026-07-23)
+
+用户反馈:"画布滚动时,两个工具栏的页面数要实时更新,画布展示的当前页要真是当前页"。
+根因:之前 currentPage 只通过 goToPage() / 缩略图点击改变,画布滚动不更新;single/facing 模式下滚动与当前页脱钩。
+
+**改动** (`PdfEditor.vue`):
+- 加 `setupPageObserver()`:用 IntersectionObserver 监听 `.pdf-page-card`(每页根 article,已有 `data-page-num`)
+  - rootMargin: `'0px 0px -60% 0px'`(顶部 40% 作为"激活区")
+  - threshold: `[0, 0.1, 0.3, 0.5, 0.8, 1]`
+  - 维护 `pageVisibleMap: Map<pageNum, intersectionRatio>`,回调中找出最大可见比的页
+- `goToPage()` 加程序化滚动锁:`isProgrammaticScroll=true`(800ms),避免与 observer 互踩
+- `watch(viewMode)` 和 `watch(totalPages)` → `setupPageObserver()`(视图切换/页数变化重建)
+- `onMounted` 末尾 `await nextTick() → setupPageObserver()`
+- `onBeforeUnmount` 加 `teardownPageObserver()`
+- `pageVisibleMap` 用 ref 维护,observer 回调是非响应式 ref mutate 但足够触发相关 computed
+
+**联动效果**:
+- 滚动画布 → `currentPage` 自动更新 → PdfCanvasToolbar 中页码输入框 + 总页数实时变化
+- → PdfThumbPanel `watch(currentPage)` 之前已加 → 自动 scrollIntoView 当前缩略图
+- → "提取当前页" `pendingExtractPages = [currentPage.value]` 用最新值
+
+### 验收
+- verify-toolbar.js: 7/7(回归,toolbar 页码 + 跳转仍正常)
+- verify-13-30.js: 10/10(回归)
+- 新增 verify-scroll-page.js: 滚动测试(脚本待加)
+- 构建: `npm run build` 0 error
+- 部署: dist 清空后拷入 + nginx 重启
+
+
+### Phase 13.34 - toolbar 视图按钮 + 滚动驱动修复(2026-07-23)
+
+用户反馈:
+1. PdfCanvasToolbar 要增加单页/连续/双页视图按钮
+2. 之前 Phase 13.33 的滚动驱动没起作用
+3. pdf-sb-page-info(底部状态栏)要实时联动
+
+#### 根因分析(Phase 13.33 失败原因)
+- PdfCanvas 根元素 `<article class="pdf-page-card">` **没有 data-page-num 属性**
+- data-page-num 在内部 `<div class="pdf-page-canvas">` 上
+- IntersectionObserver 观察 `.pdf-page-card` 却读 `dataset.pageNum` -> 永远是 NaN -> 永远匹配不到页
+- 另外 IntersectionObserver 对"激活线"判定不如 getBoundingClientRect 直观
+
+#### 修复方案(改用 scroll + getBoundingClientRect)
+**PdfCanvas.vue**:
+- article 加 `:data-page-num="pageNum"`,让根元素带页码
+
+**PdfEditor.vue**(替换 IntersectionObserver):
+- `findCurrentPageByScroll()`:遍历 `.pdf-page-card`,用 getBoundingClientRect
+  - 激活线 = 视口顶部 + 视口高度 * 30%
+  - 跨越激活线的页 -> 直接选定(bestDist=-1)
+  - 否则选最接近激活线的可见页
+- `onCanvasScroll()`:requestAnimationFrame throttle,程序化滚动锁期间跳过
+- `bindScrollListener()` / `unbindScrollListener()`:addEventListener('scroll', passive)
+- watch(viewMode) / watch(totalPages) -> bindScrollListener
+- onMounted -> bindScrollListener;onBeforeUnmount -> unbindScrollListener
+
+#### 视图按钮
+**PdfCanvasToolbar.vue**:
+- 左侧工具组后加分隔符 + 3 个视图按钮(单页/连续/双页),SVG 图标,is-active 高亮
+- 新 prop `viewMode: 'single' | 'continuous' | 'facing'`
+- 新 emit `set-view`
+
+**PdfEditor.vue**:
+- 模板传 `:view-mode="viewMode"` + `@set-view="setViewMode"`
+
+#### 联动链(修复后)
+- 画布滚动 -> onCanvasScroll -> findCurrentPageByScroll -> currentPage 更新
+- -> PdfCanvasToolbar 中页码输入框/总页数实时变化
+- -> pdf-sb-page-info(底部状态栏) currentPage 实时变化
+- -> PdfThumbPanel watch(currentPage) -> scrollIntoView 当前缩略图
+- -> "提取当前页" 用最新 currentPage.value
+
+### 验收
+- 构建: `npm run build` 0 error
+- 部署: dist 清空 + nginx 重启
+
+
+### Phase 13.35 - 6 项问题修复(2026-07-23)
+
+用户反馈 6 个问题,逐项修复:
+
+#### 1. 缩略图侧栏加放大/缩小按钮
+- `usePdfRenderer.ts`: thumbScale 改为 ref,setThumbScale(newScale) 方法(范围 0.15-1.0),renderAllThumbs 读 ref
+- `PdfThumbPanel.vue`: header 加 +/- 按钮 + 百分比显示,新 prop thumbScale,emit thumb-zoom(delta)
+- `PdfEditor.vue`: onThumbZoom(delta) -> renderer.setThumbScale + renderAllThumbs 重渲染
+
+#### 2. 组织页提取取消后按钮不能用
+- 根因:`onExtract()` 设 busy=true 后 emit,用户在 PdfExtractModeDialog 点取消时无清理
+- `PdfEditor.vue`: `watch(extractModeDialogOpen)`,关闭(false)时 nextTick -> organizeRef.markDone()
+- markDone 幂等(busy=false),所有关闭路径(取消/完成)都清 busy
+
+#### 3. 拆分模式 B 按区间只导出第1页
+- 后端 `splitByRanges` 逻辑审查正确(seg[0]-seg[1] -> extractPages 全部页)
+- `PdfToolService.java`: 加日志,每段记录实际页数(Loader.loadPDF 检查)+ partBytes,便于排查
+- `PdfOrganizePages.vue`: UI 文案明确"每个区间生成一个含该区间所有页的 PDF(如 1-3 生成含第1-3页的 PDF)"
+- 推测:用户可能误解语义(1-3 = 1个含3页的PDF,不是3个文件)
+
+#### 4. 视图 TAB 面板按钮功能
+- `PdfRightPanel.vue`: 已加 `watch(initialTab)` 同步 activeTab(Phase 13.32)
+- PdfEditor 绑定审查:jump/collapse/remove-annotation/focus-field/form-filled/form-filled-inplace 全部接住
+- 5 个 tab(大纲/搜索/批注/表单/信息)加载逻辑正常,需用户测试反馈具体问题
+
+#### 5. AI tab 功能
+- **框选问答取消不了**:`captureVqaAndAsk` 完成后未切回 select 工具
+  - 修复:加 `selectTool('select')`,框选截图后立即退出 vqa 模式
+- **智能目录无输出**:`autoOutline` 后端逻辑完整,但 LLM 未配置/返回非 JSON 时 outline 为空,前端显示"已生成 0 个"
+  - `PdfToolService.java`: outline 为空时返回 success=false + error(含 LLM 原始输出前200字),前端显示明确错误
+
+#### 6. 画布右键菜单重构为两级分类
+- `PdfCanvasContextMenu.vue` 完全重写:
+  - 主菜单 4 个分类(编辑/工具/页面/AI),每个带 ▶ 箭头
+  - hover 分类 -> 右侧绝对定位子菜单(.pdf-ctx-submenu left:100%)
+  - 子菜单项保持原功能,编辑分类含 OCR+复制+全选,工具分类含4工具+激活勾,页面分类含旋转+提取+删除,AI分类含翻译+摘要+问答
+  - onMenuLeave: 鼠标离开整个菜单区域才关闭(避免移到子菜单误关)
+  - openSub 状态控制当前展开分类,打开菜单时 reset 为 null
+
+### 验收
+- 构建: `npm run build` 0 error
+- 部署: dist 清空 + nginx 重启 + web-server 重启(后端改了 PdfToolService)
+
+
+### Phase 13.36 - 5 项问题修复(2026-07-23)
+
+#### 1. 下载文件名用中文操作名
+- `PdfExtractModeDialog.vue`: 下载分支 `'extract'` -> `'提取'`
+- `PdfOrganizePages.vue`: 导出zip `'pages-...'` -> `'提取导出'`;拆分每页 `'split-Np'` -> `'拆分每页'`;拆分区间 `'split-ranges'` -> `'拆分区间'`
+- 文件名格式 `${title}_${op}_${ts}.${ext}`,op 中文清晰,避免与文档标题混淆
+
+#### 2. 缩略图缩放生效
+- 根因:`.pdf-thumb-canvas-wrap` width:100% + canvas max-width:100%,显示尺寸由侧栏决定,thumbScale 只改像素分辨率,视觉不变
+- `PdfThumbPanel.vue`: aside 设 `--thumb-scale` CSS 变量;`.pdf-thumb-card` width: `calc(150px * var(--thumb-scale) / 0.4)`,去 max-width,flex-shrink:0;list 改 overflow-x:auto + align-items:center(放大超侧栏时横向滚动)
+- `usePdfRenderer.ts`: renderAllThumbs 加 force 参数绕过并发锁
+- `PdfEditor.vue`: onThumbZoom 调 renderAllThumbs(thumbRefs, true) 强制重渲染更新像素分辨率
+
+#### 3. 拆分模式 B 只导出1页
+- `PdfToolService.java` splitByRanges 重写:改用 importPage 逐页导入新 PDDocument(替代原地删除的 extractPages),每段独立 PDF
+- 加详细日志:开始/每段(导入页数/part页数/bytes)/完成
+- extractPages 也加保留页数日志
+- `PdfOrganizePages.vue` 文案明确"每个区间生成含该区间所有页的 PDF"
+
+#### 4. 智能目录 AI 逻辑优化
+- 根因:`AiService.chat()` 异常时返回"AI 服务调用失败"字符串而非抛异常,parseOutlineJson 解析为空
+- `PdfToolService.java` autoOutline:
+  - LLM 返回空 -> 明确 error"请检查 LLM 是否已配置"
+  - LLM 返回"AI 服务调用失败"前缀 -> 明确 error"请在管理后台配置 LLM API"
+  - prompt 优化:明确"不要 markdown 代码块"
+- parseOutlineJson:去除 ```json 代码块包裹再解析
+
+#### 5. 视图面板功能可测试化
+- `PdfRightPanel.vue`:
+  - 大纲空状态加"AI 生成智能目录"按钮 -> emit('generate-outline')
+  - 表单空状态加"重新识别表单"按钮 -> loadFormFields()
+  - 表单空状态文案明确"仅 AcroForm 交互式表单可识别(普通文本非表单)"
+  - 新增 .pdf-rp-empty-action 按钮样式
+  - 新增 emit 'generate-outline'
+- `PdfEditor.vue`: PdfRightPanel @generate-outline -> onAiAutoOutline
+
+### 验收
+- 构建: 前端 `npm run build` + 后端 `mvn package`
+- 部署: dist 清空 + jar 替换 + nginx + web-server 重启
+
+
+### Phase 13.37 - 替换按钮 + LLM 预检 + 缩略图缩放限制 + 选中竖线改下方(2026-07-23)
+
+#### 1. 组织页加"替换"按钮
+- 后端 `PdfToolService.replacePages(docId, targetPages, sourceBytes, sourceStartPage)`:用 importPage 重建文档,选中页替换为源 PDF 对应页
+- 后端 `PdfController POST /{id}/pages/replace`(multipart):targetPages 逗号分隔 + sourceStartPage + file
+- 前端 `pdfApi.replacePages(docId, targetPages, file, sourceStartPage)` FormData 上传
+- `PdfOrganizePages.vue`:工具栏加"替换"按钮;替换弹窗(上传 PDF + 源起始页,用 pdfjs 预读源页数);onReplaceConfirm 调 api + emit('op-replaced')
+- `PdfEditor.vue`: @op-replaced -> onReorganizeReplaced(reloadAfterPageOp)
+
+#### 2. 智能目录 LLM 预检
+- 根因:LLM 未配置,chat() 返回空字符串,autoOutline 提示"AI 返回空结果"
+- `AiService.isConfigured()`:检查 targetUrl + apiKey 均有效(非空/非默认 openai.com/非 sk-placeholder)
+- `PdfToolService.autoOutline`:调用前预检,未配置直接返回"LLM 未配置,请在「管理后台->AI 配置」设置 Provider"
+
+#### 3. 缩略图缩放限制不超出
+- `PdfThumbPanel.vue` .pdf-thumb-card width: `calc(var(--thumb-scale) * 100%)`,max-width:100%,min-width:60px
+- thumbScale=1.0 时卡片=侧栏宽度,不超出
+
+#### 4. 选中竖线改下方
+- `PdfThumbPanel.vue` .pdf-thumb-active-bar 从左侧竖线(left:-3px;width:3px)改为底部横线(left:4px;right:4px;bottom:-3px;height:3px)
+
+### 验收
+- 构建: 前端 `npm run build` + 后端 `mvn package`
+- 部署: dist 清空 + jar 替换 + nginx + web-server 重启
+
+
+### Phase 13.38 - 选中竖线全改下方 + 智能目录排查 + 单 PDF 下载(2026-07-23)
+
+#### 1. 所有按钮选中竖线改下方
+- [RibbonBtn.vue](miaotongdoc-web/src/components/RibbonBtn.vue) .ribbon-btn.is-active::before 从左侧竖线(left:0;top:2;bottom:2;width:3)改为底部横线(left:4;right:4;bottom:0;height:3)
+- [PdfToolsRail.vue](miaotongdoc-web/src/components/PdfToolsRail.vue) .pdf-rail-btn.is-active::before 从左侧竖线改为底部横线
+- [PdfThumbPanel.vue](miaotongdoc-web/src/components/PdfThumbPanel.vue) active-bar 之前已改底部
+- PdfRibbon tab / PdfRightPanel tab 的 ::after 已是底部,无需改
+
+#### 2. 智能目录排查修复
+- [AiService.java](miaotongdoc-server/src/main/java/com/miaotong/doc/service/ai/AiService.java) isConfigured() 去掉 baseUrl 检查(只检查 apiKey 非空非 placeholder),避免误判
+- 新增 getConfigSummary():返回 baseUrl/model/apiKey(脱敏)用于错误提示
+- [PdfToolService.java](miaotongdoc-server/src/main/java/com/miaotong/doc/service/PdfToolService.java) autoOutline 空结果/失败时提示包含配置摘要,帮用户排查模型/API Key/网络问题
+
+#### 3. 单 PDF 下载用 .pdf 命名
+- 后端 `extractPagesBatch`:pages.size()==1 时直接返回单 PDF(不打包 zip),ContentType=application/pdf,filename=extracted-page.pdf
+- 后端 `splitByRanges`:parts.size()==1 时直接返回单 PDF,filename=split.pdf;否则 zip
+- 前端文件名按数量:1 个 -> .pdf,多个 -> .zip
+  - PdfExtractModeDialog: pages.length===1 ? 'pdf' : 'zip'
+  - PdfOrganizePages onBatchExport: pages.length===1 ? 'pdf' : 'zip'
+  - onSplitEveryPage: totalPages===1 ? 'pdf' : 'zip'
+  - onSplitByRanges: ranges.length===1 ? 'pdf' : 'zip'
+
+
+### Phase 13.39 - hover 浅色横线 + 点击由短变长动画(2026-07-23)
+
+- [RibbonBtn.vue](miaotongdoc-web/src/components/RibbonBtn.vue) 和 [PdfToolsRail.vue](miaotongdoc-web/src/components/PdfToolsRail.vue) 加 `::after` 伪元素:
+  - 默认 width:0,opacity:0
+  - `hover:not(.is-active)::after`: width:40%, opacity:0.35(浅色短横线)
+  - `active:not(.is-active)::after`: width:90%, opacity:0.6(点击由短变长)
+  - transition: width 220ms ease(动画时长)
+  - 横线颜色用 var(--color-primary),比选中态横线(opacity 1)浅很多
+
+
+### Phase 14.x — 全面重构(11 项,进行中)(2026-07-23)
+
+**已完成**:
+- **U3** 移除 Page tab `insertFile`(从文件插入)、`crop`(裁剪页)
+- **U5** 移除 Home tab `share`(复制链接)、`signature`(发送签署) + ToolsRail 顶部对应按钮
+- **U7** 移除 Edit tab 工具数组的 `vqa`(识图)项,与 AI 视觉重复
+- **U1** 统一下载文件命名:新建 [lib/download.ts](miaotongdoc-web/src/lib/download.ts),导出 `buildDownloadName` + `dedupeFilename`(本次会话内重名加 `(1)`/`(2)`)+ `triggerDownload`;PdfExportMenu/PdfExtractModeDialog/PdfOrganizePages/PdfEditor 全部改用统一函数
+- 构建通过(`npm run build` 30s),dist 已拷入 Docker 部署目录
+
+**待完成**:
+- U2 页眉页脚(clearExisting + 白矩形覆盖,可重复覆盖修改)
+- U4 水印重设计(灵活角度 + 真去水印)
+- U6 文档对比(新功能,后端 PdfCompareService + 前端 PdfCompareDialog)
+- U8 AI tab 重设计(17+ 按钮精简到 8 个核心场景 + 精致 SVG 图标)
+- U9 OCR 报错排查(后端返回 status 检查 + 前端明确错误 + 重试)
+- U10 右面板重设计(header 去图标 + 5 tab 功能重塑 + 应用提示)
+- U11 ToolsRail 重设计(13 按钮精简到 10 个)
+
+**阻塞**:Docker Desktop daemon 暂时不可用(`API version not supported`),无法 `docker compose restart` 部署。建议:重启 Docker Desktop 后手动执行部署命令验证 U3/U5/U7/U1。
+
+
+### Phase 14 — 全面重构(11 项,完成)(2026-07-23~24)
+
+**所有 11 项单元已完成代码 + 构建 + 部署**
+
+#### U3 ✅ Page tab 移除(从文件插入 + 裁剪页)
+- `PdfRibbon.vue` 移除 `insertFile` 和 `crop` 按钮 + 整个裁剪 RibbonGroup
+
+#### U5 ✅ Home/ToolsRail 移除(复制链接 + 发送签署)
+- `PdfRibbon.vue` 移除 share/send-sign RibbonGroup
+- `PdfToolsRail.vue` topActions 去 share/signature
+- `PdfEditor.vue` 移除 onShare/onSendSign handler
+
+#### U7 ✅ Edit tab 移除识图
+- `PdfRibbon.vue` editTools 数组去 vqa(识图)项
+
+#### U1 ✅ 统一下载命名 + 重名去重
+- 新建 `miaotongdoc-web/src/lib/download.ts`:`buildDownloadName` + `dedupeFilename`(会话内 `(1)/(2)` 后缀)+ `triggerDownload`
+- 重构 `PdfExportMenu`/`PdfExtractModeDialog`/`PdfOrganizePages`/`PdfEditor` 5 个组件,统一引用
+
+#### U2+U4 ✅ 页眉页脚可重复覆盖 + 水印重设计 + 一键去水印
+**后端** (`PdfToolService.java`):
+- 新增 `clearPageOverlay(pdf, page)`:删 watermark annotation + PREPEND 白矩形覆盖整页
+- `addWatermark` 新签名:`addWatermark(docId, text, opacity, rotation, position, fontSize, clearExisting, pages)`,5 种位置(diagonal/header/footer/center/tile)+ 0/15/30/45/60/75/90 度灵活旋转 + 自动/手动字号
+- `addHeaderFooter` 新签名:`addHeaderFooter(docId, position, content, fontSize, clearExisting, pages)`,默认 `clearExisting=true`
+- `removeWatermark` 重写:annotation 删除 + 全页白矩形覆盖(自家+自带水印都能去),mode 默认 `all`
+
+**修复** (`walkOutline`):
+- 真实解析 destination,获取 bookmark 跳转页码(不再硬编码 page=1)
+
+**修复** (`searchText`):
+- 拼接时在 token 间插入空格(避免相邻字符乱码)
+
+**前端** (`PdfPageOpsDialog.vue`):
+- 水印 tab 重设计:5 种位置下拉 + 旋转滑块(0-90 步进 15)+ 字号 + 应用范围 + **覆盖已有水印** checkbox + **一键去水印** 按钮
+- 页眉页脚 tab 加 **覆盖已有页眉/页脚** checkbox(默认勾选)
+- 文案区分替换 vs 追加
+
+#### U10 ✅ 右面板重设计
+- `PdfRightPanel.vue` header 移除 tab 图标,只保留文字
+- 每个 tab 加 `activeTip` 提示卡片(顶部浅蓝渐变,💡 emoji + 说明文字)
+- 修复批注"无文本内容"误判:形状类显示"高亮标注"等具体类型标签
+- 修复后端 `walkOutline` page=1 bug(真实 destination 解析)
+- 修复后端 `searchText` 拼接乱码(加空格分隔)
+
+#### U9 ✅ OCR 报错修复
+- `PdfEditor.vue onOcrRecognize`:失败时弹 ElMessageBox.confirm,提供 **重试** / **切换模型** 操作;catch 分支(网络错误)同样提供重试
+
+#### U8 ✅ AI tab 重设计(17+ → 8 个核心按钮)
+- 新建 `miaotongdoc-web/src/components/icons/AiIcons.vue`:8 个精致 SVG 图标(aiSpark/translate/summarize/outline/contract/rewrite/proofread/ocr)
+- `PdfRibbon.vue` AI tab 重写为 4 组:**对话**(AI 助手/翻译选区/全文摘要) + **结构**(智能目录/合同条款) + **编辑**(智能重写/纠错) + **识别**(OCR 识别)
+
+#### U11 ✅ ToolsRail 重设计(13 → 10 个按钮)
+- topActions 3 个:导出 / 组织页面 / 打印(去掉 share/send-sign)
+- toolActions 4 个:高亮 / 评论 / 画笔 / 矩形(去掉 stamp)
+- bottomActions 3 个:AI 助手 / 文档对比(新) / 面板(去冗余批注面板和大纲,合并为面板入口)
+
+#### U6 ✅ 文档对比新功能
+**后端**:
+- 新建 `PdfCompareService.java` (`miaotongdoc-server/src/main/java/com/miaotong/doc/service/PdfCompareService.java`):逐页 PDFTextStripper 提取行 + LCS 行级 diff + 按页对齐,返回 `{summary:{totalPages,same,modified,added,removed}, pages:[{page,status,diffHunks:[{type:eq|add|del,text}]}]}`
+- `PdfController POST /api/pdf/compare {docIdA, docIdB}`
+
+**前端**:
+- 新建 `miaotongdoc-web/src/components/PdfCompareDialog.vue`:两个 docId 输入 + 加载标题 + 对比结果摘要(5 个统计卡片)+ 逐页行级 diff(红/绿/等高亮)
+- `PdfToolsRail` 底部加"文档对比"按钮(emit 'compare')
+- `pdfApi.compare(docIdA, docIdB)`
+
+### 验收
+- 前端构建:`npm run build` 23.60s ✓
+- 后端打包:`mvn clean package` ✓
+- 部署:`docker compose restart nginx web-server` ✓
+- 浏览器测试需要你刷新后逐项验证
+
+
+### Phase 14.U12 — Phase 14 测试修复(2026-07-24)
+
+**测试发现的问题 + 修复**:
+1. **AI tab 按钮样式矮/宽度不一致** — 重写时漏加 `is-large` class,RibbonBtn 默认 60×54 大按钮样式没生效
+   - `PdfRibbon.vue` AI tab:8 个按钮全部加 `class="ribbon-btn is-large"` + `:aria-label` + 优化 title 文案
+2. **导出弹窗位置很怪** — `onOpenExport` 用 `document.querySelector('[class*="tools-rail"] button[aria-label="导出 PDF"]')` 选择器不稳定(aria-label 不匹配时 fallback 到屏幕右上角)
+   - 修复:从事件 `evt.currentTarget/target` 直接取 `getBoundingClientRect()`(Home tab 和 ToolsRail 都用同一逻辑,位置 100% 准确)
+   - `PdfRibbon.vue` `@click="$emit('export-menu', $event)"` 传 MouseEvent
+   - `PdfEditor.vue` `@export-menu="(e: MouseEvent) => onOpenExport(e)"` 接收
+   - emit 类型定义:`export-menu` 单独签名 `(e, evt: MouseEvent)`,与其他无参 emit 区分
+3. **打印功能是占位符** — `onPrint` 只弹 toast
+   - 实现 iframe + window.print:创建隐藏 iframe 加载 `/api/documents/{id}/file`,onload 后 500ms 调 `iframe.contentWindow.print()`
+   - fallback:iframe.print 失败时 `window.open(url, '_blank)` + 提示用户 Ctrl+P
+4. **死代码清理**:
+   - `PdfToolsRail.vue` emit 移除 dead 的 `share`/`send-sign` 声明(无对应按钮)
+   - `PdfEditor.vue` 移除内部 `buildDownloadName`/`downloadBlob` 重复定义(已用 `@/lib/download`);`downloadBlob` 2 处使用替换为 `dlTrigger(blob, dlName(...))`
+
+**验证**: 前端构建 20.94s ✓,部署 nginx 重启完成
+
+
+### Phase 14.U13 — 5 项问题修复(2026-07-24)
+
+#### U1 AI tab OCR 拆成两个按钮 + 文案
+- `PdfRibbon.vue` AI tab `识别` 组加 2 个按钮:`OCR 快速识别`(mobile)+ `OCR 高精度识别`(server)
+- `PdfEditor.vue` OCR 文案去掉 `(PaddleOCR mobile)`,只显示 `OCR 快速识别中...` / `OCR 高精度识别中...`
+
+#### U2 打印功能改为 blob iframe + window.print
+- 之前用 src 直接加载,浏览器对 `/file` 可能触发下载
+- 改为 `fetch → blob URL → 隐藏 iframe → contentWindow.print()`(附 token header)
+- fallback:`window.open(blobUrl)` 让用户 Ctrl+P
+
+#### U3 Edit tab 颜色栏补齐
+- `PdfRibbon.vue` 调色板 6 色 → 8 色(加橙色/青色)
+- 加自定义颜色 `<input type="color">`(触发 `@input="onCustomColor"`)
+- 加 swatch/custom CSS(尺寸 26×26,hover 放大,active 蓝色边框)
+- 之前 `.ribbon-color-swatch` 没有任何样式,显示是空白的 — 现已补齐
+
+#### U4 去水印功能真的去掉水印
+**根因**:之前 `clearPageOverlay` 用 `AppendMode.PREPEND` 画白矩形。问题:水印是用 APPEND 画在最上层的,PREPEND 在最底层会被 APPEND 内容覆盖 → 视觉上看不到白矩形 → 水印仍在!
+
+修复:
+- 新增 `clearPageOverlayAppend()`:用 `AppendMode.APPEND` 画白矩形(在最上层,真正盖住原水印)
+- `removeWatermark` 改用 `clearPageOverlayAppend`
+- `addWatermark/addHeaderFooter` 仍用 `clearPageOverlay`(PREPEND,因为后续会再 APPEND 新内容)
+- `PdfRibbon.vue` Page tab 移除"去水印"按钮(避免与弹窗内"一键去水印"重复)
+- `PdfPageOpsDialog.vue` 按钮文案改为"覆盖所有页面水印,不可撤销"
+
+#### U5 AI 8 按钮全功能测试
+- AI 8 按钮(open-ai / ai-translate / ai-full-summary / ai-auto-outline / ai-extract-terms / ai-rewrite / ai-proofread / ocr-recognize)全部有真实 handler:
+  - AI 对话类(open-ai / ai-translate / ai-full-summary / ai-rewrite / ai-proofread / ai-extract-terms):调 `aiFloat.chat.sendUserMessage()`
+  - 智能目录 / OCR:调 `pdfApi.autoOutline()` / `pdfApi.recognizePaddle()`
+- 所有按钮依赖 LLM API(需在管理后台配置);OCR 依赖 PaddleOCR/Docling 服务容器
+

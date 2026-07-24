@@ -192,9 +192,11 @@ const editorServerUrl = computed(() => {
   return import.meta.env.VITE_EDITOR_SERVER_URL || '/ds-vpath'
 })
 
-onMounted(async () => {
-  localStorage.removeItem('de-settings-coauthmode')
-
+async function loadDoc() {
+  // 重置状态(切文档时清旧文档)
+  pdfLoaded.value = false
+  pdfFileUrl.value = ''
+  markdownLoaded.value = false
   try {
     doc.value = await documentApi.getById(docId.value)
 
@@ -215,6 +217,18 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('加载文档失败', error)
+  }
+}
+
+onMounted(async () => {
+  localStorage.removeItem('de-settings-coauthmode')
+  await loadDoc()
+})
+
+// Phase 13.29: 路由切文档(提取/合并到新文档跳转)时重新加载
+watch(docId, (n, o) => {
+  if (n && n !== o) {
+    void loadDoc()
   }
 })
 
