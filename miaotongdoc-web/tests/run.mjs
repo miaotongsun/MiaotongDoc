@@ -37,13 +37,16 @@ function defaultToolsDir() {
 
 const CACHE_DIR = process.env.PLAYWRIGHT_BROWSERS_PATH || defaultToolsDir()
 
-// 平台特定的 chromium 路径
+// 平台特定的 chromium 路径(完整版 + headless-shell)
 function chromiumExePath() {
-  const platform = process.platform
-  const base = join(CACHE_DIR, `chromium-${CHROMIUM_VERSION}`)
-  if (platform === 'win32') return join(base, 'chrome-win64', 'chrome.exe')
-  if (platform === 'darwin') return join(base, 'chrome-mac', 'Google Chrome for Testing')
-  return join(base, 'chrome-linux', 'chrome')
+  if (process.platform === 'win32') return join(CACHE_DIR, 'chromium-1228', 'chrome-win64', 'chrome.exe')
+  if (process.platform === 'darwin') return join(CACHE_DIR, 'chromium-1228', 'chrome-mac', 'Google Chrome for Testing')
+  return join(CACHE_DIR, 'chromium-1228', 'chrome-linux', 'chrome')
+}
+function headlessShellExePath() {
+  if (process.platform === 'win32') return join(CACHE_DIR, 'chromium_headless_shell-1228', 'chrome-headless-shell-win64', 'chrome-headless-shell.exe')
+  if (process.platform === 'darwin') return join(CACHE_DIR, 'chromium_headless_shell-1228', 'chrome-mac-arm64', 'headless_shell')
+  return join(CACHE_DIR, 'chromium_headless_shell-1228', 'chrome-linux', 'headless_shell')
 }
 
 /**
@@ -69,38 +72,44 @@ function ensurePlaywright() {
  * 2. 检测 Chromium,没有则自动下载
  */
 function ensureChromium(silent = false) {
-  // Phase 14.U15: Playwright 1.61+ headless 模式需要两个浏览器:
-  // - chromium(full,给 headed 模式 / 有头截图用)
-  // - chromium-headless-shell(轻量,headless 模式默认用)
-  const targets = [
-    { name: 'chromium', version: CHROMIUM_VERSION, dir: `chromium-${CHROMIUM_VERSION}` },
-    { name: 'chromium-headless-shell', version: CHROMIUM_HEADLESS_VERSION, dir: `chromium_headless_shell-${CHROMIUM_HEADLESS_VERSION}` },
+  // Phase 14.U15: Playwright 1.61+ headless 模式**只需要** chromium-headless-shell
+  // chromium 完整版**可选**(仅 headed 模式 / 需要完整 UI 调试时用)
+  // → 自动尝试装 chromium,失败也不致命(headless-shell 已够)
+  const requiredTargets = [
+    { name: 'chromium-headless-shell', version: CHROMIUM_HEADLESS_VERSION, exe: headlessShellExePath(), required: true },
   ]
-  let allOk = true
-  for (const t of targets) {
-    const exe = join(CACHE_DIR, t.dir, process.platform === 'win32' ? (t.name.includes('headless') ? 'chrome-headless-shell-win64\\chrome-headless-shell.exe' : 'chrome-win64\\chrome.exe') : (t.name.includes('headless') ? 'chrome-linux/headless_shell' : 'chrome-linux/chrome'))
-    if (existsSync(exe)) {
-      const size = (statSync(exe).size / 1024 / 1024).toFixed(1)
+  const optionalTargets = [
+    { name: 'chromium', version: CHROMIUM_VERSION, exe: chromiumExePath(), required: false },
+  ]
+
+  let fail = false
+  for (const t of [...requiredTargets, ...optionalTargets]) {
+    if (existsSync(t.exe)) {
+      const size = (statSync(t.exe).size / 1024 / 1024).toFixed(1)
       if (!silent) console.log(`✅ ${t.name} 已就绪 (${size}MB)`)
-    } else {
-      if (!silent) console.log(`📦 ${t.name} 未找到,自动下载...`)
-      mkdirSync(CACHE_DIR, { recursive: true })
-      try {
-        execSync(`npx playwright install ${t.name}`, {
-          stdio: 'inherit',
-          cwd: ROOT,
-          env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
-        })
-        if (!existsSync(exe)) throw new Error('下载完成但二进制不存在')
-        if (!silent) console.log(`✅ ${t.name} 安装完成`)
-      } catch (e) {
-        console.error(`❌ ${t.name} 下载失败:`, e.message)
-        allOk = false
+      continue
+    }
+    if (!silent) console.log(`📦 ${t.name} 未找到${t.required ? '' : '(可选)'},自动下载...`)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    try {
+      execSync(`npx playwright install ${t.name}`, {
+        stdio: 'inherit',
+        cwd: ROOT,
+        env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
+      })
+      if (!existsSync(t.exe)) throw new Error('下载完成但二进制不存在')
+      if (!silent) console.log(`✅ ${t.name} 安装完成`)
+    } catch (e) {
+      console.error(`❌ ${t.name} 下载失败:`, e.message)
+      if (t.required) {
+        fail = true
+      } else {
+        console.log(`   ⚠️  ${t.name} 缺失,headed 模式不可用(headless 仍可跑)`)
       }
     }
   }
-  if (!allOk) {
-    console.error('   请手动跑: PLAYWRIGHT_BROWSERS_PATH="D:\\Tools\\ms-playwright" npx playwright install chromium chromium-headless-shell')
+  if (fail) {
+    console.error('   请手动跑: PLAYWRIGHT_BROWSERS_PATH="D:\\Tools\\ms-playwright" npx playwright install chromium-headless-shell')
     process.exit(1)
   }
 }
