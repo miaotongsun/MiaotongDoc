@@ -710,13 +710,15 @@ public class PdfController {
         String position = (String) body.getOrDefault("position", "footer");
         String content = (String) body.getOrDefault("content", "Page {page} of {total}");
         double fontSize = body.get("fontSize") instanceof Number ? ((Number) body.get("fontSize")).doubleValue() : 10;
+        // Phase 27: alignment = left|center|right(默认 left,向后兼容)
+        String alignment = (String) body.getOrDefault("alignment", "left");
         // Phase 14.U2: clearExisting 默认 true(覆盖模式)
         boolean clearExisting = body.get("clearExisting") instanceof Boolean ? (Boolean) body.get("clearExisting") : true;
         @SuppressWarnings("unchecked")
         List<Number> rawPages = (List<Number>) body.get("pages");
         List<Integer> pages = new ArrayList<>();
         if (rawPages != null) for (Number n : rawPages) pages.add(n.intValue());
-        byte[] newBytes = pdfToolService.addHeaderFooter(id, position, content, fontSize, clearExisting, pages);
+        byte[] newBytes = pdfToolService.addHeaderFooter(id, position, content, fontSize, alignment, clearExisting, pages);
         return ResponseEntity.ok(Map.of(
             "success", true,
             "message", clearExisting ? "已替换页眉页脚" : "已追加页眉页脚",

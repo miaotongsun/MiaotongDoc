@@ -232,7 +232,7 @@ export const pdfApi = {
     )
   },
   /** 添加页眉/页脚 */
-  addHeaderFooter(docId: number, data: { position: 'header' | 'footer'; content: string; fontSize: number; clearExisting?: boolean; pages?: number[] }) {
+  addHeaderFooter(docId: number, data: { position: 'header' | 'footer'; content: string; fontSize: number; alignment?: 'left' | 'center' | 'right'; clearExisting?: boolean; pages?: number[] }) {
     return api.post<any, { success: boolean; message: string; bustUrl: number }>(
       `/pdf/${docId}/header-footer`, data,
     )
