@@ -79,3 +79,8 @@ __pycache__/
 *.pyo
 </content>
 </invoke>
+# 测试数据 / 临时文件
+MiaotongDoc-Docker/app/docling/layout-heron-git/
+MiaotongDoc-Docker/test_docling.pdf
+plans/2026-07-26-offline-deployment.md
+plans/offline-export-command.md
