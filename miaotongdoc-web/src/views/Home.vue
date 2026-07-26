@@ -132,10 +132,6 @@
             <el-icon><Plus /></el-icon>
             新建文档
           </el-button>
-          <el-button v-if="isDocView" @click="showCreatePdf = true">
-            <el-icon><Document /></el-icon>
-            创建 PDF
-          </el-button>
           <el-upload v-if="isDocView" :show-file-list="false" :before-upload="handleUpload" accept=".docx,.xlsx,.pptx,.md,.pdf">
             <el-button>
               <el-icon><Upload /></el-icon>
@@ -469,8 +465,6 @@
     </div>
 
     <CreateDocDialog v-model="showCreate" @created="handleCreated" />
-    <!-- Phase 13.12-C: 创建 PDF(空白 + 图片转) -->
-    <PdfCreateDialog :open="showCreatePdf" @close="showCreatePdf = false" @created="handlePdfCreated" />
     <ShareDialog v-model="showShareDialog" :doc-id="shareDocId" :doc-ids="shareDocIds" />
 
     <!-- 移动到文件夹弹窗 -->
@@ -568,7 +562,6 @@ import { folderApi, type Folder as FolderType } from '@/api/folder'
 import { folderTemplateApi } from '@/api/folderTemplate'
 import DocCard from '@/components/DocCard.vue'
 import CreateDocDialog from '@/components/CreateDocDialog.vue'
-import PdfCreateDialog from '@/components/PdfCreateDialog.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
 import ShareDialog from '@/components/ShareDialog.vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
@@ -583,7 +576,6 @@ const userStore = useUserStore()
 const activeTab = ref('all')
 const searchKeyword = ref('')
 const showCreate = ref(false)
-const showCreatePdf = ref(false)
 const departments = ref<Department[]>([])
 const selectedDeptIds = ref<Set<number>>(new Set())
 const showShareDialog = ref(false)
@@ -1158,11 +1150,8 @@ async function handleDelete(id: number) {
   }
 }
 
-function handleCreated() {
-  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
-}
-
-function handlePdfCreated() {
+function handleCreated(_docId?: number) {
+  // 新建对话框已经自己 router.push 到 /editor/{docId},这里只刷新列表
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
 }
 

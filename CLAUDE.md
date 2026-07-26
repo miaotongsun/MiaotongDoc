@@ -323,7 +323,7 @@ MiaotongDoc/
 | `src/components/CollaborationBar.vue` | 协作用户栏 |
 | `src/components/MentionInput.vue` | @提及输入框 |
 | `src/components/DocCard.vue` | 文档卡片 |
-| `src/components/CreateDocDialog.vue` | 创建文档对话框 |
+| `src/components/CreateDocDialog.vue` | 新建文档对话框（5 种 docType + 模板可折叠 + PDF 模式 Tab 集成空白/图片转） |
 | `src/components/MergeDialog.vue` | 文档合并对话框 |
 | **PDF 编辑器 V3** (Phase 7-13) |
 | `src/components/PdfEditor.vue` | PDF 编辑器 V3 主壳 |
@@ -341,7 +341,6 @@ MiaotongDoc/
 | `src/components/PdfTextEditorLayer.vue` | PDF 文本编辑层 |
 | `src/components/PdfCanvasContextMenu.vue` | PDF 画布右键菜单 |
 | `src/components/PdfSaveModeDialog.vue` | PDF 保存模式对话框 |
-| `src/components/PdfCreateDialog.vue` | PDF 创建对话框 |
 | `src/components/PdfPageOpsMenu.vue` | PDF 页面操作菜单 |
 | `src/components/PdfExportMenu.vue` | PDF 导出菜单 |
 | `src/components/PdfAiMenu.vue` | PDF AI 菜单 |
