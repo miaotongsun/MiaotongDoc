@@ -6,6 +6,7 @@ import com.miaotong.doc.entity.Document;
 import com.miaotong.doc.service.storage.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -53,6 +54,9 @@ public class PaddleOcrClient {
     private final PaddleOcrProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired(required = false)
+    private AiConfigService aiConfigService;
+
     private RestTemplate restTemplate;
 
     private RestTemplate getRestTemplate() {
@@ -89,13 +93,24 @@ public class PaddleOcrClient {
         Map<String, Object> result = new HashMap<>();
         Document doc = documentService.getDocument(documentId);
 
-        if (!properties.isEnabled()) {
+        // OCR AI 改造 v2:优先使用 AiConfigService 中的 OCR_PADDLE 配置
+        String paddleBaseUrl = resolveBaseUrl();
+        boolean paddleEnabled = resolveEnabled();
+
+        if (!paddleEnabled) {
             result.put("status", "unavailable");
             result.put("error", "PaddleOCR 服务未启用");
             return result;
         }
 
-        if (!isAvailable()) {
+        if (paddleBaseUrl == null || paddleBaseUrl.isBlank()) {
+            result.put("status", "unavailable");
+            result.put("error", "PaddleOCR 服务地址未配置");
+            return result;
+        }
+
+        // 用解析后的 URL 健康检查
+        if (!isAvailableAt(paddleBaseUrl)) {
             result.put("status", "unavailable");
             result.put("error", "PaddleOCR 服务不可用");
             return result;
@@ -130,7 +145,7 @@ public class PaddleOcrClient {
             HttpEntity<org.springframework.util.LinkedMultiValueMap<String, Object>> requestEntity =
                     new HttpEntity<>(body, headers);
 
-            String url = properties.getServerUrl() + "/ocr/pdf";
+            String url = paddleBaseUrl + "/ocr/pdf";
             log.info("PaddleOCR 识别: docId={}, url={}, lang={}, model={}, table={}, layout={}",
                     doc.getId(), url, language, model, properties.isUseTableRecognition(), properties.isUseLayout());
 
@@ -184,10 +199,38 @@ public class PaddleOcrClient {
         }
     }
 
-    /** 健康检查 */
+    /** 健康检查(默认 URL) */
     public boolean isAvailable() {
+        String url = resolveBaseUrl();
+        return url != null && isAvailableAt(url);
+    }
+
+    /**
+     * OCR AI 改造 v2:从 AiConfigService 读取 OCR_PADDLE 配置
+     * DB 优先,失败回退到 application.yml 的 PaddleOcrProperties
+     */
+    private String resolveBaseUrl() {
+        // 1) 先查 AiConfigService.getActive("OCR_PADDLE")
+        AiConfigService.AiConfig cfg = aiConfigService != null ? aiConfigService.getActive("OCR_PADDLE") : null;
+        if (cfg != null && cfg.baseUrl != null && !cfg.baseUrl.isEmpty()) {
+            return cfg.baseUrl;
+        }
+        // 2) fallback 到 properties
+        String url = properties.getServerUrl();
+        return (url != null && !url.isBlank()) ? url : null;
+    }
+
+    private boolean resolveEnabled() {
+        AiConfigService.AiConfig cfg = aiConfigService != null ? aiConfigService.getActive("OCR_PADDLE") : null;
+        if (cfg != null) {
+            return cfg.enabled;
+        }
+        return properties.isEnabled();
+    }
+
+    private boolean isAvailableAt(String baseUrl) {
         try {
-            String url = properties.getServerUrl() + "/health";
+            String url = baseUrl + "/health";
             ResponseEntity<String> response = getRestTemplate().getForEntity(url, String.class);
             return response.getStatusCode().is2xxSuccessful();
         } catch (Exception e) {

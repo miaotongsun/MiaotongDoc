@@ -164,8 +164,10 @@ public class PdfCompareService {
 
     private void validatePdf(Document d) {
         if (d == null) throw new BusinessException("文档不存在");
-        String path = d.getFilePath();
-        if (path == null || !path.toLowerCase().endsWith(".pdf")) {
+        // Phase 26 fix:用 docType/fileType 替代 path 后缀判断(filePath 可能是 hash 名不含 .pdf)
+        String docType = d.getDocType() != null ? d.getDocType().toLowerCase() : "";
+        String fileType = d.getFileType() != null ? d.getFileType().toLowerCase() : "";
+        if (!docType.equals("pdf") && !fileType.equals("pdf")) {
             throw new BusinessException("仅支持 PDF 文档对比");
         }
     }

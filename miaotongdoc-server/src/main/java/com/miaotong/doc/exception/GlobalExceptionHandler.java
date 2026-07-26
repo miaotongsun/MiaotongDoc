@@ -42,6 +42,30 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(400, "参数校验失败", fields));
     }
 
+    /**
+     * Phase 27 测试报告:@PathVariable Long 收到 "abc" 时抛 NumberFormatException,
+     * 统一 400 返回(不暴露 500 内部错误)
+     */
+    @ExceptionHandler(NumberFormatException.class)
+    public ResponseEntity<ErrorResponse> handleNumberFormat(NumberFormatException e) {
+        log.warn("路径参数数字格式错误: {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse(400, "路径参数格式错误,必须是数字", null));
+    }
+
+    /**
+     * Phase 27:@PathVariable 类型不匹配(如期望 Long 收到 "abc")
+     */
+    @ExceptionHandler({
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.beans.TypeMismatchException.class
+    })
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(Exception e) {
+        log.warn("参数类型不匹配: {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse(400, "参数类型不匹配", null));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneral(Exception e) {
         log.error("未处理异常", e);

@@ -77,6 +77,16 @@ public class PdfOptimizeOcrSseController {
         response.setBufferSize(0);
         response.setHeader("X-Accel-Buffering", "no");
 
+        // OCR AI 改造 v2:LLM 未配置检测 → 统一 event:error
+        if (aiProxyService.getTargetUrl() == null || aiProxyService.getApiKey() == null) {
+            SseEmitter earlyErr = new SseEmitter(1000L);
+            sendEvent(earlyErr, "error", Map.of(
+                    "code", "AI_NOT_CONFIGURED",
+                    "message", "LLM 服务未配置,请前往管理后台 → AI 配置 → 添加 LLM 类型 Provider"));
+            earlyErr.complete();
+            return earlyErr;
+        }
+
         SseEmitter emitter = new SseEmitter(300_000L);
 
         new Thread(() -> {
@@ -84,13 +94,13 @@ public class PdfOptimizeOcrSseController {
                 // 1) 解析请求
                 Object mdObj = body.get("markdown");
                 if (mdObj == null) {
-                    sendEvent(emitter, "error", Map.of("message", "markdown 不能为空"));
+                    sendEvent(emitter, "error", Map.of("code", "INVALID_PARAMS", "message", "markdown 不能为空"));
                     emitter.complete();
                     return;
                 }
                 String markdown = String.valueOf(mdObj);
                 if (markdown.isBlank()) {
-                    sendEvent(emitter, "error", Map.of("message", "markdown 不能为空"));
+                    sendEvent(emitter, "error", Map.of("code", "INVALID_PARAMS", "message", "markdown 不能为空"));
                     emitter.complete();
                     return;
                 }

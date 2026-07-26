@@ -8,7 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-23
+> 上次更新：2026-07-26
 
 ### 快速索引
 
@@ -25,13 +25,16 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
-暂无。
+- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中
+- [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
 
 ## 已完成
 
 <!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
 
-暂无。
+- [2026-07-25-pdf-full-test.md](2026-07-25-pdf-full-test.md) — PDF 编辑器全面测试(API+UI 175 用例,166 通过) — 完成日期 2026-07-25
+- [2026-07-26-pdf-bugfix.md](2026-07-26-pdf-bugfix.md) — PDF 编辑器 Bug 修复(7 个 P0/P1 修复,含中文搜索/水印/文本清理等) — 完成日期 2026-07-26
+- [2026-07-26-ocr-ai-refactor.md](2026-07-26-ocr-ai-refactor.md) — PDF OCR/AI 完整改造(5 阶段全完成:AI配置接入 + SSE统一 + MQ异步 + 前端引导 + E2E) — 完成 2026-07-26
 
 ## 已废弃
 

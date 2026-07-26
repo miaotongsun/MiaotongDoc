@@ -45,6 +45,15 @@ public class DocumentAiController {
     private static final int MAX_SYSTEM_PROMPT_LENGTH = 4000; // 自定义 system prompt 上限（防止滥用）
 
     /**
+     * 手动 UTF-8 读 body(避开 Jackson ISO-8859-1 默认编码问题,Phase 26 OCR AI 改造)
+     */
+    private Map<String, Object> readUtf8Body(HttpServletRequest request) throws java.io.IOException {
+        String bodyStr = new String(request.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        if (bodyStr.isBlank()) return Map.of();
+        return new com.fasterxml.jackson.databind.ObjectMapper().readValue(bodyStr, Map.class);
+    }
+
+    /**
      * 默认 system prompt（chat-stream 场景）
      */
     private static final String DEFAULT_CHAT_SYSTEM_PROMPT_FORMAT =
@@ -112,10 +121,16 @@ public class DocumentAiController {
      * 文档问答（流式）
      */
     @PostMapping(value = "/chat-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
-    public StreamingResponseBody chatStream(@PathVariable Long id, @RequestBody Map<String, Object> body,
+    public StreamingResponseBody chatStream(@PathVariable Long id,
                                    HttpServletRequest request, HttpServletResponse response) {
         validateAuth(request);
         log.info("收到 chat-stream 请求: docId={}", id);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(request);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
 
         String question = stringValue(body.get("question"));
         if (question == null || question.isBlank()) {
@@ -188,9 +203,14 @@ public class DocumentAiController {
     @PostMapping("/chat")
     public ResponseEntity<Map<String, String>> chat(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
         validateAuth(httpRequest);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
         String question = stringValue(body.get("question"));
         if (question == null || question.isBlank()) {
             throw new BusinessException("问题不能为空");
@@ -244,9 +264,14 @@ public class DocumentAiController {
     @PostMapping("/translate")
     public ResponseEntity<Map<String, String>> translate(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
         validateAuth(httpRequest);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
         String text = stringValue(body.get("text"));
         String targetLang = stringValue(body.getOrDefault("targetLang", "en"));
 
@@ -286,9 +311,14 @@ public class DocumentAiController {
     @PostMapping("/rewrite")
     public ResponseEntity<Map<String, String>> rewrite(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
         validateAuth(httpRequest);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
         String text = stringValue(body.get("text"));
         String instruction = stringValue(body.getOrDefault("instruction", "改写以下文本，保持原意但使用不同的表达方式"));
 
@@ -309,9 +339,14 @@ public class DocumentAiController {
     @PostMapping("/generate")
     public ResponseEntity<Map<String, String>> generate(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
         validateAuth(httpRequest);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
         // 兼容两种字段名
         String prompt = stringValue(body.get("prompt"));
         if (prompt == null || prompt.isBlank()) {
@@ -344,9 +379,14 @@ public class DocumentAiController {
      */
     @PostMapping(value = "/generate-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
     public StreamingResponseBody generateStream(
-            @PathVariable Long id, @RequestBody Map<String, Object> body,
-            HttpServletRequest request, HttpServletResponse response) {
+            @PathVariable Long id, HttpServletRequest request, HttpServletResponse response) {
         validateAuth(request);
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(request);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("请求体解析失败: " + e.getMessage());
+        }
         // 兼容两种字段名：原 generate 端点用 prompt，前端 aiSlashCommand 走 chat-stream 风格用 question
         String prompt = stringValue(body.get("prompt"));
         if (prompt == null || prompt.isBlank()) {

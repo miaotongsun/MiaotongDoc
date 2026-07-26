@@ -6,3 +6,9 @@ data/
 
 # 日志
 *.log
+
+# 模型文件（构建期烧入镜像，不进 Git，太大）
+# docling: HF 模型缓存 506MB（外网构建后剥离）
+app/docling/models/
+# PaddleOCR: paddlex 模型缓存 232MB
+app/ocr-paddle/paddlex-cache/

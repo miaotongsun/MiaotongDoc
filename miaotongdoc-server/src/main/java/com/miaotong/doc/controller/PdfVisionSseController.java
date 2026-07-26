@@ -87,12 +87,26 @@ public class PdfVisionSseController {
                 String context = contextObj == null ? "" : String.valueOf(contextObj);
 
                 if (question.isBlank()) {
-                    sendEvent(emitter, "error", Map.of("message", "问题不能为空"));
+                    sendEvent(emitter, "error", Map.of(
+                            "code", "INVALID_PARAMS",
+                            "message", "问题不能为空"));
                     emitter.complete();
                     return;
                 }
                 if (image.isBlank() || !image.startsWith("data:image/")) {
-                    sendEvent(emitter, "error", Map.of("message", "图片格式无效，需要 data:image/xxx;base64,..."));
+                    sendEvent(emitter, "error", Map.of(
+                            "code", "INVALID_PARAMS",
+                            "message", "图片格式无效，需要 data:image/xxx;base64,..."));
+                    emitter.complete();
+                    return;
+                }
+
+                // OCR AI 改造 v2:VISION Provider 未配置检测
+                if (!aiProxyService.isVisionConfigured()) {
+                    log.warn("VISION Provider 未配置,终止 SSE 流: docId={}", docId);
+                    sendEvent(emitter, "error", Map.of(
+                            "code", "AI_NOT_CONFIGURED",
+                            "message", "视觉问答 AI 服务未配置,请前往管理后台 → AI 配置 → 添加 VISION 类型 Provider"));
                     emitter.complete();
                     return;
                 }
@@ -109,9 +123,10 @@ public class PdfVisionSseController {
                 messages.add(Map.of("role", "system", "content", systemPrompt));
                 messages.add(Map.of("role", "user", "content", userContent));
 
-                String model = pickVisionModel();
-                String baseUrl = aiProxyService.getTargetUrl();
-                String apiKey = aiProxyService.getApiKey();
+                // OCR AI 改造 v2:从 AiProxyService 取 VISION 配置(与 MD 编辑器同源)
+                String model = aiProxyService.getVisionModel();
+                String baseUrl = aiProxyService.getVisionUrl();
+                String apiKey = aiProxyService.getVisionKey();
                 if (baseUrl != null && baseUrl.endsWith("/v1")) {
                     baseUrl = baseUrl.substring(0, baseUrl.length() - 3);
                 }
@@ -197,16 +212,12 @@ public class PdfVisionSseController {
     }
 
     /**
-     * 选择 VLM 模型（优先 GPT-4o / Qwen-VL / Claude-3.5-Sonnet）
-     * 优先使用 LLM_VISION_MODEL 环境变量，否则用通用模型
+     * VISION 模型选择已统一到 AiProxyService.getVisionModel()(OCR AI 改造 v2)
+     * 保留此方法为兼容旧调用,实际不再使用
      */
+    @Deprecated
     private String pickVisionModel() {
-        String visionModel = System.getenv("LLM_VISION_MODEL");
-        if (visionModel != null && !visionModel.isBlank()) {
-            return visionModel;
-        }
-        // 后备：使用默认 chat 模型（部分多模态 LLM 兼容）
-        return aiProxyService.getDefaultModel();
+        return aiProxyService.getVisionModel();
     }
 
     /**

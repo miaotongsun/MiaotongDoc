@@ -946,7 +946,7 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 | minio | miaotongdoc-minio | 9000/9001 | 172.20.0.60 | 对象存储（单节点） |
 | elasticsearch | miaotongdoc-elasticsearch | (内部9200) | 172.20.0.70 | 全文搜索 |
 | yjs-server | miaotongdoc-yjs | 1234 | 172.20.0.80 | Yjs 协同服务器 |
-| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile） |
+| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile，需离线改造见 plans/2026-07-26-offline） |
 | ocr | miaotongdoc-ocr | 5002 | 172.20.0.95 | OCR 服务（可选 profile） |
 | ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.20.0.96 | PaddleOCR 中文扫描件（可选 profile） |
 
@@ -1156,6 +1156,7 @@ docker compose restart nginx web-server
 ## 内网迁移部署
 
 > 详细的从零部署流程、启动顺序、故障排查、已知陷阱见 **[DEPLOY.md](DEPLOY.md)**。
+> 纯内网（断网）部署方案见 **[plans/2026-07-26-offline-deployment.md](plans/2026-07-26-offline-deployment.md)**。
 
 **关键要点**：
 - **启动顺序**：基础设施 → RabbitMQ → editor → web-server → yjs+nginx（editor 必须先于 web-server，否则 Flyway V9 因 `task_result` 表不存在而失败）
@@ -1973,6 +1974,103 @@ plugins/
 ```
 
 插件开发参考 MTOffice 官方文档。
+
+### AI 配置架构速查
+
+> 📖 三大编辑器的 AI 调用都通过统一的配置中心。改 AI 模型只需在管理后台 → AI 配置,无需改代码。
+
+#### 配置存储层级(优先级从高到低)
+
+```
+1️⃣ 内存缓存 (AiConfigService.cache)            ← 启动时从 DB 加载
+2️⃣ 数据库  mt_ai_provider 表 (is_default=true)   ← 管理后台维护
+3️⃣ 容器文件 /data/config/ai-config.json          ← 历史兼容
+4️⃣ 环境变量 LLM_BASE_URL / LLM_API_KEY / LLM_TIMEOUT
+5️⃣ application.yml ai-proxy.target-url/api-key
+```
+
+**Provider 类型**:`LLM` / `VISION` / `OCR_PADDLE` / `DOCLING` / `OCR_TESSERACT`
+
+#### 三个编辑器的 AI 入口
+
+| 编辑器 | 控制器 | 调用方法 | 读取的 Provider |
+|---|---|---|---|
+| **MD 编辑器** (AiPanel / useAiChat) | `DocumentAiController` (`/api/documents/{id}/ai/*`) | `aiProxyService.getTargetUrl() / getApiKey() / getDefaultModel()` | `getActive("LLM")` |
+| **MD 全局浮窗** | `AiChatSseController` (`/api/ai/chat/stream`) | 同上 | 同上 |
+| **Office 编辑器** (DocEditor / MTOffice) | `DocumentAiController`(**复用 MD**) | 同上 | 同上 |
+| **PDF 编辑器** (PdfEditor) | `PdfVisionSseController` / `PdfExtractTermsSseController` / `PdfOptimizeOcrSseController` | `aiProxyService.getVisionUrl() / getVisionKey() / getVisionModel()` | `getActive("VISION")` |
+| **PDF OCR** (PaddleOcrClient) | (无 AiProxyService,直读) | — | `getActive("OCR_PADDLE")` |
+
+#### 关键代码
+
+- **配置中心**:`miaotongdoc-server/src/main/java/com/miaotong/doc/service/AiConfigService.java`
+  - `getActive("LLM")` 取默认 LLM Provider 的 url/key/model
+  - `refresh()` 从 DB 重载缓存 + 发 `AiConfigRefreshedEvent`
+- **业务代理**:`miaotongdoc-server/src/main/java/com/miaotong/doc/service/AiProxyService.java`
+  - `getTargetUrl() / getApiKey() / getDefaultModel()` — LLM
+  - `getVisionUrl() / getVisionKey() / getVisionModel()` — VISION(OCR AI 改造 v2 新增)
+- **状态查询**(改造后新增):`GET /api/ai/status`
+  - 返回 4 个 type 的配置状态,前端 `useAiStatus` 缓存
+- **管理后台**:`/api/admin/ai/providers/*` (CRUD + set-default + test-connection + fetch-models)
+
+#### 当前生效配置(2026-07-26 截取)
+
+| 字段 | 值 | 实际来源 |
+|---|---|---|
+| LLM 模型 | `deepseek-v4-flash` | `/data/config/ai-config.json` (DB baseUrl 字段为空) |
+| LLM baseUrl | `https://token.sensenova.cn/v1` | 文件 |
+| LLM apiKey | `sk-iSiev4hDzgMAr9TJy6bMp2fUsoCZsRTZ` | 文件 |
+| LLM timeout | 600s | 文件 |
+| VISION 模型 | `gpt-4o` | DB (VISION Provider) |
+| OCR 引擎 | PaddleOCR | 容器 `miaotongdoc-ocr-paddle:5003` (healthy) |
+
+#### 切换 AI 模型方法
+
+- **首选**:管理后台 → AI 配置 → 选 Provider → 改 `defaultModel` → 保存(自动热刷新)
+- **临时**:编辑容器内 `/data/config/ai-config.json` → 重启 web-server
+- **环境变量**:重启时 `LLM_BASE_URL` / `LLM_API_KEY` 覆盖 application.yml
+
+#### 完整 AI 接口清单
+
+```
+全局管理:
+  GET    /api/ai/status                       ← 4 个 type 配置状态(新增)
+  GET    /api/ai/config                       ← 脱敏配置
+  GET    /api/ai/settings
+  POST   /api/ai/proxy                        ← 通用 LLM 代理
+  POST   /api/ai/chat/stream                  ← MD 浮窗(无 docId)
+  POST   /api/ai/refresh-models
+  GET    /api/ai/test                         ← 测试连接
+  POST   /api/ai/test/chat
+
+MD / Office 共享 (/api/documents/{id}/ai/*):
+  POST   chat / chat-stream                   ← 文档问答
+  POST   generate / generate-stream           ← 内容生成
+  POST   summarize / summarize-structured
+  POST   translate
+  POST   rewrite
+  POST   extract-tables
+  POST   compare
+  POST   vision-chat                          ← Office 视觉问答
+  POST   suggest-tags
+  POST   suggest-folder
+  POST   review-contract
+  POST   stream                               ← useAiChat 通用
+
+PDF OCR 专用 (/api/pdf/{id}/*):
+  POST   recognize                            ← 智能识别(主入口)
+  POST   recognize-old                        ← 兼容保留
+  POST   recognize-paddle?model=mobile|server ← PaddleOCR
+  GET    recognize-status
+  GET/PUT markdown
+  GET    text-positions
+  POST   export-edited
+  POST   ai/auto-outline                      ← 智能目录
+  POST   ai/extract-structured                ← 结构化提取
+  POST   ai/vision/stream                     ← PDF VLM(改造后走 VISION 配置)
+  POST   ai/extract-terms/stream              ← 合同条款抽取
+  POST   ai/optimize-ocr/stream               ← OCR 结果 AI 优化
+```
 
 ### AI 功能扩展
 

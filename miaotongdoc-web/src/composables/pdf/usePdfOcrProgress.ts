@@ -14,9 +14,9 @@ import { ref, onUnmounted } from 'vue'
 
 export type OcrProgressEvent =
   | { type: 'connected'; ts: number }
-  | { type: 'progress'; percent: number; message: string; ts: number }
+  | { type: 'progress'; percent: number; message: string; ts: number; currentPage?: number; totalPages?: number; status?: string }
   | { type: 'done'; engine: string; ts: number }
-  | { type: 'error'; error: string; ts: number }
+  | { type: 'error'; error: string; ts: number; code?: string }
   | { type: 'closed' }
 
 export interface UsePdfOcrProgressOptions {

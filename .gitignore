@@ -6,6 +6,12 @@ miaotongdoc-web/tests/screenshots/
 # 后续测试脚本(个人调试/临时验证,不入 git;固化测试放 tests/ 根目录)
 miaotongdoc-web/tests/local/
 miaotongdoc-web/tests/local/**
+miaotongdoc-web/tests/fixtures/**
+
+# 测试报告和 E2E 脚本（只保留 run.mjs 和 README.md）
+miaotongdoc-web/tests/*.mjs
+miaotongdoc-web/tests/*-report.md
+!miaotongdoc-web/tests/run.mjs
 
 # Playwright 浏览器默认装在系统 ~/.cache/ms-playwright/(跨项目共享,不入 git)
 # 已被 node_modules 覆盖项目内的 .cache;系统 ~/.cache 由用户主目录 ignore 规则覆盖
@@ -21,6 +27,10 @@ replay_pid*.log
 
 # Docker 数据
 MiaotongDoc-Docker/data/
+
+# Docker 模型缓存（构建期烧入镜像，不进 Git）
+MiaotongDoc-Docker/app/docling/models/
+MiaotongDoc-Docker/app/ocr-paddle/paddlex-cache/
 
 # IDE 配置
 .idea/

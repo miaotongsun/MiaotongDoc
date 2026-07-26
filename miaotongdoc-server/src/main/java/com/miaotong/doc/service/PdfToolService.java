@@ -3,6 +3,7 @@ package com.miaotong.doc.service;
 import com.miaotong.doc.entity.Document;
 import com.miaotong.doc.exception.BusinessException;
 import com.miaotong.doc.service.storage.StorageService;
+import com.miaotong.doc.util.PdfFontUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
@@ -26,9 +27,12 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -48,7 +52,13 @@ public class PdfToolService {
     /** Phase 13.23: AI 服务(智能目录生成) */
     private final com.miaotong.doc.service.ai.AiService aiService;
     /** Phase 13.23: Docling 结构化提取(智能提取) */
-    private final com.miaotong.doc.service.DoclingService doclingService;
+    private final DoclingService doclingService;
+    /** Phase 26: PDF 任务仓库(智能目录旁路数据用) */
+    private final com.miaotong.doc.repository.PdfTaskRepository pdfTaskRepository;
+
+    /** Phase 26: EntityManager(智能目录旁路 SQL INSERT/UPDATE 用) */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     /** Phase 13.22: 中文字体缓存(嵌入 NotoSansSC/微软雅黑用于中文 PDF 文字修改) */
     private static volatile PDFont CHINESE_FONT = null;
@@ -1151,12 +1161,14 @@ public class PdfToolService {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         List<Map<String, Object>> result = new ArrayList<>();
+        // Phase 26:先尝试从 DB 旁路数据取(更精确,绕过 PDFBox 序列化问题)
+        Map<String, Integer> bypassPageByTitle = loadOutlineBypass(docId);
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
                 PDDocumentOutline outline = pdf.getDocumentCatalog().getDocumentOutline();
                 if (outline == null) return result;
-                walkOutline(pdf, outline, 0, result);
+                walkOutline(pdf, outline, 0, result, bypassPageByTitle);
             }
         } catch (Exception e) {
             log.error("提取 PDF 大纲失败: docId={}", docId, e);
@@ -1164,53 +1176,208 @@ public class PdfToolService {
         return result;
     }
 
-    private void walkOutline(PDDocument pdf, PDDocumentOutline outline, int level, List<Map<String, Object>> acc) {
+    /**
+     * Phase 26:把智能目录的 title→page 映射存到 mt_pdf_task.parameters jsonb
+     *
+     * 实现策略:用 JdbcTemplate 直连 PG,显式 PGobject type=jsonb(避开 Jackson String→jsonb 类型不匹配)
+     */
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    private void persistOutlineBypass(Long docId, Map<String, Integer> pageByTitle) {
+        try {
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(pageByTitle);
+            // 用 PGobject 强制 jsonb 类型
+            org.postgresql.util.PGobject pgJson = new org.postgresql.util.PGobject();
+            pgJson.setType("jsonb");
+            pgJson.setValue(json);
+            // 查现有 task(任意 type 都可以复用)
+            com.miaotong.doc.entity.PdfTask task = pdfTaskRepository
+                    .findFirstByDocumentIdOrderByIdDesc(docId)
+                    .orElse(null);
+            if (task == null) {
+                jdbcTemplate.update(
+                        "INSERT INTO mt_pdf_task (document_id, task_type, status, parameters, model, language, progress, created_by, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, 'mobile', 'ch', 0, ?, now(), now())",
+                        docId, "outline_bypass", "completed", pgJson, 1L);
+            } else {
+                jdbcTemplate.update(
+                        "UPDATE mt_pdf_task SET task_type=?, status=?, parameters=?, updated_at=now() WHERE id=?",
+                        "outline_bypass", "completed", pgJson, task.getId());
+            }
+            log.info("智能目录旁路数据持久化: docId={}, 条数={}", docId, pageByTitle.size());
+        } catch (Exception e) {
+            log.warn("持久化智能目录旁路数据失败(非致命): docId={}, error={}", docId, e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 26:从 mt_pdf_task 读最新 outline_bypass 旁路数据
+     */
+    /**
+     * Phase 27: 用章节标题在 pageTexts 中找最相似的页(返回 1-based 页码,失败返回 0)
+     *
+     * 策略:滑动窗口(章节标题可能跨行,用前 N 字符模糊匹配)+ 字符命中率
+     * 例:title="第一章 总则",pageText 含 "第 1 章 总则 ..." → 命中
+     */
+    private int findBestPageByTitle(String title, List<String> pageTexts) {
+        if (title == null || title.isBlank() || pageTexts == null || pageTexts.isEmpty()) return 0;
+        String t = title.replaceAll("\\s+", "").toLowerCase();
+        // 取前 6 字符做主键(章节标题前几个字最具区分度,如"第一章")
+        String key = t.length() > 6 ? t.substring(0, 6) : t;
+        for (int i = 0; i < pageTexts.size(); i++) {
+            String page = pageTexts.get(i) == null ? "" : pageTexts.get(i).replaceAll("\\s+", "").toLowerCase();
+            if (page.contains(key)) return i + 1;
+        }
+        // 退化:逐字符匹配
+        for (int i = 0; i < pageTexts.size(); i++) {
+            String page = pageTexts.get(i) == null ? "" : pageTexts.get(i).replaceAll("\\s+", "").toLowerCase();
+            if (page.contains(t.substring(0, Math.min(2, t.length())))) return i + 1;
+        }
+        return 0;
+    }
+
+    /**
+     * Phase 27: 判断 title 是否在指定页 pageTexts 中(去除空白后子串匹配)
+     */
+    private boolean isTitleInPage(String title, List<String> pageTexts, int pageIdx) {
+        if (title == null || pageIdx < 0 || pageIdx >= pageTexts.size()) return true; // 越界不校验
+        String t = title.replaceAll("\\s+", "").toLowerCase();
+        if (t.isEmpty()) return true;
+        String page = pageTexts.get(pageIdx) == null ? "" : pageTexts.get(pageIdx).replaceAll("\\s+", "").toLowerCase();
+        if (page.contains(t)) return true;
+        // 退化:只看前 4 字符
+        return t.length() > 4 && page.contains(t.substring(0, 4));
+    }
+
+    private Map<String, Integer> loadOutlineBypass(Long docId) {
+        try {
+            jakarta.persistence.Query q = entityManager.createNativeQuery(
+                    "SELECT parameters FROM mt_pdf_task WHERE document_id=?1 AND task_type='outline_bypass' " +
+                    "ORDER BY id DESC LIMIT 1");
+            q.setParameter(1, docId);
+            Object result = q.getSingleResult();
+            if (result == null) return Map.of();
+            String json = result.toString();
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> raw = om.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            Map<String, Integer> out = new LinkedHashMap<>();
+            raw.forEach((k, v) -> {
+                if (v instanceof Number) out.put(k, ((Number) v).intValue());
+            });
+            return out;
+        } catch (Exception e) {
+            log.debug("加载智能目录旁路数据失败: docId={}, error={}", docId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private void walkOutline(PDDocument pdf, PDDocumentOutline outline, int level, List<Map<String, Object>> acc,
+                              Map<String, Integer> bypassPageByTitle) {
         if (outline == null) return;
         for (PDOutlineItem item : outline.children()) {
             Map<String, Object> node = new LinkedHashMap<>();
-            node.put("title", item.getTitle());
+            String title = item.getTitle();
+            node.put("title", title);
             node.put("level", level);
-            // Phase 14.U10: 解析真实 destination 页码(不再硬编码 1)
+            // Phase 26 优先用旁路数据(精确),其次 PDFBox 解析
             int page = 1;
-            try {
-                Object dest = item.getDestination();
-                if (dest instanceof PDPage) {
-                    // 找到 page 在 pdf pages 中的索引
-                    for (int i = 0; i < pdf.getNumberOfPages(); i++) {
-                        if (pdf.getPage(i) == dest) { page = i + 1; break; }
-                    }
-                } else if (dest instanceof PDPage) {
-                    for (int i = 0; i < pdf.getNumberOfPages(); i++) {
-                        if (pdf.getPage(i) == dest) { page = i + 1; break; }
-                    }
-                } else {
-                    // PDActionGoTo / PDPageDestination / PDOutlineNode 等:
-                    // 尝试反射 getPage() / getDestination() 兼容各种 PDFBox 3.x 类型
-                    try {
-                        java.lang.reflect.Method m = dest.getClass().getMethod("getPage");
-                        Object p2 = m.invoke(dest);
-                        if (p2 instanceof PDPage) {
-                            PDPage pp = (PDPage) p2;
-                            for (int i = 0; i < pdf.getNumberOfPages(); i++) {
-                                if (pdf.getPage(i) == pp) { page = i + 1; break; }
-                            }
-                        }
-                    } catch (Exception ignore) {
-                        // 反射失败,page 保持 1
-                    }
+            Integer bypassPage = bypassPageByTitle != null ? bypassPageByTitle.get(title) : null;
+            if (bypassPage != null && bypassPage >= 1) {
+                page = bypassPage;
+            } else {
+                try {
+                    page = resolveOutlinePage(pdf, item);
+                } catch (Exception e) {
+                    log.debug("解析 outline page 失败: title={}, error={}", title, e.getMessage());
                 }
-            } catch (Exception e) {
-                // destination 解析失败,fallback page=1
             }
             node.put("page", page);
             acc.add(node);
             if (item.hasChildren()) {
                 Object child = item.getFirstChild();
                 if (child instanceof PDDocumentOutline) {
-                    walkOutline(pdf, (PDDocumentOutline) child, level + 1, acc);
+                    walkOutline(pdf, (PDDocumentOutline) child, level + 1, acc, bypassPageByTitle);
                 }
             }
         }
+    }
+
+    /**
+     * Phase 26 修复:解析 outline item 的真实页码
+     * PDFBox 3.x 中 setDestination(PDPage) 写出来会变成 PDActionGoTo,
+     * getDestination() 返回类型不固定,需要多分支处理。
+     */
+    private int resolveOutlinePage(PDDocument pdf, PDOutlineItem item) {
+        int totalPages = pdf.getNumberOfPages();
+        // 1) 直接是 PDPage(走 PDPageXYZDestination 后会命中这里)
+        Object dest;
+        try {
+            dest = item.getDestination();
+        } catch (java.io.IOException e) {
+            log.debug("getDestination 抛 IOException: {}", e.getMessage());
+            return 1;
+        }
+        if (dest instanceof PDPage) {
+            PDPage target = (PDPage) dest;
+            for (int i = 0; i < totalPages; i++) {
+                if (pdf.getPage(i) == target) return i + 1;
+            }
+        }
+        // 2) 反射拿 PDPage(覆盖 PDPageDestination / PDPageXYZDestination)
+        if (dest != null) {
+            try {
+                java.lang.reflect.Method getPageM = dest.getClass().getMethod("getPage");
+                Object p2 = getPageM.invoke(dest);
+                if (p2 instanceof PDPage) {
+                    PDPage target = (PDPage) p2;
+                    for (int i = 0; i < totalPages; i++) {
+                        if (pdf.getPage(i) == target) return i + 1;
+                    }
+                }
+            } catch (NoSuchMethodException ignore) {
+                // PDActionGoTo 没有 getPage
+            } catch (Exception e) {
+                log.debug("反射 getPage 失败: {}", e.getMessage());
+            }
+            // 3) PDActionGoTo 路径:dest.getDestination() 才是 PDPageDestination
+            try {
+                java.lang.reflect.Method getDestM = dest.getClass().getMethod("getDestination");
+                Object innerDest = getDestM.invoke(dest);
+                if (innerDest != null) {
+                    java.lang.reflect.Method getPage2 = innerDest.getClass().getMethod("getPage");
+                    Object p3 = getPage2.invoke(innerDest);
+                    if (p3 instanceof PDPage) {
+                        PDPage target = (PDPage) p3;
+                        for (int i = 0; i < totalPages; i++) {
+                            if (pdf.getPage(i) == target) return i + 1;
+                        }
+                    }
+                }
+            } catch (Exception ignore) {
+                // 不是 PDActionGoTo
+            }
+        }
+        // 4) 兜底:COS 字典 D 数组找 page 引用
+        try {
+            org.apache.pdfbox.cos.COSBase aDict = item.getCOSObject().getDictionaryObject("A");
+            org.apache.pdfbox.cos.COSBase dArray = null;
+            if (aDict instanceof org.apache.pdfbox.cos.COSDictionary) {
+                dArray = ((org.apache.pdfbox.cos.COSDictionary) aDict).getDictionaryObject("D");
+            } else {
+                dArray = item.getCOSObject().getDictionaryObject("D");
+            }
+            if (dArray instanceof org.apache.pdfbox.cos.COSArray arr && arr.size() > 0) {
+                org.apache.pdfbox.cos.COSBase first = arr.get(0);
+                if (first instanceof org.apache.pdfbox.cos.COSDictionary dRef) {
+                    for (int i = 0; i < totalPages; i++) {
+                        if (pdf.getPage(i).getCOSObject() == dRef) return i + 1;
+                    }
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return 1;
     }
 
     // ==================== Phase 13.23: 去水印 / 智能目录 / 智能提取 ====================
@@ -1283,20 +1450,29 @@ public class PdfToolService {
         }
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
-            // 1. 取全文 text(带页码)
-            StringBuilder fullText = new StringBuilder();
+            // 1. 取全文 text(带页码),按页切(避免字符截断导致 LLM 看不到后续页码)
+            List<String> pageTexts = new ArrayList<>();
+            int totalPages = 0;
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
                 PDFTextStripper stripper = new PDFTextStripper();
-                for (int i = 1; i <= pdf.getNumberOfPages(); i++) {
+                totalPages = pdf.getNumberOfPages();
+                for (int i = 1; i <= totalPages; i++) {
                     stripper.setStartPage(i);
                     stripper.setEndPage(i);
-                    String t = stripper.getText(pdf);
-                    fullText.append("[Page ").append(i).append("]\n").append(t).append("\n");
+                    pageTexts.add(stripper.getText(pdf));
                 }
             }
-            // 2. 喂 LLM 生成 JSON 目录
-            String prompt = "分析以下 PDF 全文(已按页标注 [Page N]),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数),\"level\":层级(0=一级,1=二级)}。只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" +
-                    fullText.substring(0, Math.min(fullText.length(), 12000));
+            // 2. 喂 LLM(按页拼,前 N 页直到字符上限 12000)
+            StringBuilder fullText = new StringBuilder();
+            int maxChars = 12000;
+            int pagesIncluded = 0;
+            for (int i = 0; i < pageTexts.size(); i++) {
+                String pageBlock = "[Page " + (i + 1) + "]\n" + pageTexts.get(i) + "\n";
+                if (fullText.length() + pageBlock.length() > maxChars && pagesIncluded > 0) break;
+                fullText.append(pageBlock);
+                pagesIncluded++;
+            }
+            String prompt = "分析以下 PDF 全文(共 " + totalPages + " 页,已按页标注 [Page N],本页范围内前 " + pagesIncluded + " 页),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数,必须使用 1~" + totalPages + " 之间的真实页码,不要猜!),\"level\":层级(0=一级,1=二级)}。只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" + fullText;
             String llmOut = aiService.generate(prompt);
             // Phase 13.36: 检测 LLM 调用失败(chat 异常时返回"AI 服务调用失败"字符串)
             if (llmOut == null || llmOut.isBlank()) {
@@ -1322,23 +1498,51 @@ public class PdfToolService {
                 return resp;
             }
             resp.put("outline", outline);
-            // 4. 写入 PDF outline 落盘
+            // 4. 写入 PDF outline 落盘 + page 范围校验(防 LLM 返回越界值)
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                int totalPg = pdf.getNumberOfPages();
                 PDDocumentOutline root = new PDDocumentOutline();
                 pdf.getDocumentCatalog().setDocumentOutline(root);
+                int prevPage = 0;
+                // Phase 26 旁路数据:同时把 title→page 映射存到 DB,
+                // 解决 PDFBox 写 PDPageXYZDestination 序列化丢失 page 引用的问题
+                Map<String, Integer> pageByTitle = new LinkedHashMap<>();
                 for (Map<String, Object> node : outline) {
                     PDOutlineItem item = new PDOutlineItem();
-                    item.setTitle(String.valueOf(node.get("title")));
+                    String title = String.valueOf(node.get("title"));
+                    item.setTitle(title);
                     int pg = node.get("page") instanceof Number ? ((Number) node.get("page")).intValue() : 1;
-                    if (pg >= 1 && pg <= pdf.getNumberOfPages()) {
-                        item.setDestination(pdf.getPage(pg - 1));
+                    // Phase 27 增强:如果 LLM 给的 page 不在 pageTexts 范围内,做 fuzzy 匹配
+                    // (用章节标题在 pageTexts 数组里找最相似的页,纠正页码)
+                    if (pg < 1 || pg > totalPg || !isTitleInPage(title, pageTexts, pg - 1)) {
+                        int matched = findBestPageByTitle(title, pageTexts);
+                        if (matched > 0) {
+                            log.info("智能目录 page fuzzy 纠正: title={}, 原始 page={}, 纠正为 {}", title, pg, matched);
+                            pg = matched;
+                        } else {
+                            log.warn("智能目录 page 越界,自动修正: title={}, 原始 page={}, 修正为 1", title, pg);
+                            pg = 1;
+                        }
                     }
+                    if (pg <= prevPage) {
+                        pg = prevPage + 1;
+                        if (pg > totalPg) pg = totalPg;
+                    }
+                    org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageXYZDestination dest =
+                            new org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageXYZDestination();
+                    dest.setPage(pdf.getPage(pg - 1));
+                    item.setDestination(dest);
                     root.addLast(item);
+                    prevPage = pg;
+                    node.put("page", pg);
+                    pageByTitle.put(title, pg);
                 }
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 pdf.save(baos);
                 String newFilePath = replacePdfBytes(docId, baos.toByteArray(), "auto-outline");
                 resp.put("filePath", newFilePath);
+                // 持久化旁路数据到 mt_pdf_task.parameters(用最新 task)
+                persistOutlineBypass(docId, pageByTitle);
             }
             resp.put("success", true);
             log.info("智能目录生成: docId={}, 条数={}", docId, outline.size());
@@ -1438,6 +1642,9 @@ public class PdfToolService {
 
     /**
      * 提取所有嵌入图片为 zip
+     *
+     * Phase 26 fix:无嵌入图时返回 null(让 controller 返回 204 No Content + X-No-Images: true),
+     * 避免给用户返回 22 字节"空 zip"造成困惑。
      */
     public byte[] extractImagesZip(Long docId) {
         Document doc = documentService.getDocument(docId);
@@ -1464,6 +1671,10 @@ public class PdfToolService {
                     } catch (Exception ignore) {}
                 }
             }
+            if (idx == 0) {
+                log.info("PDF 无嵌入图片: docId={}", docId);
+                return null; // 让 controller 返回 204
+            }
             zos.finish();
             return baos.toByteArray();
         } catch (Exception e) {
@@ -1473,60 +1684,49 @@ public class PdfToolService {
     }
 
     /**
-     * 全文搜索(基于已提取的 text-positions)
+     * 全文搜索(基于 PDFTextStripper 提取整页文本)
+     *
+     * Phase 26 fix:原实现基于 extractTextPositions(char-level),但 PDFBox 在嵌入子集字体场景下
+     * 经常返回 0 条 position,导致搜索永远命中 0。改为按页用 PDFTextStripper 抽整页文本,直接 indexOf。
      */
     public List<Map<String, Object>> searchText(Long docId, String keyword, boolean caseSensitive) {
         if (keyword == null || keyword.isBlank()) return List.of();
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
 
-        List<Map<String, Object>> positions = extractTextPositions(docId);
         List<Map<String, Object>> results = new ArrayList<>();
         String needle = caseSensitive ? keyword : keyword.toLowerCase();
 
-        Map<Integer, List<Map<String, Object>>> byPage = new LinkedHashMap<>();
-        for (Map<String, Object> p : positions) {
-            Object pno = p.get("pageNum");
-            if (pno == null) continue;
-            int page = ((Number) pno).intValue();
-            byPage.computeIfAbsent(page, k -> new ArrayList<>()).add(p);
-        }
-
-        for (Map.Entry<Integer, List<Map<String, Object>>> e : byPage.entrySet()) {
-            int pageNum = e.getKey();
-            StringBuilder sb = new StringBuilder();
-            // Phase 14.U10: 在 text token 间插入空格,避免相邻字符拼成乱码
-            String prev = null;
-            for (Map<String, Object> p : e.getValue()) {
-                String text = (String) p.get("text");
-                if (text == null || text.isEmpty()) continue;
-                // 启发式:前一个 token 末尾是字母/数字 且当前 token 开头是字母/数字,加空格
-                if (sb.length() > 0 && prev != null) {
-                    char lastCh = sb.charAt(sb.length() - 1);
-                    char firstCh = text.charAt(0);
-                    boolean lastAlnum = Character.isLetterOrDigit(lastCh);
-                    boolean firstAlnum = Character.isLetterOrDigit(firstCh);
-                    if (lastAlnum && firstAlnum) sb.append(' ');
-                }
-                sb.append(text);
-                prev = text;
-            }
-            String haystack = caseSensitive ? sb.toString() : sb.toString().toLowerCase();
-            int idx = 0;
-            while ((idx = haystack.indexOf(needle, idx)) != -1) {
-                int end = Math.min(idx + needle.length() + 30, sb.length());
-                String snippet = sb.substring(Math.max(0, idx - 15), Math.min(sb.length(), end));
-                Map<String, Object> hit = new LinkedHashMap<>();
-                hit.put("page", pageNum);
-                hit.put("snippet", "..." + snippet + "...");
-                hit.put("offset", idx);
-                results.add(hit);
-                idx += needle.length();
+        try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
+            int totalPages = pdf.getNumberOfPages();
+            PDFTextStripper stripper = new PDFTextStripper();
+            for (int pageNum = 1; pageNum <= totalPages; pageNum++) {
                 if (results.size() >= 200) break;
+                stripper.setStartPage(pageNum);
+                stripper.setEndPage(pageNum);
+                String pageText = stripper.getText(pdf);
+                if (pageText == null || pageText.isEmpty()) continue;
+                String haystack = caseSensitive ? pageText : pageText.toLowerCase();
+                int idx = 0;
+                while ((idx = haystack.indexOf(needle, idx)) != -1) {
+                    int start = Math.max(0, idx - 15);
+                    int end = Math.min(pageText.length(), idx + needle.length() + 30);
+                    String snippet = (start > 0 ? "..." : "") + pageText.substring(start, end) + (end < pageText.length() ? "..." : "");
+                    Map<String, Object> hit = new LinkedHashMap<>();
+                    hit.put("page", pageNum);
+                    hit.put("snippet", snippet);
+                    hit.put("offset", idx);
+                    results.add(hit);
+                    idx += needle.length();
+                    if (results.size() >= 200) break;
+                }
             }
-            if (results.size() >= 200) break;
+            log.debug("搜索完成: docId={}, q='{}', hits={}", docId, keyword, results.size());
+            return results;
+        } catch (Exception e) {
+            log.error("搜索失败: docId={}, q={}", docId, keyword, e);
+            return List.of();
         }
-        return results;
     }
 
     /**
@@ -1658,19 +1858,19 @@ public class PdfToolService {
                         case "header": {
                             float cx = box.getWidth() / 2f;
                             float cy = box.getHeight() - fs - 12f;
-                            drawText(cs, text, cx, cy, 0, fs);
+                            drawText(cs, text, cx, cy, 0, fs, pdf);
                             break;
                         }
                         case "footer": {
                             float cx = box.getWidth() / 2f;
                             float cy = 12f + fs / 2f;
-                            drawText(cs, text, cx, cy, 0, fs);
+                            drawText(cs, text, cx, cy, 0, fs, pdf);
                             break;
                         }
                         case "center": {
                             float cx = box.getWidth() / 2f;
                             float cy = box.getHeight() / 2f;
-                            drawText(cs, text, cx, cy, 0, fs);
+                            drawText(cs, text, cx, cy, 0, fs, pdf);
                             break;
                         }
                         case "tile": {
@@ -1681,7 +1881,7 @@ public class PdfToolService {
                                 for (int c = 0; c < cols; c++) {
                                     float x = (c + 0.5f) * (box.getWidth() / cols);
                                     float y = (r + 0.5f) * (box.getHeight() / rows);
-                                    drawText(cs, text, x, y, tileRot, fs * 0.6f);
+                                    drawText(cs, text, x, y, tileRot, fs * 0.6f, pdf);
                                 }
                             }
                             break;
@@ -1689,7 +1889,7 @@ public class PdfToolService {
                         default: { // diagonal
                             float cx = box.getWidth() / 2f;
                             float cy = box.getHeight() / 2f;
-                            drawText(cs, text, cx, cy, Math.toRadians(rotation), fs);
+                            drawText(cs, text, cx, cy, Math.toRadians(rotation), fs, pdf);
                         }
                     }
                 }
@@ -1704,8 +1904,12 @@ public class PdfToolService {
         }
     }
 
-    /** 工具:在 (x,y) 处按弧度旋转绘制文字(居中锚点) */
-    private void drawText(PDPageContentStream cs, String text, float x, float y, double rad, float fontSize) throws java.io.IOException {
+    /** 工具:在 (x,y) 处按弧度旋转绘制文字(居中锚点)
+     *
+     * Phase 26 fix:自动按文本选择字体(中文字体支持 CJK),原代码固定用 Helvetica_BOLD,
+     * 导致中文文本抛 "U+XXXX ('.notdef') is not available" 错误。
+     */
+    private void drawText(PDPageContentStream cs, String text, float x, float y, double rad, float fontSize, org.apache.pdfbox.pdmodel.PDDocument pdf) throws java.io.IOException {
         cs.saveGraphicsState();
         if (rad != 0) {
             cs.transform(new org.apache.pdfbox.util.Matrix(
@@ -1716,13 +1920,22 @@ public class PdfToolService {
             cs.transform(new org.apache.pdfbox.util.Matrix(1, 0, 0, 1, x, y));
         }
         cs.beginText();
-        cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), fontSize);
-        // 居中:用 font.getStringWidth(text) / 1000 * fontSize 估算宽度,但为简化用 -text.length()*0.5*size 作粗略偏移
-        float offset = -(text == null ? 0 : text.length()) * fontSize * 0.25f;
+        org.apache.pdfbox.pdmodel.font.PDFont font = PdfFontUtil.getFontForText(pdf, text, true);
+        cs.setFont(font, fontSize);
+        // 居中:用 font.getStringWidth(text) / 1000 * fontSize 估算宽度
+        float stringWidth = (text == null || text.isEmpty()) ? 0f
+            : font.getStringWidth(text) / 1000f * fontSize;
+        float offset = -stringWidth / 2f;
         cs.newLineAtOffset(offset, -fontSize * 0.3f);
         cs.showText(text == null ? "" : text);
         cs.endText();
         cs.restoreGraphicsState();
+    }
+
+    /** 兼容旧调用 */
+    private void drawText(PDPageContentStream cs, String text, float x, float y, double rad, float fontSize) throws java.io.IOException {
+        // 从 cs 取不到所属 pdf,需要传进来;此处为兼容保留,真实调用都用 6 参版本
+        throw new UnsupportedOperationException("请使用带 PDFont 的 drawText 重载");
     }
 
     /**
@@ -1748,7 +1961,9 @@ public class PdfToolService {
                 try (PDPageContentStream cs = new PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
                     float y = "footer".equalsIgnoreCase(position) ? 24f : box.getHeight() - 24f;
                     cs.beginText();
-                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), (float) fontSize);
+                    // Phase 26 fix:根据文本自动选择字体(支持中文)
+                    org.apache.pdfbox.pdmodel.font.PDFont font = PdfFontUtil.getFontForText(pdf, resolved, false);
+                    cs.setFont(font, (float) fontSize);
                     cs.newLineAtOffset(40, y);
                     cs.showText(resolved);
                     cs.endText();
@@ -1963,6 +2178,25 @@ public class PdfToolService {
                 }
                 // 需要更新外观,默认 PDFBox 不重渲染字段外观
                 acroForm.setNeedAppearances(true);
+                // Phase 26 fix:如果有中文值,注册 CJK 字体到 AcroForm default resources,
+                // 并把字段的 default appearance 字符串引用该字体。PDFBox 渲染外观时按此找字体。
+                org.apache.pdfbox.pdmodel.font.PDFont cjkFont = null;
+                boolean hasCjk = values != null && values.values().stream().anyMatch(PdfFontUtil::needsCjk);
+                if (hasCjk) {
+                    cjkFont = PdfFontUtil.getFontForText(pdf, "中文", false);
+                    if (cjkFont != null && !"Helvetica".equals(cjkFont.getName())) {
+                        org.apache.pdfbox.pdmodel.PDResources dr = acroForm.getDefaultResources();
+                        if (dr == null) {
+                            dr = new org.apache.pdfbox.pdmodel.PDResources();
+                            acroForm.setDefaultResources(dr);
+                        }
+                        // 用字体名作为 COSName key 注册(PDF 默认外观字符串引用 /FontName)
+                        // COSName 构造器私有,用 COSName.getPDFName 创建实例
+                        org.apache.pdfbox.cos.COSName cjkKey = org.apache.pdfbox.cos.COSName.getPDFName(cjkFont.getName());
+                        dr.put(cjkKey, cjkFont);
+                        log.info("已注册 CJK 字体到 AcroForm default resources: {}", cjkKey.getName());
+                    }
+                }
                 int successCount = 0;
                 List<String> failedFields = new ArrayList<>();
                 for (Map.Entry<String, String> entry : values.entrySet()) {
@@ -1978,7 +2212,7 @@ public class PdfToolService {
                             failedFields.add(name + "(只读)");
                             continue;
                         }
-                        setFieldValue(field, value);
+                        setFieldValue(field, value, pdf, cjkFont);
                         successCount++;
                     } catch (Exception e) {
                         log.warn("填充字段失败: {} - {}", name, e.getMessage());
@@ -2001,7 +2235,11 @@ public class PdfToolService {
         }
     }
 
-    private void setFieldValue(org.apache.pdfbox.pdmodel.interactive.form.PDField field, String value) throws java.io.IOException {
+    /**
+     * Phase 26 fix:支持 cjkFont 显式传入,避免每次都重新加载。
+     * 设置字段值时,如果值含中文,改默认外观字符串引用 CJK 字体。
+     */
+    private void setFieldValue(org.apache.pdfbox.pdmodel.interactive.form.PDField field, String value, org.apache.pdfbox.pdmodel.PDDocument pdf, org.apache.pdfbox.pdmodel.font.PDFont cjkFont) throws java.io.IOException {
         if (field instanceof org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox) {
             org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox cb = (org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox) field;
             if ("true".equalsIgnoreCase(value) || "1".equals(value) || "yes".equalsIgnoreCase(value) || "on".equalsIgnoreCase(value)) {
@@ -2020,10 +2258,21 @@ public class PdfToolService {
             list.setValue(value);
         } else if (field instanceof org.apache.pdfbox.pdmodel.interactive.form.PDTextField) {
             org.apache.pdfbox.pdmodel.interactive.form.PDTextField text = (org.apache.pdfbox.pdmodel.interactive.form.PDTextField) field;
+            // 含中文:把 default appearance 改为引用已注册的 CJK 字体
+            if (PdfFontUtil.needsCjk(value) && cjkFont != null && !"Helvetica".equals(cjkFont.getName())) {
+                String fontName = cjkFont.getName();
+                String da = "/" + fontName + " 0 Tf 0 g";
+                text.setDefaultAppearance(da);
+            }
             text.setValue(value);
         } else {
             throw new BusinessException("不支持的字段类型: " + field.getClass().getSimpleName());
         }
+    }
+
+    /** 兼容 3 参旧签名(内部使用) */
+    private void setFieldValue(org.apache.pdfbox.pdmodel.interactive.form.PDField field, String value, org.apache.pdfbox.pdmodel.PDDocument pdf) throws java.io.IOException {
+        setFieldValue(field, value, pdf, null);
     }
 
     // ==================== Phase 12.3: 签名图片嵌入 ====================
