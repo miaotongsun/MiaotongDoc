@@ -41,24 +41,24 @@
 
         <div class="brand-spacer-3"></div>
 
-        <p class="brand-desc">万家笔墨汇一纸，千里同风共此心</p>
+        <p class="brand-desc">执笔如水，流转如风<br />一纸落墨，众人同舟</p>
 
         <div class="brand-points">
           <div class="point">
             <span class="point-num">壹</span>
-            <span class="point-text">同舟 · 一人起草，众人共修</span>
+            <span class="point-text">同舟共济 · 一人起草众人共修，千端并进</span>
           </div>
           <div class="point">
             <span class="point-num">贰</span>
-            <span class="point-text">同心 · 版本可溯，权限可托</span>
+            <span class="point-text">同心同德 · 版本有迹可循，权限有托可依</span>
           </div>
           <div class="point">
             <span class="point-num">叁</span>
-            <span class="point-text">同行 · 落字成契，千里同守</span>
+            <span class="point-text">同行同契 · 落字即成契约，千里亦可同守</span>
           </div>
           <div class="point">
             <span class="point-num">肆</span>
-            <span class="point-text">同智 · AI 在侧，繁务自省</span>
+            <span class="point-text">同智同进 · AI 常伴左右，繁务不劳心神</span>
           </div>
         </div>
       </div>

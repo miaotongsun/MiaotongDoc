@@ -1,8 +1,13 @@
 #!/bin/bash
 # MiaotongDoc 一键部署脚本
 # 使用方法: ./deploy.sh [start|stop|restart|status|logs|build]
+# 启动可选服务: ./deploy.sh start --with-docling   # 启用 docling(重型 AI 文档解析)
 
 set -e
+
+# 启动参数(全局,可在 start 子命令后追加 --with-ocr/--with-docling)
+WITH_OCR=false
+WITH_DOCLING=false
 
 # 颜色定义
 RED='\033[0;31m'
@@ -102,6 +107,28 @@ start_services() {
     log_info "[阶段 E] 启动 yjs + nginx..."
     docker compose up -d yjs-server nginx
     wait_for_healthy "nginx"
+
+    # 阶段 F: PaddleOCR(默认必起);ocr(Tesseract 兜底)/docling(重型)按需启用
+    local compose_flags=()
+    if [ "$WITH_OCR" = true ] || [ "$WITH_DOCLING" = true ]; then
+        # 有任何 profile 启用的服务时,启用 ocr profile 即可覆盖到 ocr
+        compose_flags+=(--profile ocr)
+    fi
+    if [ "$WITH_DOCLING" = true ]; then
+        compose_flags+=(--profile docling)
+        log_info "[阶段 F] 启动 PaddleOCR + ocr(--with-ocr) + docling(--with-docling)..."
+    elif [ "$WITH_OCR" = true ]; then
+        log_info "[阶段 F] 启动 PaddleOCR + Tesseract ocr(--with-ocr)..."
+    else
+        log_info "[阶段 F] 启动 PaddleOCR(docling 与 Tesseract 未启用,加 --with-docling/--with-ocr 启用)..."
+    fi
+    docker compose "${compose_flags[@]}" up -d ocr-paddle
+    if [ "$WITH_OCR" = true ]; then
+        docker compose "${compose_flags[@]}" up -d ocr
+    fi
+    if [ "$WITH_DOCLING" = true ]; then
+        docker compose "${compose_flags[@]}" up -d docling
+    fi
 
     # 最终状态
     log_info "部署完成！"
@@ -227,7 +254,27 @@ backup_data() {
 main() {
     cd "$(dirname "$0")"
 
-    case "$1" in
+    # 解析参数(支持 ./deploy.sh start --with-docling 形式)
+    local cmd="${1:-}"
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --with-ocr)
+                WITH_OCR=true
+                shift
+                ;;
+            --with-docling)
+                WITH_DOCLING=true
+                shift
+                ;;
+            *)
+                log_warn "未知参数: $1"
+                shift
+                ;;
+        esac
+    done
+
+    case "$cmd" in
         start)
             check_prerequisites
             start_services
@@ -260,18 +307,26 @@ main() {
         *)
             echo "MiaotongDoc 部署脚本"
             echo ""
-            echo "使用方法: $0 {start|stop|restart|status|health|logs|build|backup|clean-logs}"
+            echo "使用方法: $0 {start|stop|restart|status|health|logs|build|backup|clean-logs} [--with-ocr] [--with-docling]"
             echo ""
             echo "命令说明:"
-            echo "  start       - 启动所有服务"
-            echo "  stop        - 停止所有服务"
-            echo "  restart     - 重启所有服务"
-            echo "  status      - 查看服务状态"
-            echo "  health      - 检查服务健康状态"
-            echo "  logs        - 查看日志 (可指定服务名)"
-            echo "  build       - 构建 Docker 镜像"
-            echo "  backup      - 备份数据"
-            echo "  clean-logs  - 清理旧日志"
+            echo "  start                       - 启动核心服务 + PaddleOCR(默认)"
+            echo "  start --with-ocr            - 额外启动 Tesseract OCR(多语言兜底,轻量)"
+            echo "  start --with-docling        - 额外启动 Docling AI 文档解析(重型)"
+            echo "  start --with-ocr --with-docling"
+            echo "                             - 同时启动 Tesseract + Docling"
+            echo "  stop                        - 停止所有服务"
+            echo "  restart                     - 重启所有服务"
+            echo "  status                      - 查看服务状态"
+            echo "  health                      - 检查服务健康状态"
+            echo "  logs                        - 查看日志 (可指定服务名)"
+            echo "  build                       - 构建 Docker 镜像"
+            echo "  backup                      - 备份数据"
+            echo "  clean-logs                  - 清理旧日志"
+            echo ""
+            echo "可选 profile(默认禁用,按需启用):"
+            echo "  ocr       Tesseract 多语言兜底(25MB,小语种扫描件)"
+            echo "  docling   Docling AI 文档解析(重型,~6GB,首次启动慢)"
             exit 1
             ;;
     esac
