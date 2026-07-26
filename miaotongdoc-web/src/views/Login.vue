@@ -46,7 +46,7 @@
         <div class="brand-points">
           <div class="point">
             <span class="point-num">壹</span>
-            <span class="point-text">同舟共济 · 一人起草众人共修，千端并进</span>
+            <span class="point-text">同舟共济 · 一人执笔同修，千帆并进同心</span>
           </div>
           <div class="point">
             <span class="point-num">贰</span>
