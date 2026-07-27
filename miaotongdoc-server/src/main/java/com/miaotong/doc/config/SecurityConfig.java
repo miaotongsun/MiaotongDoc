@@ -2,8 +2,10 @@ package com.miaotong.doc.config;
 
 import com.miaotong.doc.config.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -24,6 +26,7 @@ import jakarta.annotation.PostConstruct;
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final OpenApiAuthFilter openApiAuthFilter;
 
     @PostConstruct
     public void init() {
@@ -37,6 +40,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .cors(cors -> {})
             .authorizeHttpRequests(auth -> auth
+                // 对外 API（鉴权由 OpenApiAuthFilter 完成）
+                .requestMatchers("/api/open/**").permitAll()
                 // 认证相关（无需登录）
                 .requestMatchers("/api/auth/login").permitAll()
                 .requestMatchers("/api/auth/register").permitAll()
@@ -74,6 +79,18 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * 单独注册 OpenApiAuthFilter（不走 Spring Security 过滤器链，
+     * 这样可以早于 Security 拦截器执行，并自行返回 401 响应）
+     */
+    @Bean
+    public FilterRegistrationBean<OpenApiAuthFilter> openApiAuthFilterRegistration() {
+        FilterRegistrationBean<OpenApiAuthFilter> registration = new FilterRegistrationBean<>(openApiAuthFilter);
+        registration.addUrlPatterns("/api/open/*");
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
     }
 
     @Bean

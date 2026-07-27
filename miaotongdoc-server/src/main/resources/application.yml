@@ -104,6 +104,13 @@ app:
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost}
 
+  # 对外 API 配置（v1 规范）
+  openapi:
+    enabled: ${OPENAPI_ENABLED:true}
+    rate-limit-default: 60
+    idempotency-ttl-hours: 24
+    startup-self-check: true
+
 # ===== 存储配置 =====
 storage:
   type: ${STORAGE_TYPE:local}

@@ -3,11 +3,16 @@ package com.miaotong.doc.controller;
 import com.miaotong.doc.entity.Department;
 import com.miaotong.doc.repository.DepartmentRepository;
 import com.miaotong.doc.service.DepartmentService;
+import com.miaotong.doc.service.ExcelImportService;
 import com.miaotong.doc.exception.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +23,7 @@ public class DepartmentController {
 
     private final DepartmentRepository departmentRepository;
     private final DepartmentService departmentService;
+    private final ExcelImportService excelImportService;
 
     private void checkAdmin(HttpServletRequest httpRequest) {
         String role = (String) httpRequest.getAttribute("role");
@@ -77,5 +83,25 @@ public class DepartmentController {
         checkAdmin(httpRequest);
         departmentService.deactivate(id);
         return ResponseEntity.ok(Map.of("message", "部门已停用"));
+    }
+
+    /** Excel 批量导入部门 */
+    @PostMapping("/import")
+    public ResponseEntity<ExcelImportService.ExcelImportResult> importDepartments(
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest httpRequest) throws IOException {
+        checkAdmin(httpRequest);
+        return ResponseEntity.ok(excelImportService.importDepartments(file));
+    }
+
+    /** 下载部门导入模板 */
+    @GetMapping("/import/template")
+    public ResponseEntity<byte[]> downloadDeptTemplate(HttpServletRequest httpRequest) throws IOException {
+        checkAdmin(httpRequest);
+        byte[] bytes = excelImportService.generateDeptTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        headers.setContentDispositionFormData("attachment", "部门导入模板.xlsx");
+        return new ResponseEntity<>(bytes, headers, 200);
     }
 }

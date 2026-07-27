@@ -8,7 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-26
+> 上次更新：2026-07-27
 
 ### 快速索引
 
@@ -30,6 +30,8 @@
 
 ## 已完成
 
+<!-- 状态：已完成。每条加一行 + 完成日期 -->
+- [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 
 ## 已废弃
 
@@ -41,7 +43,7 @@
 
 <!-- ADR-NNN 索引 -->
 
-暂无。
+- [ADR-001-open-api-design.md](ADR-001-open-api-design.md) — 对外服务 API 规范设计（API Key 多 Key 管理 vs OAuth2 选择）
 
 ---
 

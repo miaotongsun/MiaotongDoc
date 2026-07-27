@@ -111,15 +111,15 @@
         </div>
         <li class="nav-divider"></li>
         <li :class="{ active: activeTab === 'contract' }" @click="switchTab('contract')">
-          <el-icon><Notebook /></el-icon>
+          <el-icon :size="18"><Notebook /></el-icon>
           <span>合同管理</span>
         </li>
         <li :class="{ active: activeTab === 'activity' }" @click="switchTab('activity')">
-          <el-icon><Bell /></el-icon>
+          <el-icon :size="18"><Bell /></el-icon>
           <span>个人动态</span>
         </li>
         <li v-if="isAdmin" :class="{ active: activeTab === 'admin' }" @click="switchTab('admin')">
-          <el-icon><Setting /></el-icon>
+          <el-icon :size="18" style="width:18px;height:18px;display:inline-flex"><Setting /></el-icon>
           <span>管理后台</span>
         </li>
       </ul>
@@ -496,10 +496,22 @@
           </div>
         </el-form-item>
         <el-form-item label="上级文件夹">
-          <el-select v-model="newFolderParentId" placeholder="根目录（无上级）" clearable style="width: 100%">
-            <el-option label="根目录（无上级）" :value="null" />
-            <el-option v-for="f in folders" :key="f.id" :label="f.name" :value="f.id" />
-          </el-select>
+          <el-tree-select
+            v-model="newFolderParentId"
+            :data="folderTreeData"
+            node-key="id"
+            check-strictly
+            clearable
+            default-expand-all
+            :render-after-expand="false"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="根目录（无上级）"
+            style="width: 100%"
+          >
+            <template #default="{ data }">
+              <span>{{ data.name }}</span>
+            </template>
+          </el-tree-select>
           <div v-if="activeFolderId && !newFolderParentId" class="form-tip">
             当前位于「{{ folders.find(f => f.id === activeFolderId)?.name }}」内，新文件夹将创建在该目录下
           </div>
@@ -535,10 +547,22 @@
           </div>
         </el-form-item>
         <el-form-item label="上级文件夹">
-          <el-select v-model="editFolderParentId" placeholder="根目录（无上级）" clearable style="width: 100%">
-            <el-option label="根目录（无上级）" :value="null" />
-            <el-option v-for="f in availableParentFolders" :key="f.id" :label="f.name" :value="f.id" />
-          </el-select>
+          <el-tree-select
+            v-model="editFolderParentId"
+            :data="editFolderParentTreeData"
+            node-key="id"
+            check-strictly
+            clearable
+            default-expand-all
+            :render-after-expand="false"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="根目录（无上级）"
+            style="width: 100%"
+          >
+            <template #default="{ data }">
+              <span>{{ data.name }}</span>
+            </template>
+          </el-tree-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -555,7 +579,7 @@ import { useRouter } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
-import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick, ArrowDown, ArrowRight, Setting } from '@element-plus/icons-vue'
 import { documentApi } from '@/api/document'
 import { departmentApi, type Department } from '@/api/department'
 import { folderApi, type Folder as FolderType } from '@/api/folder'
@@ -1599,6 +1623,39 @@ const availableParentFolders = computed(() => {
   return folders.value.filter(f => !excluded.has(f.id))
 })
 
+// 文件夹树形结构（用于 el-tree-select 选择上级）
+const folderTreeData = computed(() => {
+  const map = new Map<number, any>()
+  const roots: any[] = []
+  for (const f of folders.value) {
+    map.set(f.id, { id: f.id, name: f.name, children: [] })
+  }
+  for (const f of folders.value) {
+    const node = map.get(f.id)!
+    if (f.parentId && map.has(f.parentId)) {
+      map.get(f.parentId)!.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  }
+  return roots
+})
+
+// 编辑对话框的树：排除当前文件夹及其后代
+const editFolderParentTreeData = computed(() => {
+  const excluded = new Set<number>()
+  if (editingFolder.value) {
+    excluded.add(editingFolder.value.id)
+    folders.value.filter(f => f.parentId === editingFolder.value!.id).forEach(f => {
+      excluded.add(f.id)
+      folders.value.filter(c => c.parentId === f.id).forEach(c => excluded.add(c.id))
+    })
+  }
+  const filterTree = (nodes: any[]): any[] =>
+    nodes.filter(n => !excluded.has(n.id)).map(n => ({ ...n, children: filterTree(n.children || []) }))
+  return filterTree([...folderTreeData.value])
+})
+
 function showEditFolder(folder: FolderType) {
   editingFolder.value = folder
   editFolderName.value = folder.name
@@ -1758,6 +1815,9 @@ async function handleTableCommand(cmd: string, row: any) {
 
 .nav-list li:not(.nav-divider) .el-icon {
   font-size: 18px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 /* Main content */

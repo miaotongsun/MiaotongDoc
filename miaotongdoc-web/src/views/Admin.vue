@@ -8,6 +8,9 @@
           <div class="tab-header">
             <el-input v-model="userSearch" placeholder="搜索工号、姓名、用户名..." style="width: 280px" clearable @clear="loadUsers" @keyup.enter="loadUsers" />
             <div style="flex:1"></div>
+            <el-button @click="openUserImportDialog()">
+              <el-icon><Upload /></el-icon> 批量导入
+            </el-button>
             <el-button type="primary" @click="openUserDialog()">
               <el-icon><Plus /></el-icon> 新增用户
             </el-button>
@@ -68,6 +71,9 @@
         <el-tab-pane label="部门管理" name="departments">
           <div class="tab-header">
             <div style="flex:1"></div>
+            <el-button @click="openDeptImportDialog()">
+              <el-icon><Upload /></el-icon> 批量导入
+            </el-button>
             <el-button type="primary" @click="openDeptDialog()">
               <el-icon><Plus /></el-icon> 新增部门
             </el-button>
@@ -592,6 +598,75 @@
             </template>
           </el-dialog>
         </el-tab-pane>
+
+        <!-- 系统集成（API Key 管理） -->
+        <el-tab-pane label="系统集成" name="openapi">
+          <div class="openapi-page">
+            <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+              <template #title>
+                <strong>对外服务 API（v1 规范）</strong>
+              </template>
+              <div class="openapi-doc">
+                颁发 API Key 给外部系统用于调用
+                <code>POST /api/open/v1/users</code>、
+                <code>POST /api/open/v1/departments</code> 等对外接口。
+                外部系统调用时需在 HTTP Header 传 <code>X-API-Key: ak_xxx</code>。
+                Key 颁发后明文仅展示一次，请妥善保存。
+              </div>
+            </el-alert>
+
+            <div class="tab-header">
+              <div style="flex:1"></div>
+              <el-button type="primary" @click="openOpenApiKeyDialog()">
+                <el-icon><Plus /></el-icon> 颁发新 Key
+              </el-button>
+            </div>
+
+            <el-table :data="openApiKeys" stripe>
+              <el-table-column prop="id" label="ID" width="60" />
+              <el-table-column prop="name" label="用途" show-overflow-tooltip />
+              <el-table-column prop="ownerSystem" label="外部系统" show-overflow-tooltip />
+              <el-table-column label="密钥前缀" width="140">
+                <template #default="{ row }">
+                  <code>{{ row.secretPrefix }}...</code>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.revokedAt" type="danger" size="small">已吊销</el-tag>
+                  <el-tag v-else-if="!row.enabled" type="info" size="small">已禁用</el-tag>
+                  <el-tag v-else-if="row.expiresAt && new Date(row.expiresAt) < new Date()" type="warning" size="small">已过期</el-tag>
+                  <el-tag v-else type="success" size="small">启用</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="限流/分钟" width="100" align="center">
+                <template #default="{ row }">{{ row.rateLimitPerMinute || 60 }}</template>
+              </el-table-column>
+              <el-table-column label="过期时间" width="170" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.expiresAt ? formatTime(row.expiresAt) : '永不过期' }}</template>
+              </el-table-column>
+              <el-table-column label="最近使用" width="170" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.lastUsedAt ? formatTime(row.lastUsedAt) : '从未' }}</template>
+              </el-table-column>
+              <el-table-column label="创建时间" width="170" show-overflow-tooltip>
+                <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="280" fixed="right" align="center">
+                <template #default="{ row }">
+                  <el-button size="small" text type="primary" @click="viewOpenApiKey(row)">查看</el-button>
+                  <el-divider direction="vertical" />
+                  <el-button v-if="!row.revokedAt && row.enabled" size="small" text type="warning" @click="disableOpenApiKey(row)">禁用</el-button>
+                  <el-button v-else-if="!row.revokedAt && !row.enabled" size="small" text type="success" @click="enableOpenApiKey(row)">启用</el-button>
+                  <el-divider v-if="!row.revokedAt" direction="vertical" />
+                  <el-button v-if="!row.revokedAt" size="small" text type="danger" @click="revokeOpenApiKey(row)">吊销</el-button>
+                  <el-divider direction="vertical" />
+                  <el-button size="small" text type="danger" @click="deleteOpenApiKey(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
         <!-- 文件夹模板 -->
         <el-tab-pane label="文件夹模板" name="folder-templates">
           <div class="tab-header">
@@ -694,9 +769,22 @@
           </el-col>
         </el-row>
         <el-form-item label="部门">
-          <el-select v-model="userForm.departmentId" placeholder="选择所属部门" clearable style="width:100%">
-            <el-option v-for="d in allDepts" :key="d.id" :label="d.name" :value="d.id" />
-          </el-select>
+          <el-tree-select
+            v-model="userForm.departmentId"
+            :data="deptTree"
+            node-key="id"
+            check-strictly
+            clearable
+            default-expand-all
+            :render-after-expand="false"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="选择所属部门"
+            style="width:100%"
+          >
+            <template #default="{ data }">
+              <span>{{ data.name }}</span>
+            </template>
+          </el-tree-select>
         </el-form-item>
         <el-form-item v-if="!editingUser" label="职位">
           <el-input v-model="userForm.position" placeholder="岗位/职位" />
@@ -714,6 +802,48 @@
       </template>
     </el-dialog>
 
+    <!-- 用户导入弹窗 -->
+    <el-dialog v-model="showUserImportDialog" title="批量导入用户" width="560px" destroy-on-close>
+      <div class="import-guide">
+        <p>请先下载模板，按列填写后上传。带 <span style="color: #f56c6c">*</span> 的列为必填。</p>
+        <div class="import-tags">
+          <el-tag>工号*</el-tag><el-tag>用户名*</el-tag><el-tag>姓名*</el-tag>
+          <el-tag>密码</el-tag><el-tag>邮箱</el-tag><el-tag>手机</el-tag>
+          <el-tag>部门编码</el-tag><el-tag>职位</el-tag><el-tag>角色</el-tag>
+        </div>
+        <p class="import-tip">提示：密码为空时默认 123456；角色不填时默认 user；部门编码必须已存在。</p>
+        <el-button link type="primary" @click="downloadUserTemplate">
+          <el-icon><Download /></el-icon> 下载模板
+        </el-button>
+      </div>
+      <el-upload
+        :show-file-list="false"
+        :before-upload="handleUserImport"
+        accept=".xlsx"
+        :disabled="importingUser"
+      >
+        <el-button type="primary" :loading="importingUser">
+          <el-icon><Upload /></el-icon> 选择 Excel 文件
+        </el-button>
+      </el-upload>
+      <div v-if="userImportResult" class="import-result" style="margin-top: 16px">
+        <el-alert
+          :type="userImportResult.failCount === 0 ? 'success' : 'warning'"
+          :title="`共 ${userImportResult.totalRows} 行，成功 ${userImportResult.successCount} 条，失败 ${userImportResult.failCount} 条`"
+          show-icon
+          :closable="false"
+        />
+        <el-table v-if="userImportResult.errors.length > 0" :data="userImportResult.errors" max-height="200" style="margin-top: 12px" size="small">
+          <el-table-column prop="rowNumber" label="行号" width="80" />
+          <el-table-column prop="message" label="错误信息" />
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="closeUserImportDialog">关闭</el-button>
+        <el-button v-if="userImportResult" type="primary" @click="closeUserImportDialog">完成</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 部门弹窗 -->
     <el-dialog v-model="showDeptDialog" :title="editingDept ? '编辑部门' : '新增部门'" width="460px" destroy-on-close>
       <el-form :model="deptForm" label-width="90px" class="dialog-form">
@@ -724,9 +854,22 @@
           <el-input v-model="deptForm.name" placeholder="部门全称" />
         </el-form-item>
         <el-form-item label="上级部门">
-          <el-select v-model="deptForm.parentId" placeholder="无（顶级部门）" clearable style="width:100%">
-            <el-option v-for="d in allDepts" :key="d.id" :label="d.name" :value="d.id" />
-          </el-select>
+          <el-tree-select
+            v-model="deptForm.parentId"
+            :data="editDeptParentTreeData"
+            node-key="id"
+            check-strictly
+            clearable
+            default-expand-all
+            :render-after-expand="false"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="无（顶级部门）"
+            style="width:100%"
+          >
+            <template #default="{ data }">
+              <span>{{ data.name }}</span>
+            </template>
+          </el-tree-select>
         </el-form-item>
         <el-form-item label="排序号">
           <el-input-number v-model="deptForm.sortOrder" :min="0" :max="999" style="width: 160px" />
@@ -735,6 +878,131 @@
       <template #footer>
         <el-button @click="showDeptDialog = false">取消</el-button>
         <el-button type="primary" @click="saveDept" :loading="saving">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 部门导入弹窗 -->
+    <el-dialog v-model="showDeptImportDialog" title="批量导入部门" width="560px" destroy-on-close>
+      <div class="import-guide">
+        <p>请先下载模板，按列填写后上传。带 <span style="color: #f56c6c">*</span> 的列为必填。</p>
+        <div class="import-tags">
+          <el-tag>部门编码*</el-tag><el-tag>部门名称*</el-tag>
+          <el-tag>上级部门编码</el-tag><el-tag>排序号</el-tag>
+        </div>
+        <p class="import-tip">提示：上级部门编码必须已存在或在本批次前面的行中已定义；根部门的上级部门编码留空。</p>
+        <el-button link type="primary" @click="downloadDeptTemplate">
+          <el-icon><Download /></el-icon> 下载模板
+        </el-button>
+      </div>
+      <el-upload
+        :show-file-list="false"
+        :before-upload="handleDeptImport"
+        accept=".xlsx"
+        :disabled="importingDept"
+      >
+        <el-button type="primary" :loading="importingDept">
+          <el-icon><Upload /></el-icon> 选择 Excel 文件
+        </el-button>
+      </el-upload>
+      <div v-if="deptImportResult" class="import-result" style="margin-top: 16px">
+        <el-alert
+          :type="deptImportResult.failCount === 0 ? 'success' : 'warning'"
+          :title="`共 ${deptImportResult.totalRows} 行，成功 ${deptImportResult.successCount} 条，失败 ${deptImportResult.failCount} 条`"
+          show-icon
+          :closable="false"
+        />
+        <el-table v-if="deptImportResult.errors.length > 0" :data="deptImportResult.errors" max-height="200" style="margin-top: 12px" size="small">
+          <el-table-column prop="rowNumber" label="行号" width="80" />
+          <el-table-column prop="message" label="错误信息" />
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="closeDeptImportDialog">关闭</el-button>
+        <el-button v-if="deptImportResult" type="primary" @click="closeDeptImportDialog">完成</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 颁发 API Key 对话框 -->
+    <el-dialog v-model="showOpenApiKeyDialog" title="颁发新 API Key" width="520px" destroy-on-close @closed="resetOpenApiKeyForm">
+      <el-form :model="openApiKeyForm" label-width="100px">
+        <el-form-item label="用途名称" required>
+          <el-input v-model="openApiKeyForm.name" placeholder="如：HR 系统对接" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="外部系统">
+          <el-input v-model="openApiKeyForm.ownerSystem" placeholder="如：hr-system" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="联系人">
+          <el-input v-model="openApiKeyForm.contact" placeholder="邮箱或工号" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="过期时间">
+          <el-date-picker v-model="openApiKeyForm.expiresAt" type="datetime" placeholder="留空=永不过期" style="width: 100%" value-format="YYYY-MM-DD HH:mm:ss" />
+        </el-form-item>
+        <el-form-item label="IP 白名单">
+          <el-input v-model="openApiKeyForm.allowedIps" placeholder="逗号分隔,留空不限制" />
+        </el-form-item>
+        <el-form-item label="限流/分钟">
+          <el-input-number v-model="openApiKeyForm.rateLimit" :min="1" :max="10000" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showOpenApiKeyDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitOpenApiKey" :loading="openApiKeySaving">颁发</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 一次性明文展示对话框 -->
+    <el-dialog v-model="showOpenApiKeyCreateResult" title="Key 已颁发" width="560px" :close-on-click-modal="false" @closed="onCreateResultClosed">
+      <el-alert v-if="!openApiKeyCopied" type="warning" :closable="false" show-icon>
+        <template #title>
+          请立即复制保存！此对话框关闭后，可通过"查看"按钮再次查看完整密钥。
+        </template>
+      </el-alert>
+      <el-alert v-else type="success" :closable="false" show-icon>
+        <template #title>已复制到剪贴板，请妥善保管。</template>
+      </el-alert>
+      <div class="key-display">
+        <code>{{ newOpenApiKey?.accessKey }}</code>
+        <el-button type="primary" @click="copyAccessKey">
+          <el-icon><DocumentCopy /></el-icon> 复制
+        </el-button>
+      </div>
+      <el-descriptions :column="1" border size="small" style="margin-top: 16px">
+        <el-descriptions-item label="用途">{{ newOpenApiKey?.name }}</el-descriptions-item>
+        <el-descriptions-item label="外部系统">{{ newOpenApiKey?.ownerSystem || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="限流/分钟">{{ newOpenApiKey?.rateLimit }}</el-descriptions-item>
+        <el-descriptions-item label="过期时间">{{ newOpenApiKey?.expiresAt ? formatTime(newOpenApiKey.expiresAt) : '永不过期' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ newOpenApiKey?.createdAt ? formatTime(newOpenApiKey.createdAt) : '' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="closeCreateResult">关闭</el-button>
+        <el-button type="primary" @click="closeCreateResult">我已保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 查看 Key 明文对话框 -->
+    <el-dialog v-model="showOpenApiKeyReveal" title="查看 API Key" width="560px" @closed="revealedKey = ''">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
+        <template #title>
+          此次查看操作已记录审计日志，请妥善保管密钥。
+        </template>
+      </el-alert>
+      <div class="key-display">
+        <code>{{ revealedKey }}</code>
+        <el-button type="primary" @click="copyRevealedKey">
+          <el-icon><DocumentCopy /></el-icon> 复制
+        </el-button>
+      </div>
+      <el-descriptions :column="1" border size="small" style="margin-top: 16px">
+        <el-descriptions-item label="用途">{{ revealedKeyInfo?.name }}</el-descriptions-item>
+        <el-descriptions-item label="密钥前缀">{{ revealedKeyInfo?.secretPrefix }}...</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag v-if="revealedKeyInfo?.revokedAt" type="danger" size="small">已吊销</el-tag>
+          <el-tag v-else-if="!revealedKeyInfo?.enabled" type="info" size="small">已禁用</el-tag>
+          <el-tag v-else type="success" size="small">启用</el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="showOpenApiKeyReveal = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -784,6 +1052,8 @@ import { auditApi, type AuditLogItem } from '@/api/audit'
 import { watermarkApi, type WatermarkConfig } from '@/api/watermark'
 import { templateApi, type DocumentTemplate } from '@/api/template'
 import { folderTemplateApi, type FolderTemplate } from '@/api/folderTemplate'
+import { importApi, type ImportResult, openApiKeyAdminApi, type OpenApiKeyInfo, type OpenApiKeyCreateResponse } from '@/api/import'
+import { Upload, Download } from '@element-plus/icons-vue'
 
 const activeTab = ref('users')
 const saving = ref(false)
@@ -804,6 +1074,26 @@ const showDeptDialog = ref(false)
 const editingDept = ref<Department | null>(null)
 const deptForm = ref<any>({})
 const allDepartmentsFlat = ref<Department[]>([])
+
+// --- 导入对话框 ---
+const showUserImportDialog = ref(false)
+const showDeptImportDialog = ref(false)
+const importingUser = ref(false)
+const importingDept = ref(false)
+const userImportResult = ref<ImportResult | null>(null)
+const deptImportResult = ref<ImportResult | null>(null)
+
+// --- 系统集成（API Key 管理） ---
+const openApiKeys = ref<OpenApiKeyInfo[]>([])
+const showOpenApiKeyDialog = ref(false)
+const showOpenApiKeyCreateResult = ref(false)
+const showOpenApiKeyReveal = ref(false)
+const openApiKeyForm = ref<any>({ name: '', ownerSystem: '', contact: '', expiresAt: '', allowedIps: '', rateLimit: 60 })
+const newOpenApiKey = ref<OpenApiKeyCreateResponse | null>(null)
+const revealedKey = ref('')
+const revealedKeyInfo = ref<OpenApiKeyInfo | null>(null)
+const openApiKeySaving = ref(false)
+const openApiKeyCopied = ref(false)
 
 // --- 审计日志 ---
 const auditLogs = ref<AuditLogItem[]>([])
@@ -1512,6 +1802,24 @@ const deptTree = computed(() => {
   return roots
 })
 
+// 编辑部门对话框用的树（排除当前部门和所有后代，避免循环引用）
+const editDeptParentTreeData = computed(() => {
+  const excluded = new Set<number>()
+  if (editingDept.value) {
+    excluded.add(editingDept.value.id)
+    const collect = (id: number) => {
+      allDepartmentsFlat.value.filter(d => d.parentId === id).forEach(d => {
+        excluded.add(d.id)
+        collect(d.id)
+      })
+    }
+    collect(editingDept.value.id)
+  }
+  const filterTree = (nodes: any[]): any[] =>
+    nodes.filter(n => !excluded.has(n.id)).map(n => ({ ...n, children: filterTree(n.children || []) }))
+  return filterTree([...deptTree.value])
+})
+
 function getDeptName(id?: number) {
   if (!id) return '-'
   const d = allDepartmentsFlat.value.find(d => d.id === id)
@@ -1527,6 +1835,7 @@ onMounted(() => {
   loadTemplateCategories()
   loadAiConfig()
   loadFolderTemplates()
+  loadOpenApiKeys()
 })
 
 async function loadUsers() {
@@ -1681,6 +1990,234 @@ async function handleDeactivateDept(dept: Department) {
     ElMessage.success('部门已停用')
     loadDepartments()
   } catch {}
+}
+
+// --- Excel 导入 ---
+function openUserImportDialog() {
+  userImportResult.value = null
+  showUserImportDialog.value = true
+}
+function closeUserImportDialog() {
+  showUserImportDialog.value = false
+  userImportResult.value = null
+  loadUsers()
+}
+function openDeptImportDialog() {
+  deptImportResult.value = null
+  showDeptImportDialog.value = true
+}
+function closeDeptImportDialog() {
+  showDeptImportDialog.value = false
+  deptImportResult.value = null
+  loadDepartments()
+}
+async function handleUserImport(file: File): Promise<boolean> {
+  importingUser.value = true
+  userImportResult.value = null
+  try {
+    const result = await importApi.importUsers(file)
+    userImportResult.value = result
+    if (result.failCount === 0) {
+      ElMessage.success(`成功导入 ${result.successCount} 条用户`)
+    } else {
+      ElMessage.warning(`导入完成：成功 ${result.successCount}，失败 ${result.failCount}`)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '导入失败')
+  } finally {
+    importingUser.value = false
+  }
+  return false  // 阻止 el-upload 自动上传
+}
+async function handleDeptImport(file: File): Promise<boolean> {
+  importingDept.value = true
+  deptImportResult.value = null
+  try {
+    const result = await importApi.importDepartments(file)
+    deptImportResult.value = result
+    if (result.failCount === 0) {
+      ElMessage.success(`成功导入 ${result.successCount} 条部门`)
+    } else {
+      ElMessage.warning(`导入完成：成功 ${result.successCount}，失败 ${result.failCount}`)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '导入失败')
+  } finally {
+    importingDept.value = false
+  }
+  return false
+}
+async function downloadUserTemplate() {
+  try {
+    const blob = await importApi.downloadUserTemplate()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = '用户导入模板.xlsx'
+    a.click()
+    window.URL.revokeObjectURL(url)
+  } catch (e: any) {
+    ElMessage.error('下载模板失败')
+  }
+}
+async function downloadDeptTemplate() {
+  try {
+    const blob = await importApi.downloadDeptTemplate()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = '部门导入模板.xlsx'
+    a.click()
+    window.URL.revokeObjectURL(url)
+  } catch (e: any) {
+    ElMessage.error('下载模板失败')
+  }
+}
+
+// --- 系统集成：API Key 管理 ---
+async function loadOpenApiKeys() {
+  try {
+    openApiKeys.value = await openApiKeyAdminApi.list()
+  } catch {
+    openApiKeys.value = []
+  }
+}
+function resetOpenApiKeyForm() {
+  openApiKeyForm.value = { name: '', ownerSystem: '', contact: '', expiresAt: '', allowedIps: '', rateLimit: 60 }
+  newOpenApiKey.value = null
+  openApiKeyCopied.value = false
+}
+function openOpenApiKeyDialog() {
+  resetOpenApiKeyForm()
+  showOpenApiKeyDialog.value = true
+}
+async function submitOpenApiKey() {
+  const f = openApiKeyForm.value
+  if (!f.name?.trim()) {
+    ElMessage.warning('请填写用途名称')
+    return
+  }
+  openApiKeySaving.value = true
+  try {
+    const payload: any = {
+      name: f.name.trim(),
+      ownerSystem: f.ownerSystem?.trim() || undefined,
+      contact: f.contact?.trim() || undefined,
+      allowedIps: f.allowedIps?.trim() || undefined,
+      rateLimit: f.rateLimit
+    }
+    if (f.expiresAt) {
+      // 兼容 Element Plus 日期选择器返回的 Date 对象
+      const d = f.expiresAt instanceof Date ? f.expiresAt : new Date(f.expiresAt)
+      payload.expiresAt = d.toISOString().slice(0, 19).replace('T', ' ')
+    }
+    const resp = await openApiKeyAdminApi.create(payload)
+    newOpenApiKey.value = resp
+    showOpenApiKeyDialog.value = false
+    showOpenApiKeyCreateResult.value = true
+    loadOpenApiKeys()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '颁发失败')
+  } finally {
+    openApiKeySaving.value = false
+  }
+}
+async function revokeOpenApiKey(key: OpenApiKeyInfo) {
+  if (key.revokedAt) {
+    ElMessage.warning('该 Key 已被吊销')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定要吊销 Key "${key.name}" (前缀 ${key.secretPrefix})？吊销后立即失效。`,
+      '吊销 API Key',
+      { type: 'warning' }
+    )
+    await openApiKeyAdminApi.revoke(key.id)
+    ElMessage.success('已吊销')
+    loadOpenApiKeys()
+  } catch {}
+}
+
+// 查看 Key 明文（通过 reveal 端点，可长期查看）
+async function viewOpenApiKey(key: OpenApiKeyInfo) {
+  revealedKey.value = ''
+  revealedKeyInfo.value = key
+  showOpenApiKeyReveal.value = true
+  try {
+    const resp = await openApiKeyAdminApi.reveal(key.id)
+    revealedKey.value = resp.accessKey
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '获取密钥失败')
+    showOpenApiKeyReveal.value = false
+  }
+}
+
+async function copyRevealedKey() {
+  if (!revealedKey.value) return
+  try {
+    await navigator.clipboard.writeText(revealedKey.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动选中复制')
+  }
+}
+
+// 启用
+async function enableOpenApiKey(key: OpenApiKeyInfo) {
+  try {
+    await openApiKeyAdminApi.enable(key.id)
+    ElMessage.success('已启用')
+    loadOpenApiKeys()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+// 禁用（软禁用，可再启用）
+async function disableOpenApiKey(key: OpenApiKeyInfo) {
+  try {
+    await openApiKeyAdminApi.disable(key.id)
+    ElMessage.success('已禁用')
+    loadOpenApiKeys()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+// 删除（硬删除，不可恢复）
+async function deleteOpenApiKey(key: OpenApiKeyInfo) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 Key "${key.name}" (前缀 ${key.secretPrefix})？此操作不可恢复！`,
+      '删除 API Key',
+      { type: 'error' }
+    )
+    await openApiKeyAdminApi.delete(key.id)
+    ElMessage.success('已删除')
+    loadOpenApiKeys()
+  } catch {}
+}
+
+// 颁发结果对话框关闭后清理（修复 bug：之前 @closed 直接重置导致 key 看不见）
+function onCreateResultClosed() {
+  newOpenApiKey.value = null
+  openApiKeyCopied.value = false
+}
+
+function closeCreateResult() {
+  showOpenApiKeyCreateResult.value = false
+}
+
+async function copyAccessKey() {
+  if (!newOpenApiKey.value) return
+  try {
+    await navigator.clipboard.writeText(newOpenApiKey.value.accessKey)
+    openApiKeyCopied.value = true
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动选中复制')
+  }
 }
 
 // --- 审计日志 ---
@@ -2738,5 +3275,71 @@ function formatTime(str?: string) {
   display: flex;
   align-items: center;
   margin-bottom: 8px;
+}
+
+/* 导入对话框 */
+.import-guide {
+  background: #f7f8fa;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+.import-guide p {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #606266;
+}
+.import-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.import-tip {
+  font-size: 12px !important;
+  color: #909399 !important;
+  margin-bottom: 8px !important;
+}
+.import-result {
+  width: 100%;
+}
+
+/* 系统集成 tab */
+.openapi-page {
+  padding: 0;
+}
+.openapi-doc code {
+  background: #e6f1fc;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #409eff;
+}
+.openapi-doc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+.key-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f7f8fa;
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 12px;
+  border: 1px dashed #dcdfe6;
+}
+.key-display code {
+  flex: 1;
+  font-family: monospace;
+  font-size: 14px;
+  color: #f56c6c;
+  word-break: break-all;
+}
+.text-muted {
+  color: #c0c4cc;
 }
 </style>

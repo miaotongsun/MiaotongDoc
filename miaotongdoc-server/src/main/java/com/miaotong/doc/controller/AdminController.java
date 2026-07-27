@@ -2,14 +2,19 @@ package com.miaotong.doc.controller;
 
 import com.miaotong.doc.entity.User;
 import com.miaotong.doc.repository.UserRepository;
+import com.miaotong.doc.service.ExcelImportService;
 import com.miaotong.doc.service.UserService;
 import com.miaotong.doc.exception.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 import java.util.Map;
 
 @RestController
@@ -19,6 +24,7 @@ public class AdminController {
 
     private final UserRepository userRepository;
     private final UserService userService;
+    private final ExcelImportService excelImportService;
 
     private void checkAdmin(HttpServletRequest httpRequest) {
         String role = (String) httpRequest.getAttribute("role");
@@ -110,5 +116,25 @@ public class AdminController {
         checkAdmin(httpRequest);
         userService.adminResetPassword(id, "123456");
         return ResponseEntity.ok(Map.of("message", "密码已重置为 123456"));
+    }
+
+    /** Excel 批量导入用户 */
+    @PostMapping("/users/import")
+    public ResponseEntity<ExcelImportService.ExcelImportResult> importUsers(
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest httpRequest) throws IOException {
+        checkAdmin(httpRequest);
+        return ResponseEntity.ok(excelImportService.importUsers(file));
+    }
+
+    /** 下载用户导入模板 */
+    @GetMapping("/users/import/template")
+    public ResponseEntity<byte[]> downloadUserTemplate(HttpServletRequest httpRequest) throws IOException {
+        checkAdmin(httpRequest);
+        byte[] bytes = excelImportService.generateUserTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        headers.setContentDispositionFormData("attachment", "用户导入模板.xlsx");
+        return new ResponseEntity<>(bytes, headers, 200);
     }
 }

@@ -1,8 +1,8 @@
 # MiaotongDoc 开发参考手册
 
-> **版本**: v1.3.0 | **维护者**: Claude Code
+> **版本**: v1.4.0 | **维护者**: Claude Code
 > **项目**: 企业级多格式在线文档协作与签署平台
-> **最后更新**: 2026年7月23日
+> **最后更新**: 2026年7月27日
 
 ---
 
@@ -1828,6 +1828,64 @@ npm run build --verbose
 ```
 
 > **更多部署相关问题**（RabbitMQ 重启、yjs 端口绑定、Flyway 迁移失败、编辑器 nginx 启动失败、管理员登录等）见 [DEPLOY.md - 常见部署问题详解](DEPLOY.md#常见部署问题详解)。
+
+---
+
+## 对外服务 API（v1 规范）
+
+> **鉴权方案**：API Key（多 Key 管理）。详细规范见 [plans/ADR-001-open-api-design.md](plans/ADR-001-open-api-design.md)。
+
+### 设计要点
+
+- **路径前缀**：`/api/open/v1/`（版本化，便于未来演进）
+- **鉴权 Header**：`X-API-Key: ak_xxx`
+- **可选 Header**：`Idempotency-Key`（POST/PUT 幂等，Redis 24h TTL）
+- **数据库表**：`sys_openapi_key`（Flyway V28，存明文用于每次请求匹配）
+- **限流**：Redis 计数器 `openapi:rate:{keyId}`，默认 60 次/分钟/Key
+- **错误码**：`40101`(缺 Key) / `40102`(Key 无效) / `40301`(IP 不在白名单) / `42901`(限流) / `40003`(冲突)
+
+### 当前已实现端点
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/api/open/v1/health` | 健康检查 |
+| POST | `/api/open/v1/users` | 创建用户 |
+| POST | `/api/open/v1/departments` | 创建部门 |
+
+### 管理员管理 API Key
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/api/admin/openapi/keys` | Key 列表（仅显示前缀） |
+| POST | `/api/admin/openapi/keys` | 颁发新 Key（明文仅返回一次） |
+| DELETE | `/api/admin/openapi/keys/{id}` | 吊销 Key（软删除） |
+
+### 调用示例
+
+```bash
+# 颁发（管理员登录后）
+curl -X POST http://localhost:9004/api/admin/openapi/keys \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"HR 系统对接","ownerSystem":"hr","rateLimit":60}'
+
+# 外部系统调用
+curl -X POST http://localhost:9004/api/open/v1/users \
+  -H "X-API-Key: ak_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"employeeId":"20001","username":"lisi","realName":"李四","departmentCode":"HR"}'
+```
+
+### Excel 导入用户/部门
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| POST | `/api/admin/users/import` | 上传 .xlsx 批量导入用户 |
+| GET | `/api/admin/users/import/template` | 下载用户导入模板 |
+| POST | `/api/departments/import` | 上传 .xlsx 批量导入部门 |
+| GET | `/api/departments/import/template` | 下载部门导入模板 |
+
+**特性**：Apache POI 解析 · 逐行校验 · 单行失败不影响其他行 · 返回详细错误报告（行号+错误） · 工号/用户名/邮箱/部门编码严格去重。
 
 ---
 
