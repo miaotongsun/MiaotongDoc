@@ -1940,14 +1940,19 @@ public class PdfToolService {
 
     /**
      * 添加页眉/页脚文字(Phase 14.U2:支持 clearExisting 覆盖模式)
+     *
+     * @param alignment 'left' | 'center' | 'right' — 水平对齐(默认 'left')
      */
-    public byte[] addHeaderFooter(Long docId, String position, String content, double fontSize, boolean clearExisting, List<Integer> pages) {
+    public byte[] addHeaderFooter(Long docId, String position, String content, double fontSize,
+                                  String alignment, boolean clearExisting, List<Integer> pages) {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         try (PDDocument pdf = Loader.loadPDF(storageService.load(doc.getFilePath()))) {
             int total = pdf.getNumberOfPages();
             List<Integer> targetPages = (pages == null || pages.isEmpty())
                 ? allPages(pdf) : pages;
+            // 默认 left(向后兼容历史调用)
+            String align = (alignment == null || alignment.isBlank()) ? "left" : alignment.toLowerCase();
             for (int pageNum : targetPages) {
                 if (pageNum < 1 || pageNum > pdf.getNumberOfPages()) continue;
                 PDPage page = pdf.getPage(pageNum - 1);
@@ -1964,18 +1969,39 @@ public class PdfToolService {
                     // Phase 26 fix:根据文本自动选择字体(支持中文)
                     org.apache.pdfbox.pdmodel.font.PDFont font = PdfFontUtil.getFontForText(pdf, resolved, false);
                     cs.setFont(font, (float) fontSize);
-                    cs.newLineAtOffset(40, y);
+                    float x = computeAlignmentX(box.getWidth(), font, resolved, (float) fontSize, align);
+                    cs.newLineAtOffset(x, y);
                     cs.showText(resolved);
                     cs.endText();
                 }
             }
             byte[] out = newDocBytes(pdf, position);
             replacePdfBytes(docId, out, position);
-            log.info("页眉页脚: docId={}, pos={}, clear={}, pages={}", docId, position, clearExisting, targetPages.size());
+            log.info("页眉页脚: docId={}, pos={}, align={}, clear={}, pages={}", docId, position, align, clearExisting, targetPages.size());
             return out;
         } catch (Exception e) {
             log.error("页眉页脚失败: docId={}, position={}", docId, position, e);
             throw new BusinessException("页眉页脚失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 计算页眉/页脚文本的水平 X 坐标
+     * - left:   40(左边距)
+     * - center: 居中 → (pageWidth - textWidth) / 2
+     * - right:  右对齐 → pageWidth - textWidth - 40(右边距)
+     */
+    private float computeAlignmentX(float pageWidth, org.apache.pdfbox.pdmodel.font.PDFont font,
+                                     String text, float fontSize, String align) throws java.io.IOException {
+        float textWidth = (text == null || text.isEmpty()) ? 0f
+            : font.getStringWidth(text) / 1000f * fontSize;
+        switch (align) {
+            case "center":
+                return Math.max(40f, (pageWidth - textWidth) / 2f);
+            case "right":
+                return Math.max(40f, pageWidth - textWidth - 40f);
+            default: // left
+                return 40f;
         }
     }
 

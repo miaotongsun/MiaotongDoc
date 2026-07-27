@@ -103,13 +103,20 @@
         </el-form>
       </el-tab-pane>
 
-      <!-- 页眉页脚(Phase 14.U2:加 clearExisting) -->
+      <!-- 页眉页脚(Phase 14.U2:加 clearExisting;Phase 27:加 alignment 对齐方式) -->
       <el-tab-pane label="页眉页脚" name="headerFooter">
         <el-form label-width="100px">
           <el-form-item label="位置">
             <el-radio-group v-model="hf.position">
               <el-radio value="header">页眉</el-radio>
               <el-radio value="footer">页脚</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="对齐方式">
+            <el-radio-group v-model="hf.alignment">
+              <el-radio value="left">左对齐</el-radio>
+              <el-radio value="center">居中</el-radio>
+              <el-radio value="right">右对齐</el-radio>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="文字">
@@ -180,6 +187,8 @@ const watermark = ref({
 })
 const hf = ref({
   position: 'footer' as 'header' | 'footer',
+  // Phase 27: 对齐方式 left | center | right(默认 left,保持视觉一致)
+  alignment: 'left' as 'left' | 'center' | 'right',
   content: 'Page {page} of {total}',
   fontSize: 10,
   target: 0,
@@ -235,6 +244,7 @@ async function onConfirm() {
       const pages = hf.value.target === 1 ? [props.currentPage] : allPages()
       await pdfApi.addHeaderFooter(props.docId, {
         position: hf.value.position,
+        alignment: hf.value.alignment,
         content: hf.value.content,
         fontSize: hf.value.fontSize,
         clearExisting: hf.value.clearExisting,
