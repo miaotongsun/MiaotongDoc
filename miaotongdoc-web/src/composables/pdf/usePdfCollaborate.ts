@@ -28,8 +28,6 @@ export type AnnotationType =
   | 'ellipse'
   | 'arrow'
   | 'line'
-  | 'underline'
-  | 'strikethrough'
   // Phase 10: 图章(用 SVG 文本图章)
   | 'stamp'
 
@@ -37,14 +35,21 @@ export interface PdfAnnotation {
   id: string
   type: AnnotationType
   pageNumber: number
-  rect?: { x: number; y: number; width: number; height: number }
+  rect?: { x: number; y: number; width: number; height: number; pageHeight?: number }
   color: string
   content?: string
   points?: number[]
   /** 形状宽度(stroke width,用于 rectangle/ellipse/arrow/line) */
   strokeWidth?: number
-  /** 图章文本(仅 stamp 类型) */
+  /** 图章文本(仅 stamp 类型,文字图章) */
   stampText?: string
+  /** Phase 13.33: 图章图片 base64(图片图章优先于 stampText) */
+  stampImageBase64?: string
+  /** Phase 13.33: 图章展示名(图片图章,如 "APPROVED") */
+  stampLabel?: string
+  /** Phase 13.33: 图片图章原图宽/高(用于落点比例) */
+  origW?: number
+  origH?: number
   userId: number
   userName: string
   createdAt: string
@@ -55,6 +60,13 @@ export interface PdfAnnotationRect {
   y: number
   width: number
   height: number
+  /** Phase 13.34: 当前页 PDF pt 高度(各页不同时避免漂移;fallback 用 canvasHeight/scale) */
+  pageHeight?: number
+  /** Phase 13.35: 原始起始/终点 X(仅 line/arrow 用,保留绘制方向,PDF pt 左下原点) */
+  startX?: number
+  startY?: number
+  endX?: number
+  endY?: number
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected'

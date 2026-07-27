@@ -82,6 +82,8 @@
             @change="onStampPresetChange($event)"
           >
             <option v-for="p in (props.stampPresets && props.stampPresets.length ? props.stampPresets : stampPresets)" :key="p" :value="p">{{ p }}</option>
+            <!-- Phase 13.34: 当 stampText 不在预设列表中时显示为自定义选项(修"选后空白") -->
+            <option v-if="effectiveStampText !== '__custom__' && !(props.stampPresets && props.stampPresets.length ? props.stampPresets : stampPresets).includes(effectiveStampText)" :value="effectiveStampText">{{ effectiveStampText }}</option>
             <option value="__custom__">自定义...</option>
           </select>
           <input
@@ -96,6 +98,8 @@
             @keyup.enter="onStampCustomBlur()"
             aria-label="自定义图章文字"
           />
+          <!-- Phase 13.33: 图章库按钮(图片图章) -->
+          <RibbonBtn icon="stamp" label="图章库" @click="$emit('open-stamp-library')" />
         </RibbonGroup>
         <RibbonGroup label="表单">
           <RibbonBtn icon="panelForm" label="填表单" :active="rightPanel === 'form'" @click="$emit('fill-form')" />
@@ -242,7 +246,7 @@ const emit = defineEmits<{
   (e: 'toggle-ocr-overlay'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
   (e: 'zoom-menu', evt: MouseEvent): void
-  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect' | 'compare'): void
+  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect' | 'compare' | 'open-stamp-library'): void
   (e: 'ocr-recognize', model: 'mobile' | 'server'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void
@@ -278,14 +282,12 @@ const editTools = [
   { id: 'eraser' as AnnotationTool, label: '橡皮', icon: 'eraser', shortcut: 'E' },
 ]
 
-// Phase 10: 形状工具(图章/矩形/椭圆/箭头/直线/下划线/删除线)
+// Phase 10: 形状工具(图章/矩形/椭圆/箭头/直线)
 const shapeTools = [
   { id: 'rectangle' as AnnotationTool, label: '矩形', icon: 'rectangle', shortcut: '' },
   { id: 'ellipse' as AnnotationTool, label: '椭圆', icon: 'ellipse', shortcut: '' },
   { id: 'arrow' as AnnotationTool, label: '箭头', icon: 'arrow', shortcut: '' },
   { id: 'line' as AnnotationTool, label: '直线', icon: 'line', shortcut: '' },
-  { id: 'underline' as AnnotationTool, label: '下划线', icon: 'underline', shortcut: 'U' },
-  { id: 'strikethrough' as AnnotationTool, label: '删除线', icon: 'strikethrough', shortcut: '' },
   { id: 'stamp' as AnnotationTool, label: '图章', icon: 'stamp', shortcut: '' },
 ]
 
@@ -294,7 +296,11 @@ const customMode = ref(false)
 const customStampDraft = ref('')
 
 // 当前选中的图章文字(优先用 props 注入,否则默认 DRAFT)
-const effectiveStampText = computed(() => props.stampText || 'DRAFT')
+const effectiveStampText = computed(() => {
+  // Phase 13.34: 自定义模式下显示 __custom__ 让 select 显示"自定义..."
+  if (customMode.value) return '__custom__'
+  return props.stampText || 'DRAFT'
+})
 
 // 监听 props.stampText 变化:如果在预设列表里,关闭 customMode
 watch(() => props.stampText, (text) => {
@@ -315,14 +321,17 @@ function onStampPresetChange(e: Event) {
   emit('update:stampText', v)
 }
 function onStampCustomInput(e: Event) {
-  customStampDraft.value = (e.target as HTMLInputElement).value
+  const v = (e.target as HTMLInputElement).value
+  customStampDraft.value = v
+  // Phase 13.33: 实时同步 stampText,不再依赖 blur/回车(修用户感知"输入后空白")
+  const text = v.trim().toUpperCase().slice(0, 16)
+  if (text) emit('update:stampText', text)
 }
 function onStampCustomBlur() {
-  const text = customStampDraft.value.trim().toUpperCase()
-  if (text) {
-    customMode.value = false
+  // 失焦时若有未提交内容补一次
+  const text = customStampDraft.value.trim().toUpperCase().slice(0, 16)
+  if (text && text !== effectiveStampText.value) {
     emit('update:stampText', text)
-    customStampDraft.value = ''
   }
 }
 
@@ -340,14 +349,11 @@ function onCustomColor(e: Event) {
 }
 
 const showColorRow = computed(() =>
-  ['highlight', 'comment', 'draw'].includes(props.activeTool),
+  ['highlight', 'comment', 'draw', 'rectangle', 'ellipse', 'arrow', 'line', 'stamp'].includes(props.activeTool),
 )
 
-// 形状组始终显示(用户可点击切换);颜色组仅在选高亮/评论/画笔时显示
+// 形状组始终显示(用户可点击切换);颜色组仅在选工具时显示
 const showShapeRow = ref(true)
-const showShapeColors = computed(() =>
-  ['rectangle', 'ellipse', 'arrow', 'line', 'underline', 'strikethrough', 'stamp'].includes(props.activeTool),
-)
 </script>
 
 <style scoped>

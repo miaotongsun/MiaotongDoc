@@ -43,6 +43,7 @@
       @compare="onCompareOpen"
       @open-ai="onOpenAi"
       @place-signature="onOpenSignatureDialog"
+      @open-stamp-library="onOpenStampLibrary"
       @protect="onOpenSecurityDialog"
       @ocr-recognize="onOcrRecognize"
       @page-merge="onOpenMerge"
@@ -168,6 +169,8 @@
               :drawing-path="drawingPath"
               :eraser-cursor="eraserCursor"
               :eraser-radius="eraserRadius"
+              :stamp-ghost="stampGhost"
+              :ghost-signature="ghostSignature"
               :recognized="recognizedPages.has(currentPage)"
               :form-highlight="formHighlightFor(currentPage)"
               :is-editing="activeTool === 'textEdit'"
@@ -177,6 +180,7 @@
               @mouse-up="onCanvasMouseUp"
               @mouse-leave="onCanvasMouseLeave"
               @context-menu="onCanvasContextMenu"
+              @edit-comment="onEditComment"
             >
               <template #text-edit="{ pageNum: pn, scale: sc }">
                 <PdfTextEditorLayer
@@ -217,6 +221,8 @@
                 :annotations="annotations"
                 :pending-rect="pendingRect"
                 :drawing-path="drawingPath"
+                :stamp-ghost="stampGhost"
+                :ghost-signature="ghostSignature"
                 :recognized="recognizedPages.has(currentPage)"
                 :form-highlight="formHighlightFor(currentPage)"
                 :is-editing="activeTool === 'textEdit'"
@@ -239,11 +245,13 @@
                 :annotations="annotations"
                 :pending-rect="pendingRect"
                 :drawing-path="drawingPath"
+                :stamp-ghost="stampGhost"
                 :recognized="recognizedPages.has(currentPage + 1)"
                 :form-highlight="formHighlightFor(currentPage + 1)"
                 :is-editing="activeTool === 'textEdit'"
                 @ready="onPageReady"
                 @context-menu="onCanvasContextMenu"
+                @edit-comment="onEditComment"
               />
             </div>
           </template>
@@ -265,6 +273,8 @@
               :drawing-path="drawingPath"
               :eraser-cursor="eraserCursor"
               :eraser-radius="eraserRadius"
+              :stamp-ghost="stampGhost"
+              :ghost-signature="ghostSignature"
               :recognized="recognizedPages.has(i)"
               :form-highlight="formHighlightFor(i)"
               :is-editing="activeTool === 'textEdit'"
@@ -274,6 +284,7 @@
               @mouse-up="onCanvasMouseUp"
               @mouse-leave="onCanvasMouseLeave"
               @context-menu="onCanvasContextMenu"
+              @edit-comment="onEditComment"
             >
               <template #text-edit="{ pageNum: pn, scale: sc }">
                 <PdfTextEditorLayer
@@ -345,11 +356,20 @@
     <!-- Phase 13.26: 评论输入弹窗(comment 工具框选后弹出) -->
     <el-dialog
       v-model="commentDialogVisible"
-      title="添加评论"
+      :title="commentDialogTitle"
       width="420px"
       append-to-body
       :close-on-click-modal="false"
     >
+      <!-- Phase 13.34: 锚点预览(页面+区域)帮用户记住评论位置 -->
+      <div v-if="pendingCommentRect" class="comment-anchor-hint">
+        <el-icon><Location /></el-icon>
+        <span>
+          页面 {{ pendingCommentRect.pageNumber }} · 区域
+          ({{ Math.round(pendingCommentRect.x) }}, {{ Math.round(pendingCommentRect.y) }})
+          {{ Math.round(pendingCommentRect.width) }}×{{ Math.round(pendingCommentRect.height) }} px
+        </span>
+      </div>
       <el-input
         v-model="commentDraft"
         type="textarea"
@@ -360,7 +380,9 @@
       />
       <template #footer>
         <el-button @click="onCommentCancel">取消</el-button>
-        <el-button type="primary" @click="onCommentSave">保存评论</el-button>
+        <el-button type="primary" @click="onCommentSave">
+          {{ commentDialogTitle === '编辑评论' ? '更新评论' : '保存评论' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -533,6 +555,12 @@
       @close="signatureDialogOpen = false"
       @created="onSignatureCreated"
     />
+    <!-- Phase 13.33: 图章库对话框 -->
+    <PdfStampPickerDialog
+      :open="stampPickerOpen"
+      @close="stampPickerOpen = false"
+      @selected="onStampPicked"
+    />
     <!-- Phase 12.4: 保护 PDF 对话框 -->
     <PdfSecurityDialog
       :open="securityDialogOpen"
@@ -661,6 +689,7 @@ import PdfThumbnailContextMenu from './PdfThumbnailContextMenu.vue'
 import PdfCanvasContextMenu from './PdfCanvasContextMenu.vue'
 import PdfAiMenu from './PdfAiMenu.vue'
 import PdfSignatureDialog from './PdfSignatureDialog.vue'
+import PdfStampPickerDialog from './PdfStampPickerDialog.vue'
 import PdfCompareDialog from './PdfCompareDialog.vue'
 import PdfSecurityDialog from './PdfSecurityDialog.vue'
 import PdfSaveModeDialog from './PdfSaveModeDialog.vue'
@@ -669,7 +698,7 @@ import PdfPageOpsDialog from './PdfPageOpsDialog.vue'
 import PdfTermsPanel from './PdfTermsPanel.vue'
 
 import { usePdfRenderer } from '@/composables/pdf/usePdfRenderer'
-import { usePdfCollaborate } from '@/composables/pdf/usePdfCollaborate'
+import { usePdfCollaborate, type PdfAnnotation } from '@/composables/pdf/usePdfCollaborate'
 import { usePdfAnnotation, type AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
 import { usePdfTextEditor } from '@/composables/pdf/usePdfTextEditor'
 import { usePdfPageOps } from '@/composables/pdf/usePdfPageOps'
@@ -762,6 +791,35 @@ const activeTool = computed(() => annot.activeTool.value)
 const activeColor = computed(() => annot.activeColor.value)
 const stampText = computed(() => (annot as any).stampText?.value ?? 'DRAFT')
 const stampPresets = computed(() => (annot as any).stampPresets?.value ?? [])
+// Phase 13.33: 图章 ghost 透传到 PdfCanvas
+const stampGhost = computed(() => {
+  const pos = (annot as any).stampGhostPos?.value
+  if (!pos) return null
+  const imageBase64 = (annot as any).stampImageBase64?.value as string | null
+  if (imageBase64) {
+    return {
+      pageNumber: pos.pageNumber,
+      x: pos.x,
+      y: pos.y,
+      mode: 'image' as const,
+      imageBase64,
+      label: (annot as any).stampLabel?.value ?? 'STAMP',
+      origW: (annot as any).stampOrigW?.value ?? 120,
+      origH: (annot as any).stampOrigH?.value ?? 40,
+    }
+  }
+  const text = ((annot as any).stampText?.value ?? 'DRAFT') as string
+  const fontPt = 18
+  return {
+    pageNumber: pos.pageNumber,
+    x: pos.x,
+    y: pos.y,
+    mode: 'text' as const,
+    text,
+    textWidth: Math.max(80, text.length * fontPt * 0.65 + 20),
+    color: (annot as any).activeColor?.value ?? '#F44336',
+  }
+})
 const annotations = computed(() => annot.annotations.value)
 const pendingRect = computed(() => annot.pendingRect.value)
 // Phase 13.25: 修正 drawPath 拼写错误(原 annot.drawPath 不存在,永远 null)
@@ -1295,8 +1353,6 @@ const toolLabel = computed(() => {
     ellipse: '椭圆',
     arrow: '箭头',
     line: '直线',
-    underline: '下划线',
-    strikethrough: '删除线',
     stamp: '图章',
   }
   return map[activeTool.value] ?? '选择'
@@ -1476,6 +1532,14 @@ async function onPrint() {
 
 // Phase 12.3: 签名创建 + 放置
 const signatureDialogOpen = ref(false)
+// Phase 13.33: 图章库对话框
+const stampPickerOpen = ref(false)
+function onOpenStampLibrary() {
+  stampPickerOpen.value = true
+}
+function onStampPicked(payload: { imageBase64: string; label: string; origW: number; origH: number }) {
+  ;(annot as any).setStampImage?.(payload)
+}
 
 // Phase 13.11: 编辑保存模式(覆盖/另存为)
 const saveModeDialogOpen = ref(false)
@@ -1528,12 +1592,33 @@ async function onSaveModeConfirm(mode: 'overwrite' | 'new', newTitle?: string) {
 const pendingSignature = ref<{ imageBase64: string; width: number; height: number } | null>(null)
 const signaturePlacing = ref(false)
 const signatureSaving = ref(false)
+// Phase 13.34: 签名 ghost 位置(画布像素 + 页码),随光标浮动
+const ghostSignaturePos = ref<{ pageNum: number; x: number; y: number } | null>(null)
+const ghostSignature = computed(() => {
+  if (!signaturePlacing.value || !pendingSignature.value || !ghostSignaturePos.value) {
+    return null
+  }
+  // 签名图缩放 50%(与 placeSignature 中 sigW/sigH 一致)
+  const sig = pendingSignature.value
+  // Phase 13.35: PdfSignatureDialog 传出的 imageBase64 无 data:image 前缀,为 SVG <image> 补上
+  const imageUrl = sig.imageBase64.startsWith('data:') ? sig.imageBase64 : `data:image/png;base64,${sig.imageBase64}`
+  return {
+    pageNumber: ghostSignaturePos.value.pageNum,
+    imageBase64: imageUrl,
+    width: sig.width * 0.5,
+    height: sig.height * 0.5,
+    x: ghostSignaturePos.value.x,
+    y: ghostSignaturePos.value.y,
+  }
+})
 function onOpenSignatureDialog() {
   signatureDialogOpen.value = true
 }
 function onSignatureCreated(payload: { imageBase64: string; width: number; height: number }) {
   pendingSignature.value = payload
   signaturePlacing.value = true
+  // Phase 13.34: 互斥 —— 进入签名时清掉画笔/矩形等高亮,避免同时画多个东西
+  selectTool('select')
   ElMessage.info('请在 PDF 画布上点击放置签名')
 }
 
@@ -1555,6 +1640,8 @@ function onSecurityDone(blob: Blob, action: 'encrypt' | 'decrypt') {
 }
 async function placeSignature(pageNum: number, screenX: number, screenY: number) {
   if (!pendingSignature.value || signatureSaving.value) return
+  // Phase 13.34: 落点清 ghost
+  ghostSignaturePos.value = null
   signatureSaving.value = true
   try {
     // 屏幕 X/Y 是相对 canvas 的左上角,需要转 PDF 坐标(左下原点)
@@ -2012,6 +2099,17 @@ const canvasMenuPage = ref(1)
 const canvasMenuHasSelection = ref(false)
 
 function onCanvasContextMenu(x: number, y: number, pageNum: number) {
+  // Phase 13.35: 右键取消盖章/签名模式
+  if (activeTool.value === 'stamp') {
+    selectTool('select')
+    return
+  }
+  if (signaturePlacing.value) {
+    signaturePlacing.value = false
+    pendingSignature.value = null
+    ghostSignaturePos.value = null
+    return
+  }
   canvasMenuPage.value = pageNum
   canvasMenuAnchor.value = { x, y }
   canvasMenuHasSelection.value = !!window.getSelection()?.toString().trim()
@@ -2073,20 +2171,32 @@ function exitEditMode() {
 // Phase 13.27: 手型工具平移 -- mousedown 时挂 window mousemove/mouseup,
 // 避免鼠标移出 .pdf-page-canvas 时 pan 中断或 mouseup 漏触发
 const panState = ref<{ startX: number; startY: number; scrollTop: number; scrollLeft: number } | null>(null)
+// Phase 13.35: rAF 节流,避免每帧 mousemove 都同步 scrollTo(60Hz 屏幕上一帧可能收到多次 mousemove,
+  // 多次 scrollTo 会让浏览器"追赶"造成延迟感。每帧最多一次 scrollTo)
+let panRafId: number | null = null
 
 function onWindowPanMove(evt: MouseEvent) {
   if (!panState.value || !canvasAreaRef.value) return
+  if (panRafId !== null) return  // 本帧已排队
   const dx = evt.clientX - panState.value.startX
   const dy = evt.clientY - panState.value.startY
-  // Phase 13.27: 用 scrollTo({behavior:'auto'}) 覆盖 CSS scroll-behavior:smooth,
-  // 否则 smooth 动画会让连续 mousemove 设值永远到不了目标(平移失效)
-  canvasAreaRef.value.scrollTo({
-    top: panState.value.scrollTop - dy,
-    left: panState.value.scrollLeft - dx,
-    behavior: 'auto',
+  panRafId = requestAnimationFrame(() => {
+    panRafId = null
+    if (!panState.value || !canvasAreaRef.value) return
+    // Phase 13.27: 用 scrollTo({behavior:'auto'}) 覆盖 CSS scroll-behavior:smooth,
+    // 否则 smooth 动画会让连续 mousemove 设值永远到不了目标(平移失效)
+    canvasAreaRef.value.scrollTo({
+      top: panState.value.scrollTop - dy,
+      left: panState.value.scrollLeft - dx,
+      behavior: 'auto',
+    })
   })
 }
 function onWindowPanUp() {
+  if (panRafId !== null) {
+    cancelAnimationFrame(panRafId)
+    panRafId = null
+  }
   panState.value = null
   window.removeEventListener('mousemove', onWindowPanMove)
   window.removeEventListener('mouseup', onWindowPanUp)
@@ -2118,6 +2228,14 @@ function onCanvasMouseDown(evt: MouseEvent, pageNum: number, containerRect: DOMR
 }
 function onCanvasMouseMove(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
   ;(annot as any).onMouseMove?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
+  // Phase 13.34: 签名 ghost —— mousemove 更新 ghost 位置,其他工具下/不在签名模式下清掉
+  if (signaturePlacing.value && pendingSignature.value && signatureDialogOpen.value === false) {
+    const x = evt.clientX - containerRect.left
+    const y = evt.clientY - containerRect.top
+    ghostSignaturePos.value = { pageNum, x, y }
+  } else if (ghostSignaturePos.value) {
+    ghostSignaturePos.value = null
+  }
 }
 function onCanvasMouseUp(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
   ;(annot as any).onMouseUp?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
@@ -2143,11 +2261,25 @@ const commentDraft = computed({
   get: () => ((annot as any).editingComment?.value as string) ?? '',
   set: (v: string) => { if ((annot as any).editingComment) (annot as any).editingComment.value = v },
 })
+const pendingCommentRect = computed(() => (annot as any).pendingCommentRect?.value ?? null)
+const commentDialogTitle = computed(() =>
+  (annot as any).editingCommentId?.value ? '编辑评论' : '添加评论'
+)
+// Phase 13.34: 给每页计算本页评论的局部编号(用于 pin 上的数字显示)
+function pageCommentIndex(ann: PdfAnnotation, pageNum: number): number {
+  return annotations.value
+    .filter(a => a.pageNumber === pageNum && a.type === 'comment')
+    .findIndex(a => a.id === ann.id)
+}
 function onCommentSave(): void {
   ;(annot as any).saveComment?.()
 }
 function onCommentCancel(): void {
   ;(annot as any).cancelComment?.()
+}
+// Phase 13.34: 点击评论 pin → 重新打开编辑弹窗
+function onEditComment(commentId: string): void {
+  ;(annot as any).openCommentForEdit?.(commentId)
 }
 
 /**
@@ -2434,11 +2566,6 @@ function onKeydown(e: KeyboardEvent) {
     case 'p': selectTool('draw'); break
     case 'e': selectTool('eraser'); break
     case 'q': selectTool('vqa'); break
-    case 'u': selectTool('underline'); break
-    case 'c': selectTool('comment'); break
-    case 'p': selectTool('draw'); break
-    case 'e': selectTool('eraser'); break
-    case 'q': selectTool('vqa'); break
     case 'arrowleft': if (e.shiftKey) { goPrev(); } break
     case 'arrowright': if (e.shiftKey) { goNext(); } break
   }
@@ -2532,6 +2659,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   justify-content: center;
   width: 100%;
   /* Phase 13.31: 两栏之间留出明显间距,改善双页阅读 */
+}
+
+.comment-anchor-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--el-color-primary-light-9);
+  border: 1px dashed var(--el-color-primary-light-5);
+  border-radius: 4px;
+  color: var(--el-color-primary);
+  font-size: 13px;
 }
 
 .pdf-state {
