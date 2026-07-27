@@ -46,11 +46,15 @@
         :aria-label="`PDF 第 ${pageNum} 页`"
       ></canvas>
 
-      <!-- 层 2: 文字层(选择用) -->
+      <!-- 层 2: 文字层(选择用,白名单策略:仅 select 工具下允许 pointer-events) -->
       <div
         ref="textLayerRef"
         class="pdf-text-layer"
-        :class="{ 'is-edit-mode': activeTool === 'textEdit', 'is-pan-mode': activeTool === 'move' }"
+        :class="{
+          'is-edit-mode': activeTool === 'textEdit',
+          'is-pan-mode': activeTool === 'move',
+          'is-select-mode': activeTool === 'select',
+        }"
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
       ></div>
 
@@ -100,34 +104,18 @@
             :stroke="activeColor" stroke-width="2" fill="none"
             stroke-dasharray="4 2"
           />
-          <!-- 箭头 -->
+          <!-- 箭头(使用 pendingRect.startX/startY 保留绘制方向) -->
           <path
             v-else-if="activeTool === 'arrow'"
-            :d="arrowPathCanvas(toCanvasRectFromPending(pendingRect))"
+            :d="arrowPathCanvas(toCanvasRectFromPending(pendingRect), pendingRect)"
             :stroke="activeColor" stroke-width="2" fill="none"
             stroke-linecap="round" stroke-linejoin="round"
           />
-          <!-- 直线 -->
+          <!-- 直线(使用 pendingRect.startX/startY 保留绘制方向) -->
           <line
             v-else-if="activeTool === 'line'"
-            :x1="pendingRect.x" :y1="pendingRect.y"
+            :x1="pendingRect.startX" :y1="pendingRect.startY"
             :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height"
-            :stroke="activeColor" stroke-width="2" stroke-linecap="round"
-            stroke-dasharray="4 2"
-          />
-          <!-- 下划线(贴矩形底部) -->
-          <line
-            v-else-if="activeTool === 'underline'"
-            :x1="pendingRect.x" :y1="pendingRect.y + pendingRect.height - 1"
-            :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height - 1"
-            :stroke="activeColor" stroke-width="2" stroke-linecap="round"
-            stroke-dasharray="4 2"
-          />
-          <!-- 删除线(贴矩形中部) -->
-          <line
-            v-else-if="activeTool === 'strikethrough'"
-            :x1="pendingRect.x" :y1="pendingRect.y + pendingRect.height / 2"
-            :x2="pendingRect.x + pendingRect.width" :y2="pendingRect.y + pendingRect.height / 2"
             :stroke="activeColor" stroke-width="2" stroke-linecap="round"
             stroke-dasharray="4 2"
           />
@@ -150,14 +138,37 @@
             :height="toCanvasRect(ann.rect).h"
             :style="highlightStyle(ann)"
           />
-          <circle
+          <!-- Phase 13.34: 评论 pin(外圈+白点+编号,hover 显示原文,click 重新编辑) -->
+          <g
             v-else-if="ann.type === 'comment' && ann.rect"
-            :cx="toCanvasRect(ann.rect).x + 12"
-            :cy="toCanvasRect(ann.rect).y + 12"
-            r="12"
-            :fill="ann.color"
-            class="pdf-comment-marker"
-          />
+            class="pdf-comment-pin"
+            @click.stop="emit('edit-comment', ann.id)"
+          >
+            <circle
+              :cx="toCanvasRect(ann.rect).x + 12"
+              :cy="toCanvasRect(ann.rect).y - toCanvasRect(ann.rect).h + 12"
+              r="14"
+              :fill="ann.color"
+              stroke="#fff"
+              stroke-width="2"
+              class="pdf-comment-marker"
+            />
+            <circle
+              :cx="toCanvasRect(ann.rect).x + 12"
+              :cy="toCanvasRect(ann.rect).y - toCanvasRect(ann.rect).h + 12"
+              r="4"
+              fill="#fff"
+            />
+            <text
+              :x="toCanvasRect(ann.rect).x + 22"
+              :y="toCanvasRect(ann.rect).y - toCanvasRect(ann.rect).h + 16"
+              :fill="ann.color"
+              font-size="10"
+              font-weight="700"
+              text-anchor="middle"
+            >{{ (commentIndex != null ? commentIndex + 1 : '?') }}</text>
+            <title>{{ ann.content || '(空评论)' }}</title>
+          </g>
           <path
             v-else-if="ann.type === 'draw' && ann.points && ann.points.length > 1"
             :d="drawPathCanvas(ann.points)"
@@ -190,60 +201,66 @@
             :stroke-width="ann.strokeWidth || 2"
             fill="none"
           />
-          <!-- Phase 10: 箭头 -->
+          <!-- Phase 10: 箭头(使用 startX/startY 保留绘制方向) -->
           <path
             v-else-if="ann.type === 'arrow' && ann.rect"
-            :d="arrowPathCanvas(toCanvasRect(ann.rect))"
+            :d="arrowPathCanvas(toCanvasRect(ann.rect), ann.rect)"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             fill="none"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
-          <!-- Phase 10: 直线 -->
+          <!-- Phase 10: 直线(使用 startX/startY 保留绘制方向) -->
           <line
             v-else-if="ann.type === 'line' && ann.rect"
-            :x1="toCanvasRect(ann.rect).x"
-            :y1="toCanvasRect(ann.rect).y"
-            :x2="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w"
-            :y2="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h"
+            :x1="lineStartX(ann.rect)"
+            :y1="lineStartY(ann.rect)"
+            :x2="lineEndX(ann.rect)"
+            :y2="lineEndY(ann.rect)"
             :stroke="ann.color"
             :stroke-width="ann.strokeWidth || 2"
             stroke-linecap="round"
           />
-          <!-- Phase 10: 下划线/删除线 -->
-          <line
-            v-else-if="(ann.type === 'underline' || ann.type === 'strikethrough') && ann.rect"
-            :x1="toCanvasRect(ann.rect).x"
-            :y1="ann.type === 'underline' ? toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h - 1 : toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2"
-            :x2="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w"
-            :y2="ann.type === 'underline' ? toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h - 1 : toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2"
-            :stroke="ann.color"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
           <!-- Phase 10: 图章 -->
           <g v-else-if="ann.type === 'stamp' && ann.rect">
-            <rect
+            <!-- 图片图章 -->
+            <image
+              v-if="ann.stampImageBase64"
+              :href="ann.stampImageBase64"
               :x="toCanvasRect(ann.rect).x"
               :y="toCanvasRect(ann.rect).y"
               :width="toCanvasRect(ann.rect).w"
               :height="toCanvasRect(ann.rect).h"
-              fill="none"
-              :stroke="ann.color"
-              stroke-width="2"
-              rx="4"
-            />
-            <text
-              :x="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w / 2"
-              :y="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2 + 6"
-              :fill="ann.color"
-              text-anchor="middle"
-              font-size="18"
-              font-weight="700"
-              font-family="-apple-system, BlinkMacSystemFont, sans-serif"
-              style="text-transform: uppercase; letter-spacing: 1px"
-            >{{ ann.stampText || 'DRAFT' }}</text>
+              pointer-events="auto"
+              class="pdf-stamp-image"
+            >
+              <title>{{ ann.stampLabel || '图章' }}</title>
+            </image>
+            <!-- 文字图章 -->
+            <g v-else>
+              <rect
+                :x="toCanvasRect(ann.rect).x"
+                :y="toCanvasRect(ann.rect).y"
+                :width="toCanvasRect(ann.rect).w"
+                :height="toCanvasRect(ann.rect).h"
+                fill="none"
+                :stroke="ann.color"
+                stroke-width="2"
+                rx="4"
+              />
+              <text
+                :x="toCanvasRect(ann.rect).x + toCanvasRect(ann.rect).w / 2"
+                :y="toCanvasRect(ann.rect).y + toCanvasRect(ann.rect).h / 2 + 6"
+                :fill="ann.color"
+                text-anchor="middle"
+                font-size="18"
+                font-weight="700"
+                font-family="-apple-system, BlinkMacSystemFont, sans-serif"
+                style="text-transform: uppercase; letter-spacing: 1px"
+              >{{ ann.stampText || 'DRAFT' }}</text>
+              <title>{{ ann.stampText || 'DRAFT' }}</title>
+            </g>
           </g>
         </g>
         <!-- current drawing (画笔实时轨迹,points 是画布像素,直接用) -->
@@ -267,6 +284,55 @@
           stroke-width="1.5"
           stroke-dasharray="3 2"
           pointer-events="none"
+        />
+        <!-- Phase 13.33: 图章 ghost preview(随光标浮动) -->
+        <template v-if="stampGhost && stampGhost.pageNumber === pageNum">
+          <image
+            v-if="stampGhost.mode === 'image' && stampGhost.imageBase64"
+            :href="stampGhost.imageBase64"
+            :x="stampGhost.x - 50"
+            :y="stampGhost.y - 50 * ((stampGhost.origH || 40) / (stampGhost.origW || 120))"
+            :width="100"
+            :height="100 * ((stampGhost.origH || 40) / (stampGhost.origW || 120))"
+            opacity="0.5"
+            pointer-events="none"
+            class="pdf-stamp-ghost"
+          >
+            <title>{{ stampGhost.label || '图章' }}</title>
+          </image>
+          <g v-else opacity="0.5" pointer-events="none" class="pdf-stamp-ghost">
+            <rect
+              :x="stampGhost.x - 60"
+              :y="stampGhost.y - 20"
+              :width="stampGhost.textWidth || 120"
+              :height="40"
+              rx="4"
+              fill="none"
+              :stroke="stampGhost.color || '#F44336'"
+              stroke-width="2"
+              stroke-dasharray="4 2"
+            />
+            <text
+              :x="stampGhost.x"
+              :y="stampGhost.y + 6"
+              :fill="stampGhost.color || '#F44336'"
+              text-anchor="middle"
+              font-size="18"
+              font-weight="700"
+            >{{ stampGhost.text || 'DRAFT' }}</text>
+          </g>
+        </template>
+        <!-- Phase 13.34: 签名 ghost preview(随光标浮动) -->
+        <image
+          v-if="ghostSignature && ghostSignature.pageNumber === pageNum"
+          :href="ghostSignature.imageBase64"
+          :x="ghostSignature.x - ghostSignature.width / 2"
+          :y="ghostSignature.y - ghostSignature.height / 2"
+          :width="ghostSignature.width"
+          :height="ghostSignature.height"
+          opacity="0.5"
+          pointer-events="none"
+          class="pdf-signature-ghost"
         />
         <!-- Phase 12.1: 表单字段临时高亮矩形(4 秒) -->
         <rect
@@ -329,6 +395,31 @@ const props = defineProps<{
   eraserCursor?: { x: number; y: number; pageNumber: number } | null
   /** Phase 13.25: 橡皮擦光标半径(px) */
   eraserRadius?: number
+  /** Phase 13.33: 图章 ghost preview(随光标浮动) */
+  stampGhost?: {
+    pageNumber: number
+    x: number
+    y: number
+    mode: 'text' | 'image'
+    text?: string
+    textWidth?: number
+    color?: string
+    imageBase64?: string
+    label?: string
+    origW?: number
+    origH?: number
+  } | null
+  /** Phase 13.34: 当前评论在本页的序号(用于 pin 上的编号显示) */
+  commentIndex?: number
+  /** Phase 13.34: 签名 ghost preview(随光标浮动) */
+  ghostSignature?: {
+    pageNumber: number
+    imageBase64: string
+    width: number
+    height: number
+    x: number
+    y: number
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -339,6 +430,8 @@ const emit = defineEmits<{
   (e: 'mouse-leave', evt: MouseEvent, pageNum: number, rect: DOMRect): void
   /** Phase 13.8: 右键菜单 */
   (e: 'context-menu', x: number, y: number, pageNum: number): void
+  /** Phase 13.34: 编辑评论(点击 pin 触发) */
+  (e: 'edit-comment', commentId: string): void
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -372,13 +465,33 @@ const formHighlightBox = computed(() => {
  * @param r PDF pt rect { x, y, width, height }(y 是距 PDF 页底的距离)
  * @returns 画布像素 rect { x, y, w, h }(y 是距 SVG 顶的距离)
  */
-function toCanvasRect(r: { x: number; y: number; width: number; height: number }) {
+function toCanvasRect(r: { x: number; y: number; width: number; height: number; pageHeight?: number }) {
+  // Phase 13.34: ann.rect.pageHeight 优先(各页不同高度时不漂);fallback 用当前页 canvasHeight
+  const ph = r.pageHeight ?? (canvasHeight.value / props.scale)
   return {
     x: r.x * props.scale,
     y: canvasHeight.value - (r.y + r.height) * props.scale,
     w: r.width * props.scale,
     h: r.height * props.scale,
+    _pageHeight: ph,
   }
+}
+
+/** Phase 13.35: 直线/箭头的起始 X(画布像素,优先用 startX 保留绘制方向) */
+function lineStartX(r: { x: number; y: number; width: number; height: number; startX?: number }) {
+  return r.startX != null ? r.startX * props.scale : toCanvasRect(r).x
+}
+/** Phase 13.35: 直线/箭头的起始 Y(画布像素,优先用 startY 保留绘制方向) */
+function lineStartY(r: { x: number; y: number; width: number; height: number; startY?: number }) {
+  return r.startY != null ? canvasHeight.value - r.startY * props.scale : toCanvasRect(r).y
+}
+/** Phase 13.35: 直线/箭头的终点 X(画布像素,优先用 endX) */
+function lineEndX(r: { x: number; y: number; width: number; height: number; endX?: number }) {
+  return r.endX != null ? r.endX * props.scale : toCanvasRect(r).x + toCanvasRect(r).w
+}
+/** Phase 13.35: 直线/箭头的终点 Y(画布像素,优先用 endY) */
+function lineEndY(r: { x: number; y: number; width: number; height: number; endY?: number }) {
+  return r.endY != null ? canvasHeight.value - r.endY * props.scale : toCanvasRect(r).y + toCanvasRect(r).h
 }
 
 /**
@@ -393,12 +506,13 @@ function drawPathCanvas(points: number[]): string {
   return cmds.join(' ')
 }
 
-/** Phase 13.25: 箭头 path(SVG 画布像素坐标) */
-function arrowPathCanvas(r: { x: number; y: number; w: number; h: number }): string {
-  const x1 = r.x
-  const y1 = r.y
-  const x2 = r.x + r.w
-  const y2 = r.y + r.h
+/** Phase 13.35: 箭头 path(SVG 画布像素坐标,用 startX/startY/endX/endY 保留绘制方向) */
+function arrowPathCanvas(r: { x: number; y: number; w: number; h: number }, rawRect?: { startX?: number; startY?: number; endX?: number; endY?: number; [key: string]: any }): string {
+  // 优先用原始起始/终点方向,没有则用归一化 rect 的左上->右下
+  const x1 = rawRect?.startX != null ? rawRect.startX * props.scale : r.x
+  const y1 = rawRect?.startY != null ? canvasHeight.value - rawRect.startY * props.scale : r.y
+  const x2 = rawRect?.endX != null ? rawRect.endX * props.scale : r.x + r.w
+  const y2 = rawRect?.endY != null ? canvasHeight.value - rawRect.endY * props.scale : r.y + r.h
   const angle = Math.atan2(y2 - y1, x2 - x1)
   const headLen = 12
   const wingAngle = Math.PI / 7
@@ -435,7 +549,8 @@ const recognizeStatusClass = computed(() => ({
 }))
 
 const pageAnnotations = computed(() =>
-  props.annotations.filter(a => a.pageNumber === props.pageNum),
+  props.annotations
+    .filter(a => a.pageNumber === props.pageNum),
 )
 
 const pendingRectStyle = computed(() => ({
@@ -584,8 +699,18 @@ function onContextMenu(evt: MouseEvent) {
   color: transparent;
   line-height: 1;
   user-select: text;
-  /* Phase 13.22: 默认接收事件允许框选复制;textEdit 工具下让可见编辑层接管 */
+  /* Phase 13.33: 默认屏蔽(白名单);仅 .is-select-mode(select 工具)开启 pointer-events。
+     这避免 draw/rectangle/ellipse/arrow/line/stamp/comment/highlight/eraser/vqa/textEdit/move
+     等所有非 select 工具误选文字。 */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Phase 13.33: 白名单开启 —— 仅 select 工具下恢复可选中 */
+.pdf-text-layer.is-select-mode {
   pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
 }
 /* Phase 13.24: pdfjs 给 span 显式 inline style.color,
    这里强制覆盖 → 文字隐形,只有 ::selection 高亮时显示色块。 */
@@ -647,6 +772,16 @@ function onContextMenu(evt: MouseEvent) {
 .pdf-comment-marker {
   filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.3));
   cursor: pointer;
+}
+/* Phase 13.34: 评论 pin hover 缩放,提升点击区域可识别性 */
+.pdf-comment-pin {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+.pdf-comment-pin:hover {
+  transform: scale(1.15);
 }
 
 .pdf-page-skeleton {

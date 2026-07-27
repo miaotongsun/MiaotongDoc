@@ -104,7 +104,7 @@
 1. **写完代码后必跑测试**:`npm run e2e`,检查通过率
 2. **截图入档**:关键 UI 改动自动截图(`tests/screenshots/`),可作为 PR 视觉证据
 3. **失败重试**:测试失败时先看截图定位,再修代码,**不要**绕过测试
-4. **新功能加测试**:在 `phase14-e2e.mjs` 中加 `step()`,确保持续覆盖
+4. **新功能加测试**:在 `phase14-e2e.mjs` 中加 `step()`,确保持续覆盖。**PDF 编辑器工具栏交互**:写 `pdf-editor-tools-e2e.mjs`(2026-07-27 新增,8 类编辑 TAB BUG 回归)
 5. **临时调试**:写到 `tests/local/`(gitignore,不进 git)
 
 ### 完整文档
@@ -335,6 +335,7 @@ MiaotongDoc/
 | `src/components/PdfFloatingToolbar.vue` | PDF 浮动工具栏 |
 | `src/components/PdfPageOpsDialog.vue` | PDF 页面操作 (插入/裁剪/水印/页眉页脚) |
 | `src/components/PdfSignatureDialog.vue` | PDF 签名创建 (键入/绘制/上传) |
+| `src/components/PdfStampPickerDialog.vue` | **PDF 图章库** (2026-07-27 新增,8 预设 + 自定义上传) |
 | `src/components/PdfSecurityDialog.vue` | PDF 保护 (加密/解密) |
 | `src/components/PdfAiFloatPanel.vue` | PDF AI 浮动面板 |
 | `src/components/PdfOcrLayer.vue` | PDF OCR 识别层 |

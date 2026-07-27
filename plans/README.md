@@ -8,7 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-26
+> 上次更新：2026-07-27
 
 ### 快速索引
 
@@ -30,6 +30,16 @@
 
 ## 已完成
 
+<!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
+
+- [2026-07-25-pdf-full-test.md](2026-07-25-pdf-full-test.md) — PDF 编辑器全面测试(API+UI 175 用例,166 通过) — 完成日期 2026-07-25
+- [2026-07-26-pdf-bugfix.md](2026-07-26-pdf-bugfix.md) — PDF 编辑器 Bug 修复(7 个 P0/P1 修复,含中文搜索/水印/文本清理等) — 完成日期 2026-07-26
+- [2026-07-26-ocr-ai-refactor.md](2026-07-26-ocr-ai-refactor.md) — PDF OCR/AI 完整改造(5 阶段全完成:AI配置接入 + SSE统一 + MQ异步 + 前端引导 + E2E) — 完成 2026-07-26
+- [2026-07-26-pdf-editor-tools-bugfix.md](2026-07-26-pdf-editor-tools-bugfix.md) — PDF 编辑器「编辑 TAB」8 类 BUG 修复(手型拖拽/评论/勾画/箭头/图章/签名 + Acrobat 对齐) — 完成 2026-07-27
+
+## 看板更新记录
+
+- 2026-07-27 —— 新增 2026-07-26-pdf-editor-tools-bugfix.md 完成记录（用户提出 8 类 BUG，以 Acrobat DC 为标准重审，7 步实施完成）
 
 ## 已废弃
 

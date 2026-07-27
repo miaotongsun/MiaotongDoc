@@ -33,8 +33,6 @@ export type AnnotationTool =
   | 'ellipse'
   | 'arrow'
   | 'line'
-  | 'underline'
-  | 'strikethrough'
   | 'stamp'
 
 export interface PendingRect {
@@ -88,6 +86,23 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   function setStampText(text: string): void {
     stampText.value = (text || '').toUpperCase().slice(0, 16)
   }
+  /** Phase 13.33: 图章库图片字段 —— 选中后 stampImageBase64 非空时优先用图片 */
+  const stampImageBase64 = ref<string | null>(null)
+  const stampLabel = ref<string>('DRAFT')
+  const stampOrigW = ref(120)
+  const stampOrigH = ref(40)
+  function setStampImage(opts: { imageBase64: string; label: string; origW: number; origH: number }): void {
+    stampImageBase64.value = opts.imageBase64
+    stampLabel.value = opts.label || 'STAMP'
+    stampOrigW.value = opts.origW || 120
+    stampOrigH.value = opts.origH || 40
+  }
+  function clearStampImage(): void {
+    stampImageBase64.value = null
+    stampLabel.value = 'DRAFT'
+  }
+  /** Phase 13.33: 图章 ghost 位置(画布像素 + 页码) */
+  const stampGhostPos = ref<{ pageNumber: number; x: number; y: number } | null>(null)
   const predefineColors = PREDEFINE_COLORS
 
   // 绘制中状态
@@ -103,6 +118,12 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   // 评论弹窗
   const showCommentDialog = ref(false)
   const editingComment = ref('')
+  /** Phase 13.34: 当前正在编辑的评论 id(非空时 saveComment 走 update 分支) */
+  const editingCommentId = ref<string | null>(null)
+  /** Phase 13.35: 评论创建时的 scale(用于 saveComment 中转 PDF pt) */
+  const commentRectScale = ref(1)
+  /** Phase 13.35: 评论创建时的 pageRawHeight(用于 saveComment 中转 PDF pt) */
+  const commentRectPageHeight = ref(0)
 
   // ===== 同步层 =====
   function syncFromY() {
@@ -190,9 +211,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       activeTool.value === 'rectangle' ||
       activeTool.value === 'ellipse' ||
       activeTool.value === 'arrow' ||
-      activeTool.value === 'line' ||
-      activeTool.value === 'underline' ||
-      activeTool.value === 'strikethrough'
+      activeTool.value === 'line'
     if (isRectTool) {
       pendingRect.value = {
         pageNumber: page, startX: pos.x, startY: pos.y,
@@ -223,7 +242,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       }
       return
     }
-    // vqa / highlight / comment / shape tools / underline / strikethrough 都跟随鼠标调整矩形
+    // vqa / highlight / comment / shape tools 都跟随鼠标调整矩形
     const isRectTool =
       activeTool.value === 'highlight' ||
       activeTool.value === 'comment' ||
@@ -231,9 +250,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       activeTool.value === 'rectangle' ||
       activeTool.value === 'ellipse' ||
       activeTool.value === 'arrow' ||
-      activeTool.value === 'line' ||
-      activeTool.value === 'underline' ||
-      activeTool.value === 'strikethrough'
+      activeTool.value === 'line'
     if (isRectTool && pendingRect.value) {
       // Phase 13.25: 即时归一化(Math.min/Math.abs) -> SVG <rect> 永远正宽高,
       //               向左/上拖动时预览不再消失
@@ -248,6 +265,12 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       }
     } else if (activeTool.value === 'draw' && isDrawing.value) {
       drawPoints.value.push(pos.x, pos.y)
+    }
+    // Phase 13.33: stamp 工具 ghost 位置更新(画布像素)
+    if (activeTool.value === 'stamp') {
+      stampGhostPos.value = { pageNumber: page, x: pos.x, y: pos.y }
+    } else if (stampGhostPos.value) {
+      stampGhostPos.value = null
     }
   }
 
@@ -274,9 +297,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       activeTool.value === 'rectangle' ||
       activeTool.value === 'ellipse' ||
       activeTool.value === 'arrow' ||
-      activeTool.value === 'line' ||
-      activeTool.value === 'underline' ||
-      activeTool.value === 'strikethrough'
+      activeTool.value === 'line'
     )) {
       const r = pendingRect.value
       const w = Math.abs(r.width)
@@ -291,12 +312,25 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
           y: pageRawHeight - (canvasTop + h) / scale,
           width: w / scale,
           height: h / scale,
+          pageHeight: pageRawHeight,
+        }
+        // Phase 13.35: 对 line/arrow 保留原始起始/终点方向
+        if (activeTool.value === 'arrow' || activeTool.value === 'line') {
+          const endX = (r.startX === canvasLeft) ? canvasLeft + w : canvasLeft
+          const endY = (r.startY === canvasTop) ? canvasTop + h : canvasTop
+          pdfRect.startX = r.startX / scale
+          pdfRect.startY = pageRawHeight - r.startY / scale
+          pdfRect.endX = endX / scale
+          pdfRect.endY = pageRawHeight - endY / scale
         }
         if (activeTool.value === 'comment') {
           // comment 用画布像素 rect 给弹窗定位(pendingCommentRect 仅 UI 用)
           pendingCommentRect.value = { ...r, x: canvasLeft, y: canvasTop, width: w, height: h }
           editingComment.value = ''
           showCommentDialog.value = true
+          // Phase 13.35: 保存 scale 和 pageHeight,供 saveComment 转 PDF pt
+          commentRectScale.value = scale
+          commentRectPageHeight.value = pageRawHeight
         } else {
           add({
             type: activeTool.value as any,
@@ -324,21 +358,52 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
       }
       drawPoints.value = []
     } else if (activeTool.value === 'stamp') {
-      // stamp - 点击放置,默认 120x40 pt 居中(转 PDF pt)
+      // Phase 13.33: 双轨 —— 图片图章按原图比例 100pt 宽;文字图章外框按文字长度自适应
       const pos2 = getRelPos(e, page, annotationLayerEl)
-      const w = 120 / scale, h = 40 / scale  // 画布像素 -> PDF pt
-      const rect: PdfAnnotationRect = {
-        x: (pos2.x / scale) - w / 2,
-        y: (pageRawHeight - pos2.y / scale) - h / 2,
-        width: w, height: h,
+      stampGhostPos.value = null
+      if (stampImageBase64.value) {
+        // 图片图章:按原图比例缩放 100pt 宽
+        const W_PT = 100
+        const ratio = stampOrigH.value / stampOrigW.value
+        const H_PT = W_PT * (ratio || 40 / 120)
+        const rect: PdfAnnotationRect = {
+          x: (pos2.x / scale) - W_PT / 2,
+          y: (pageRawHeight - pos2.y / scale) - H_PT / 2,
+          width: W_PT / scale,
+          height: H_PT / scale,
+          pageHeight: pageRawHeight,
+        }
+        add({
+          type: 'stamp',
+          pageNumber: page,
+          rect,
+          color: activeColor.value,
+          stampImageBase64: stampImageBase64.value,
+          stampLabel: stampLabel.value,
+          origW: stampOrigW.value,
+          origH: stampOrigH.value,
+        })
+      } else {
+        // 文字图章:外框按文字长度自适应(Acrobat 风格)
+        const text = (stampText.value || 'DRAFT').toUpperCase()
+        const fontPt = 18  // 与 PdfCanvas 渲染 font-size 一致(画布像素)
+        const widthPdf = Math.max(80, text.length * fontPt * 0.65 + 20) / scale
+        const heightPdf = 40 / scale
+        const rect: PdfAnnotationRect = {
+          x: (pos2.x / scale) - widthPdf / 2,
+          y: (pageRawHeight - pos2.y / scale) - heightPdf / 2,
+          width: widthPdf,
+          height: heightPdf,
+          pageHeight: pageRawHeight,
+        }
+        add({
+          type: 'stamp',
+          pageNumber: page,
+          rect,
+          color: activeColor.value,
+          stampText: text,
+        })
       }
-      add({
-        type: 'stamp',
-        pageNumber: page,
-        rect,
-        color: activeColor.value,
-        stampText: stampText.value,
-      })
     }
     if (activeTool.value === 'eraser') {
       eraserCursor.value = null
@@ -459,12 +524,40 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
   // ===== 评论弹窗 =====
 
   function saveComment() {
-    if (editingComment.value.trim() && pendingCommentRect.value) {
+    // Phase 13.34: 编辑现有评论时走 update 分支
+    if (editingCommentId.value) {
+      const id = editingCommentId.value
+      const newContent = editingComment.value.trim()
+      if (newContent) {
+        const idx = annotations.value.findIndex(a => a.id === id)
+        if (idx >= 0) {
+          const target = annotations.value[idx]
+          const updated = { ...target, content: newContent }
+          annotations.value.splice(idx, 1, updated)
+          // 同步到 Y.Array
+          const yIdx = options.yAnnotations.toArray().findIndex((a: PdfAnnotation) => a.id === id)
+          if (yIdx >= 0) {
+            options.yAnnotations.delete(yIdx, 1)
+            options.yAnnotations.insert(yIdx, [updated])
+          }
+        }
+      }
+    } else if (editingComment.value.trim() && pendingCommentRect.value) {
+      // Phase 13.35: 评论必须转 PDF pt 存储(画布像素 → PDF pt,否则缩放后位置漂移)
       const r = pendingCommentRect.value
+      const scale = commentRectScale.value || 1
+      const ph = commentRectPageHeight.value || 0
+      const pdfRect: PdfAnnotationRect = {
+        x: r.x / scale,
+        y: ph - (r.y + r.height) / scale,
+        width: r.width / scale,
+        height: r.height / scale,
+        pageHeight: ph,
+      }
       add({
         type: 'comment',
         pageNumber: r.pageNumber,
-        rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+        rect: pdfRect,
         color: activeColor.value,
         content: editingComment.value.trim(),
       })
@@ -472,6 +565,14 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     showCommentDialog.value = false
     pendingCommentRect.value = null
     editingComment.value = ''
+    editingCommentId.value = null
+  }
+
+  function openCommentForEdit(id: string) {
+    const target = annotations.value.find(a => a.id === id)
+    if (!target) return
+    editingCommentId.value = id
+    openComment(target)
   }
 
   function openComment(ann: PdfAnnotation) {
@@ -491,6 +592,7 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     showCommentDialog.value = false
     pendingCommentRect.value = null
     editingComment.value = ''
+    editingCommentId.value = null
   }
 
   return {
@@ -503,6 +605,14 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     stampPresets,
     customStampText,
     setStampText,
+    // Phase 13.33: 图章库 + ghost
+    stampImageBase64,
+    stampLabel,
+    stampOrigW,
+    stampOrigH,
+    setStampImage,
+    clearStampImage,
+    stampGhostPos,
     isDrawing,
     currentPageDraw,
     drawPoints,
@@ -510,6 +620,8 @@ export function usePdfAnnotation(options: UsePdfAnnotationOptions) {
     pendingCommentRect,
     showCommentDialog,
     editingComment,
+    editingCommentId,
+    openCommentForEdit,
     // Phase 13.25: 橡皮擦跟手光标
     eraserCursor,
     eraserRadius,
