@@ -45,6 +45,9 @@
           <RibbonBtn icon="menu" label="加密" @click="$emit('protect')" />
           <RibbonBtn icon="menu" label="密文遮盖" @click="$emit('redact')" />
         </RibbonGroup>
+        <RibbonGroup label="对比">
+          <RibbonBtn icon="diff" label="文档对比" @click="$emit('compare')" />
+        </RibbonGroup>
       </div>
 
       <!-- Edit -->
@@ -239,7 +242,7 @@ const emit = defineEmits<{
   (e: 'toggle-ocr-overlay'): void
   (e: 'zoom-in' | 'zoom-out' | 'fit-width' | 'fit-page' | 'actual-size'): void
   (e: 'zoom-menu', evt: MouseEvent): void
-  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect'): void
+  (e: 'save' | 'print' | 'share' | 'send-sign' | 'open-ai' | 'place-signature' | 'protect' | 'compare'): void
   (e: 'ocr-recognize', model: 'mobile' | 'server'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all'): void
   (e: 'page-merge' | 'page-extract' | 'page-rotate-all', evt: MouseEvent): void

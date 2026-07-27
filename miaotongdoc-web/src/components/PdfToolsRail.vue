@@ -22,7 +22,7 @@
       @click="$emit('toggle-collapse')"
     ></button>
 
-    <!-- 顶部:常用操作组 -->
+    <!-- 顶部:常用操作组(导出/组织页面/打印) -->
     <div class="pdf-rail-group">
       <button
         v-for="t in topActions"
@@ -39,7 +39,24 @@
 
     <div class="pdf-rail-divider"></div>
 
-    <!-- 中部:工具切换组(单选) -->
+    <!-- Phase 27: 面板切换组(大纲/搜索/批注) — 紧接顶部组之后 -->
+    <div class="pdf-rail-group">
+      <button
+        v-for="t in panelActions"
+        :key="t.id"
+        class="pdf-rail-btn"
+        :class="{ 'is-active': t.active?.() }"
+        :aria-label="t.label"
+        :title="t.label"
+        @click="t.handler"
+      >
+        <PdfIcon :name="t.icon" :size="18" />
+      </button>
+    </div>
+
+    <div class="pdf-rail-divider"></div>
+
+    <!-- 中部:工具切换组(高亮/评论/画笔/矩形) — 面板之后 -->
     <div class="pdf-rail-group">
       <button
         v-for="t in toolActions"
@@ -56,7 +73,7 @@
 
     <div class="pdf-rail-spacer"></div>
 
-    <!-- 底部:面板切换 + AI -->
+    <!-- 底部:文档对比 + AI 助手 -->
     <div class="pdf-rail-group">
       <button
         v-for="t in bottomActions"
@@ -92,7 +109,7 @@ const emit = defineEmits<{
   (e: 'export'): void
   (e: 'print'): void
   (e: 'open-ai'): void
-  (e: 'toggle-panel', panel: 'outline' | 'annotations'): void
+  (e: 'toggle-panel', panel: 'outline' | 'search' | 'annotations'): void
   (e: 'organize'): void
   (e: 'toggle-collapse'): void
   (e: 'compare'): void
@@ -106,7 +123,7 @@ type RailAction = {
   active?: () => boolean
 }
 
-/** Phase 14.U11: 重设计 — top 3 + tools 5 + bottom 2 = 10 个 */
+/** Phase 14.U11 + Phase 27 重设计: top 3 → tools 4 → panel 3 → compare → AI */
 const topActions: RailAction[] = [
   { id: 'export', label: '导出', icon: 'export', handler: () => emit('export') },
   { id: 'organize', label: '组织页面', icon: 'organize', handler: () => emit('organize'), active: () => !!props.organizeOpen },
@@ -144,15 +161,32 @@ const toolActions: RailAction[] = [
   },
 ]
 
-/** Phase 14.U11: 底部 3 个核心入口(AI / 对比 / 面板),去冗余 */
-const bottomActions: RailAction[] = [
+/** Phase 27: 面板按钮组(大纲/搜索/批注) + 文档对比 + AI 助手 */
+const panelActions: RailAction[] = [
   {
-    id: 'ai',
-    label: 'AI 助手',
-    icon: 'ai',
-    handler: () => emit('open-ai'),
-    active: () => props.aiVisible,
+    id: 'panel-outline',
+    label: '大纲',
+    icon: 'panelOutline',
+    handler: () => emit('toggle-panel', 'outline'),
+    active: () => props.rightPanel === 'outline',
   },
+  {
+    id: 'panel-search',
+    label: '搜索',
+    icon: 'panelSearch',
+    handler: () => emit('toggle-panel', 'search'),
+    active: () => props.rightPanel === 'search',
+  },
+  {
+    id: 'panel-annotations',
+    label: '批注',
+    icon: 'panelComment',
+    handler: () => emit('toggle-panel', 'annotations'),
+    active: () => props.rightPanel === 'annotations',
+  },
+]
+
+const bottomActions: RailAction[] = [
   {
     id: 'compare',
     label: '文档对比',
@@ -161,11 +195,11 @@ const bottomActions: RailAction[] = [
     active: () => false,
   },
   {
-    id: 'panel-outline',
-    label: '面板',
-    icon: 'panelOutline',
-    handler: () => emit('toggle-panel', 'outline'),
-    active: () => props.rightPanel === 'outline',
+    id: 'ai',
+    label: 'AI 助手',
+    icon: 'ai',
+    handler: () => emit('open-ai'),
+    active: () => props.aiVisible,
   },
 ]
 </script>

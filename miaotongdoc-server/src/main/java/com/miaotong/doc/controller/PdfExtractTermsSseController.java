@@ -91,6 +91,16 @@ public class PdfExtractTermsSseController {
         response.setBufferSize(0);
         response.setHeader("X-Accel-Buffering", "no");
 
+        // OCR AI 改造 v2:LLM 未配置检测 → 统一 event:error
+        if (aiProxyService.getTargetUrl() == null || aiProxyService.getApiKey() == null) {
+            SseEmitter earlyErr = new SseEmitter(1000L);
+            sendEvent(earlyErr, "error", Map.of(
+                    "code", "AI_NOT_CONFIGURED",
+                    "message", "LLM 服务未配置,请前往管理后台 → AI 配置 → 添加 LLM 类型 Provider"));
+            earlyErr.complete();
+            return earlyErr;
+        }
+
         SseEmitter emitter = new SseEmitter(300_000L);
 
         new Thread(() -> {
@@ -104,13 +114,13 @@ public class PdfExtractTermsSseController {
                 // 2) 读取文档 markdown（识别结果）
                 Document doc = documentService.getDocument(docId);
                 if (!"pdf".equals(doc.getFileType())) {
-                    sendEvent(emitter, "error", Map.of("message", "该文档不是 PDF"));
+                    sendEvent(emitter, "error", Map.of("code", "INVALID_DOC", "message", "该文档不是 PDF"));
                     emitter.complete();
                     return;
                 }
                 Map<String, String> markdown = documentService.getPdfMarkdown(docId); // 每页 markdown
                 if (markdown == null || markdown.isEmpty()) {
-                    sendEvent(emitter, "error", Map.of("message", "文档尚未识别，请先识别 OCR"));
+                    sendEvent(emitter, "error", Map.of("code", "OCR_NOT_RUN", "message", "文档尚未识别，请先识别 OCR"));
                     emitter.complete();
                     return;
                 }

@@ -40,6 +40,7 @@
       @zoom-menu="onZoomMenu"
       @save="onSave"
       @print="onPrint"
+      @compare="onCompareOpen"
       @open-ai="onOpenAi"
       @place-signature="onOpenSignatureDialog"
       @protect="onOpenSecurityDialog"
@@ -544,6 +545,7 @@
       v-if="compareDialogOpen"
       v-model="compareDialogOpen"
       :default-doc-id="docId"
+      @jump-to="goToPage"
     />
     <!-- Phase 13.8: PDF 画布右键快捷菜单 -->
     <PdfCanvasContextMenu
@@ -638,6 +640,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { buildDownloadName as dlName, triggerDownload as dlTrigger } from '@/lib/download'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAiStatus } from '@/composables/useAiStatus'
 import '@/styles/pdf-tokens.css'
 
 import PdfRibbon from './PdfRibbon.vue'
@@ -700,7 +703,8 @@ const renderer = usePdfRenderer({
   fileUrl: props.fileUrl,
   token,
   thumbScale: 0.4,
-  initialScale: 1.2,
+  // Phase 27: 默认原始尺寸,避免画布太长
+  initialScale: 1.0,
 })
 
 const totalPages = computed(() => renderer.totalPages.value)
@@ -1084,61 +1088,138 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
   if (recognizeStatus.value === 'recognizing') return
   recognizeStatus.value = 'recognizing'
   const modelLabel = model === 'server' ? '高精度' : '快速'
-  ElMessage.info(`OCR ${modelLabel}识别中...`)
+  ElMessage.info(`OCR ${modelLabel}识别已提交,正在处理...`)
+
+  // OCR AI 改造 v3:异步任务模式
+  let taskId: number | null = null
+  const ocrCleanup: { abort?: () => void } = {}
+
   try {
     const r: any = await pdfApi.recognizePaddle(props.docId, model)
-    if (r.status !== 'success') {
+    if (r.status === 'failed') {
       recognizeStatus.value = 'error'
-      const errorMsg = r.error || 'OCR 识别失败'
-      const isServiceDown = /服务.*未启动|不可用|超时|connection|refused/i.test(errorMsg)
-      // Phase 14.U15: 用 toast + 操作按钮,不再用 ElMessageBox.confirm(会挡 UI)
       ElMessage({
         type: 'error',
-        message: `OCR ${modelLabel}识别失败:${errorMsg}`,
+        message: `OCR ${modelLabel}识别失败:${r.message || '提交失败'}`,
         duration: 6000,
       })
-      if (isServiceDown) {
-        ElMessageBox({
-          title: `OCR ${modelLabel}不可用`,
-          message: `${errorMsg}<br><br>推荐切换到 ${model === 'server' ? 'mobile' : 'server'} 模型`,
-          confirmButtonText: `切换到 ${model === 'server' ? '快速(mobile)' : '高精度(server)'}`,
-          cancelButtonText: '关闭',
-          type: 'warning',
-          dangerouslyUseHTMLString: true,
-        }).then(() => onOcrRecognize(model === 'server' ? 'mobile' : 'server'))
-          .catch(() => {})
-      } else {
-        setTimeout(() => onOcrRecognize(model), 8000)
-      }
       return
     }
-    // server 降级提示
-    if (r.degraded) {
-      ElMessage.warning('server 引擎不可用,已降级 mobile 识别')
+    taskId = r.taskId
+    if (!taskId) {
+      recognizeStatus.value = 'error'
+      ElMessage.error('OCR 任务提交失败: 缺少 taskId')
+      return
     }
-    // 标记所有页已识别 + 重新加载 positions
-    const total = r.totalPages || 1
-    recognizedPages.value = new Set(Array.from({ length: total }, (_, i) => i + 1))
+
+    // 连接 SSE 接收进度
+    await new Promise<void>((resolve) => {
+      const token = sessionStorage.getItem('token') || ''
+      const ctrl = new AbortController()
+      ocrCleanup.abort = () => ctrl.abort()
+      const sseUrl = `/api/pdf/${props.docId}/ocr-progress/${taskId}`
+
+      fetch(sseUrl, {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
+        signal: ctrl.signal,
+      }).then(async (resp) => {
+        if (!resp.ok || !resp.body) {
+          recognizeStatus.value = 'error'
+          ElMessage.error(`OCR 进度连接失败: HTTP ${resp.status}`)
+          resolve()
+          return
+        }
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
+        try {
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            let idx: number
+            while ((idx = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, idx)
+              buffer = buffer.slice(idx + 2)
+              const ev = parseOcrSseBlock(block)
+              if (!ev) continue
+              if (ev.event === 'progress') {
+                recognizeStatus.value = 'recognizing'
+                ElMessage.info(`OCR 识别中: ${ev.data.message || ev.data.progress + '%'}`)
+              } else if (ev.event === 'done') {
+                recognizeStatus.value = 'recognized'
+                ElMessage.success(`OCR ${modelLabel}识别完成`)
+                await refreshAfterOcr()
+                resolve()
+                return
+              } else if (ev.event === 'error') {
+                recognizeStatus.value = 'error'
+                ElMessage({
+                  type: 'error',
+                  message: `OCR ${modelLabel}识别失败:${ev.data.message || '未知错误'}`,
+                  duration: 6000,
+                })
+                resolve()
+                return
+              }
+            }
+          }
+        } finally {
+          try { reader.releaseLock() } catch {}
+        }
+        resolve()
+      }).catch((err) => {
+        if (err?.name !== 'AbortError') {
+          console.error('SSE 连接异常:', err)
+          recognizeStatus.value = 'error'
+          ElMessage.error('OCR 进度推送连接异常')
+        }
+        resolve()
+      })
+    })
+  } catch (e: any) {
+    console.error('[PdfEditor] OCR failed:', e)
+    recognizeStatus.value = 'error'
+    const errorMsg = e?.response?.data?.error || e?.message || 'OCR 调用失败'
+    ElMessage({ type: 'error', message: `OCR 调用失败:${errorMsg}`, duration: 5000 })
+  } finally {
+    if (ocrCleanup.abort) ocrCleanup.abort()
+  }
+}
+
+/** 解析 SSE event block(返回 { event, data }) */
+function parseOcrSseBlock(block: string): { event: string; data: any } | null {
+  let eventName = 'message'
+  const dataLines: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim())
+    }
+  }
+  if (dataLines.length === 0) return null
+  const dataStr = dataLines.join('\n')
+  try {
+    return { event: eventName, data: JSON.parse(dataStr) }
+  } catch {
+    return { event: eventName, data: { message: dataStr } }
+  }
+}
+
+/** OCR 完成后刷新 positions + 渲染 */
+async function refreshAfterOcr(_model: 'mobile' | 'server' = 'mobile') {
+  try {
     await textEditor.loadAllPositions()
-    // Phase 11.4: 重新触发所有挂载页面的渲染,让 PdfTextEditorLayer 显示 OCR bbox
     for (const [pageNum, canvasEl] of canvasRefs.entries()) {
       const textLayerEl = textLayerRefs.get(pageNum)
       if (textLayerEl) {
         try { await renderer.renderPage(pageNum, canvasEl, textLayerEl) } catch {}
       }
     }
-    recognizeStatus.value = 'recognized'
-    ElMessage.success(`OCR ${modelLabel}识别完成(共 ${(r.pages || []).reduce((s: number, p: any) => s + (p.regions?.length || 0), 0)} 个文字区域)`)
-  } catch (e: any) {
-    console.error('[PdfEditor] OCR failed:', e)
-    recognizeStatus.value = 'error'
-    const errorMsg = e?.response?.data?.error || e?.message || 'OCR 调用失败'
-    // Phase 14.U15: 用轻量 toast(不挡 UI),不自动重试避免循环
-    ElMessage({
-      type: 'error',
-      message: `OCR 调用失败:${errorMsg}`,
-      duration: 5000,
-    })
+  } catch (e) {
+    console.error('refreshAfterOcr failed:', e)
   }
 }
 
@@ -1620,12 +1701,38 @@ function onAiImageDesc() {
   ElMessage.info('请框选图片区域,在 AI 浮窗输入"描述这张图"')
 }
 async function onAiExtractTerms() {
+  // OCR AI 改造 v2:先检查 LLM 是否配置
+  if (!(await ensureLlmConfigured())) return
   aiVisible.value = true
   await aiFloat.chat.sendUserMessage('请抽取本文档的合同条款:金额、日期、甲乙方、违约责任等关键字段。')
 }
 async function onAiOptimizeOcr() {
+  if (!(await ensureLlmConfigured())) return
   aiVisible.value = true
   await aiFloat.chat.sendUserMessage('请优化 OCR 识别结果:去页眉页脚、合并断行、修正错别字。')
+}
+
+// OCR AI 改造 v2:LLM 未配置引导
+const aiStatus = useAiStatus()
+aiStatus.refresh()
+
+async function ensureLlmConfigured(): Promise<boolean> {
+  if (!aiStatus.status.value) {
+    await aiStatus.refresh(true)
+  }
+  if (aiStatus.isAvailable('llm')) return true
+  ElMessageBox.confirm(
+    'LLM 服务尚未配置,AI 功能不可用。\n\n是否前往管理后台 → AI 配置?',
+    'AI 未配置',
+    {
+      confirmButtonText: '前往配置',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).then(() => {
+    window.open('/admin?tab=ai', '_blank')
+  }).catch(() => {})
+  return false
 }
 async function onAiKeywords() {
   aiVisible.value = true
@@ -1649,9 +1756,16 @@ async function onAiAutoOutline() {
     const r = await pdfApi.autoOutline(props.docId)
     if (r.success) {
       ElMessage.success(`已生成 ${r.outline?.length || 0} 个章节目录`)
-      await reloadAfterPageOp(pageOps.bustUrl({ success: true, message: '', filePath: r.filePath || '' } as any))
-      // 刷新右侧大纲
+      // Phase 27: 打开右侧大纲面板(不重载 PDF,保持当前 tab + 当前页码)
       toggleRightPanel('outline')
+      // 自动跳到第一个章节,提供"页面确实响应了"的视觉反馈
+      if (r.outline && r.outline.length > 0 && r.outline[0].page) {
+        setTimeout(() => goToPage(r.outline[0].page), 300)
+      }
+      // 强制刷新右侧 outline panel 的缓存
+      if (pdfApi.getOutline) {
+        try { await pdfApi.getOutline(props.docId) } catch {} // 触发缓存刷新
+      }
     } else { ElMessage.error(r.error || '智能目录生成失败') }
   } catch (e: any) { ElMessage.error(e?.message || '智能目录失败') }
 }

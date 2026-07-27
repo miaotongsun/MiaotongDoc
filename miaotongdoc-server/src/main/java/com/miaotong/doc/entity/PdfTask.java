@@ -26,7 +26,8 @@ public class PdfTask {
     @Column(nullable = false, length = 20)
     private String status = "pending";
 
-    @Column(columnDefinition = "jsonb")
+    @Convert(converter = com.miaotong.doc.config.JsonbConverter.class)
+    @Column(name = "parameters", columnDefinition = "jsonb")
     private String parameters;
 
     @Column(name = "result_document_id")
@@ -37,6 +38,27 @@ public class PdfTask {
 
     @Column(name = "error_message")
     private String errorMessage;
+
+    @Column(name = "progress")
+    private Integer progress = 0;
+
+    @Column(name = "current_page")
+    private Integer currentPage = 0;
+
+    @Column(name = "total_pages")
+    private Integer totalPages = 0;
+
+    @Column(name = "model", length = 50)
+    private String model = "mobile";
+
+    @Column(name = "language", length = 20)
+    private String language = "ch";
+
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
 
     @Column(name = "created_by", nullable = false)
     private Long createdBy;
@@ -50,5 +72,8 @@ public class PdfTask {
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+        if (updatedAt == null) {
+            updatedAt = createdAt;
+        }
     }
 }

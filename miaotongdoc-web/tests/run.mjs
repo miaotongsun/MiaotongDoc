@@ -142,7 +142,11 @@ async function checkServices() {
  */
 function runTest() {
   console.log('\n## 跑 E2E 测试\n')
-  const child = spawn('node', ['tests/phase14-e2e.mjs'], { stdio: 'inherit', cwd: ROOT })
+  const child = spawn('node', ['tests/phase14-e2e.mjs'], {
+    stdio: 'inherit',
+    cwd: ROOT,
+    env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
+  })
   child.on('exit', (code) => process.exit(code || 1))
 }
 

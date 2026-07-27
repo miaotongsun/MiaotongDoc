@@ -8,14 +8,16 @@
 -->
 <template>
   <Teleport to="body">
-    <!-- Phase 13.4: 常驻 AI 浮标(默认显示,点击展开浮窗) -->
+    <!-- Phase 13.4 + Phase 27: 常驻 AI 浮标(可拖拽,位置记忆到 sessionStorage) -->
     <button
       v-if="!open"
       class="ai-fab"
       :class="{ 'is-streaming': chat.status.value === 'streaming' }"
+      :style="fabStyle"
       aria-label="展开 AI 助手"
       title="AI 助手"
-      @click="open = true"
+      @mousedown.prevent="onFabDragStart"
+      @click="onFabClick"
     >
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 2 14 8.5l6.5 1.5-4.7 4.6 1.1 6.4L12 17.8 7.1 21l1.1-6.4L3.5 10l6.5-1.5z" />
@@ -207,6 +209,65 @@ const open = computed({
 })
 const _open = ref(props.visible ?? false)
 watch(() => props.visible, (v) => { if (v !== undefined) _open.value = v })
+
+// ===== Phase 27: AI FAB 可拖拽 + 位置记忆(sessionStorage) =====
+const FAB_POS_KEY = 'pdf-ai-fab-pos'
+const fabStyle = ref<Record<string, string>>({ bottom: '24px', right: '24px' })
+// 初始化时从 sessionStorage 读取
+try {
+  const saved = sessionStorage.getItem(FAB_POS_KEY)
+  if (saved) fabStyle.value = JSON.parse(saved)
+} catch {}
+let dragging = false
+let dragMoved = false
+let dragStartX = 0
+let dragStartY = 0
+let originX = 0
+let originY = 0
+
+function onFabDragStart(e: MouseEvent) {
+  dragging = true
+  dragMoved = false
+  dragStartX = e.clientX
+  dragStartY = e.clientY
+  // 解析当前位置
+  const s = fabStyle.value
+  originX = parseFloat(s.right || '24')
+  originY = parseFloat(s.bottom || '24')
+  document.addEventListener('mousemove', onFabDragMove)
+  document.addEventListener('mouseup', onFabDragEnd)
+}
+
+function onFabDragMove(e: MouseEvent) {
+  if (!dragging) return
+  const dx = e.clientX - dragStartX
+  const dy = e.clientY - dragStartY
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true
+  // 相对右下角定位: right = 原 right - dx, bottom = 原 bottom - dy
+  // Phase 27: 范围限制全屏(viewport 8px ~ 视口宽-80px)
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const FAB = 48
+  fabStyle.value = {
+    right: Math.max(8, Math.min(vw - FAB - 8, originX - dx)) + 'px',
+    bottom: Math.max(8, Math.min(vh - FAB - 8, originY - dy)) + 'px',
+  }
+}
+
+function onFabDragEnd() {
+  dragging = false
+  document.removeEventListener('mousemove', onFabDragMove)
+  document.removeEventListener('mouseup', onFabDragEnd)
+  if (dragMoved) {
+    // 保存位置
+    try { sessionStorage.setItem(FAB_POS_KEY, JSON.stringify(fabStyle.value)) } catch {}
+  }
+}
+
+function onFabClick() {
+  if (dragMoved) { dragMoved = false; return }
+  open.value = true
+}
 
 // 监听 vqa：自动填入 placeholder
 watch(() => props.vqaImage, (v) => {

@@ -156,6 +156,12 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_API_KEY: ${LLM_API_KEY}
       LLM_TIMEOUT: ${LLM_TIMEOUT}
+      # OCR AI 改造 v3:OCR 异步任务队列
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: miaotong
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      SPRING_RABBITMQ_VIRTUAL_HOST: /
       DOCLING_ENABLED: ${DOCLING_ENABLED}
       DOCLING_SERVER_URL: http://docling:5001
       OCR_ENABLED: ${OCR_ENABLED}
@@ -441,22 +447,32 @@ services:
     restart: unless-stopped
 
   # Docling 文档解析服务（PDF 结构化识别 + OCR）
+  # AI 文档结构化解析（重型服务，含 docling 模型缓存，按需启动）
+  # 启动方式: docker compose --profile docling up -d docling
   docling:
     build: ./app/docling
     container_name: miaotongdoc-docling
+    profiles: ["docling", "all"]
     ports:
       - "5001:5001"
     environment:
       - DOCLING_SERVE_ENABLE_UI=false
-      - TZ=Asia/Shanghai
-      - HF_ENDPOINT=https://hf-mirror.com
-      - DOCLING_SERVE_MAX_SYNC_WAIT=600
-      - DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT=600
       - DOCLING_SERVE_ENG_LOC_NUM_WORKERS=1
       - DOCLING_SERVE_OPTIONS_CACHE_SIZE=1
       - DOCLING_SERVE_MAX_SOURCES_PER_REQUEST=1
-    volumes:
-      - ./data/docling-cache:/root/.cache
+      - TZ=Asia/Shanghai
+      - DOCLING_SERVE_MAX_SYNC_WAIT=600
+      - DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT=600
+      # ⭐ 纯内网离线: 禁止 huggingface_hub 发任何外网请求
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - HF_DATASETS_OFFLINE=1
+      - HF_HOME=/root/.cache/huggingface
+    # 注意: 不挂载 ./data/docling-cache 到 /root/.cache!
+    # Docker Desktop on Windows 的 9p 文件系统会把 HF 模型快照里的 symlink
+    # 转成含路径字符串的普通文件,导致 RTDetrImageProcessor.from_json_file
+    # 读到 '.../blobs/xxx' 字符串而非 JSON, 启动时 warm_up_caches 崩溃
+    # 模型已烧入镜像层(约 506MB), 容器内 overlay 文件系统支持真 symlink
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
@@ -473,10 +489,13 @@ services:
         max-file: "3"
     restart: unless-stopped
 
-  # Tesseract OCR 服务(扫描件 PDF 文字识别,多语言兜底)
+  # Tesseract OCR 服务(扫描件 PDF 多语言兜底;默认禁用,按需启用)
+  # 启动方式: docker compose --profile ocr up -d ocr
+  # 设计依据: plans/pdf-editor-reshape.md §Tesseract 默认禁用,占用极小,作多语言兜底
   ocr:
     build: ./app/ocr
     container_name: miaotongdoc-ocr
+    profiles: ["ocr", "all"]
     ports:
       - "5002:5002"
     environment:
@@ -497,13 +516,14 @@ services:
         max-file: "3"
     restart: unless-stopped
 
-  # Phase 4: PaddleOCR 中文扫描件主力(按需启动,空闲 0 占用)
-  # 启动方式: docker compose --profile ocr up -d ocr-paddle
-  # 首次启动模型加载约 30-60s,生产环境 start_period 调大
+  # Phase 4: PaddleOCR 中文扫描件主力(默认启动;首次启动模型加载约 30-60s)
+  # 仅在不需要中文 OCR 时显式排除: docker compose up -d --scale ocr-paddle=0 ...
+  # 完整启用(含 docling): docker compose --profile all up -d
   ocr-paddle:
     build: ./app/ocr-paddle
     container_name: miaotongdoc-ocr-paddle
-    profiles: ["ocr", "all"]
+    ports:
+      - "5003:5003"
     environment:
       - TZ=Asia/Shanghai
     healthcheck:

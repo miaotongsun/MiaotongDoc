@@ -31,11 +31,43 @@ public class PdfController {
 
     private final DoclingService doclingService;
     private final PdfRecognizeService pdfRecognizeService;
+    private final com.miaotong.doc.mq.PdfOcrTaskProducer pdfOcrTaskProducer;
+    private final com.miaotong.doc.repository.PdfTaskRepository pdfTaskRepository;
+    private final jakarta.persistence.EntityManager entityManager;
+
+    /**
+     * Phase 26 fix:从 request 中以 UTF-8 读取 JSON body 并转 Map。
+     * Spring/Jackson 在某些环境下会用 ISO-8859-1 解析 request body,导致中文 body 被误解码抛错。
+     * 这是 Phase 13.12 createBlank 已用的模式,这里提取成 helper 供其它中文接口复用。
+     *
+     * 关键:先 byte→String(UTF-8)再 readValue(String),不要直接 readValue(InputStream)
+     * —— 后者 Jackson 会再次尝试按 UTF-8 解码 byte[],如果某些 byte 不符合 UTF-8 规则就抛
+     * "Invalid UTF-8 start byte 0xXX"。
+     */
+    private Map<String, Object> readUtf8Body(HttpServletRequest request) throws java.io.IOException {
+        String bodyStr = new String(request.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        if (bodyStr.isBlank()) return Map.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(bodyStr, Map.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // 中文 UTF-8 byte 解析失败时,尝试 ISO-8859-1 fallback(可能是 Spring 已预先解码)
+            String latin1 = new String(request.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (!latin1.equals(bodyStr)) {
+                log.warn("JSON UTF-8 解析失败,尝试 ISO-8859-1 fallback: {}", e.getMessage());
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(latin1, Map.class);
+            }
+            throw e;
+        }
+    }
 
     // ==================== 文本提取（已有） ====================
 
     /**
      * 提取 PDF 全文文本（按页分段）
+     *
+     * Phase 26 fix:对返回文本做乱码清理
+     * - 检测到 surrogate pair(高代理 + 低代理)区域字符(常见于 PDFBox 对嵌入子集字体无 ToUnicode 时)
+     * - 把孤立的 surrogate pair 替换为 U+FFFD ('�'),避免前端拿到不可显示字符
      */
     @GetMapping("/{id}/text")
     public ResponseEntity<Map<String, Object>> extractText(
@@ -57,8 +89,9 @@ public class PdfController {
                     stripper.setStartPage(i);
                     stripper.setEndPage(i);
                     String pageText = stripper.getText(pdf);
-                    fullText.append(pageText);
-                    pages.add(Map.of("pageNum", i, "text", pageText));
+                    String clean = sanitizeText(pageText);
+                    fullText.append(clean);
+                    pages.add(Map.of("pageNum", i, "text", clean));
                 }
 
                 return ResponseEntity.ok(Map.of(
@@ -71,6 +104,45 @@ public class PdfController {
             log.error("提取 PDF 文本失败: docId={}", id, e);
             throw new BusinessException("提取 PDF 文本失败");
         }
+    }
+
+    /**
+     * 清理 PDFBox 抽出的乱码字符。
+     *
+     * 实际场景:reportlab 用嵌入子集字体生成中文 PDF 时,PDFBox 因缺 ToUnicode CMap 抽出
+     * 形如 0xDxxx 0xDxxx 0xDxxx 的"假字符"(高代理 + 高代理),这些是 mojibake,
+     * 应当整段替换为 U+FFFD。
+     *
+     * 处理策略:
+     * - 检测到任何 high/low surrogate 字符(单独或成对) → 整段替换为 U+FFFD
+     * - 控制字符(0x00-0x08, 0x0B-0x1F, 0x7F 除 tab/newline/cr) → 替换为空格
+     * - 合法字符(ASCII 可见字符 + 中日韩正常范围 + 表情符号等) → 保留
+     */
+    private String sanitizeText(String text) {
+        if (text == null || text.isEmpty()) return text;
+        StringBuilder sb = new StringBuilder(text.length());
+        char[] chars = text.toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            char c = chars[i];
+            if (Character.isHighSurrogate(c) || Character.isLowSurrogate(c)) {
+                // 任何 surrogate(合法或非法的 mojibake)在此场景下都是不可显示,
+                // 都替换为 U+FFFD,后续 high/low 也跳过
+                sb.append('�');
+                if (Character.isHighSurrogate(c) && i + 1 < chars.length
+                    && Character.isLowSurrogate(chars[i + 1])) {
+                    i++; // 跳过配对的 low surrogate
+                }
+                continue;
+            }
+            if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
+                sb.append(' ');
+            } else if (c == 0x7F) {
+                sb.append(' ');
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -521,12 +593,19 @@ public class PdfController {
     /**
      * 添加水印
      * body: { "text": str, "opacity": 0-1, "rotation": degrees, "pages": [int] }
+     *
+     * Phase 26 fix:手动 UTF-8 读 body,避免 Jackson ISO-8859-1 误解中文(导致后续字体查找失败 500)。
      */
     @PostMapping("/{id}/watermark")
     public ResponseEntity<Map<String, Object>> addWatermark(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("请求体解析失败: " + e.getMessage());
+        }
         String text = (String) body.getOrDefault("text", "CONFIDENTIAL");
         double opacity = body.get("opacity") instanceof Number ? ((Number) body.get("opacity")).doubleValue() : 0.3;
         double rotation = body.get("rotation") instanceof Number ? ((Number) body.get("rotation")).doubleValue() : 45;
@@ -592,12 +671,20 @@ public class PdfController {
     /**
      * Phase 13.23: 提取嵌入图片 zip
      * GET /api/pdf/{id}/extract-images
+     *
+     * Phase 26 fix:无嵌入图时返回 204 + X-No-Images: true 头,
+     * 让前端能区分"无图"和"真 zip"(原行为返回 22 字节空 zip 易让用户误以为下载失败)。
      */
     @GetMapping("/{id}/extract-images")
     public ResponseEntity<byte[]> extractImages(
             @PathVariable Long id,
             HttpServletRequest httpRequest) {
         byte[] zip = pdfToolService.extractImagesZip(id);
+        if (zip == null) {
+            return ResponseEntity.noContent()
+                .header("X-No-Images", "true")
+                .build();
+        }
         return ResponseEntity.ok()
             .header("Content-Type", "application/zip")
             .header("Content-Disposition", "attachment; filename=\"pdf-images.zip\"")
@@ -607,12 +694,19 @@ public class PdfController {
     /**
      * 添加页眉/页脚
      * body: { "position": "header"|"footer", "content": str, "fontSize": num, "pages": [int] }
+     *
+     * Phase 26 fix:手动 UTF-8 读 body。
      */
     @PostMapping("/{id}/header-footer")
     public ResponseEntity<Map<String, Object>> addHeaderFooter(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
+        Map<String, Object> body;
+        try {
+            body = readUtf8Body(httpRequest);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("请求体解析失败: " + e.getMessage());
+        }
         String position = (String) body.getOrDefault("position", "footer");
         String content = (String) body.getOrDefault("content", "Page {page} of {total}");
         double fontSize = body.get("fontSize") instanceof Number ? ((Number) body.get("fontSize")).doubleValue() : 10;
@@ -891,55 +985,143 @@ public class PdfController {
     }
 
     /**
-     * 触发识别（同步，直接返回识别结果）
+     * Phase 27 测试报告修复:改为异步任务模式(避免大文件 74s 阻塞)
+     * 流程:
+     *   1. 创建 mt_pdf_task 记录(状态 pending, task_type=ocr_pdfbox)
+     *   2. 发 RabbitMQ 消息
+     *   3. 立即返回 {taskId, status: "pending"},前端订阅 SSE 获取进度
+     * 注:Docling 仍走内嵌同步路径(模型调用前),但 PaddleOCR 入口已被改造
      */
     @PostMapping("/{id}/recognize")
-    public ResponseEntity<Map<String, Object>> recognize(@PathVariable Long id) {
-        Map<String, Object> result = pdfRecognizeService.recognize(id);
-
-        // 保存识别结果到文档
-        if (result.containsKey("markdown")) {
-            String markdownStr = String.valueOf(result.get("markdown"));
-            // 把整篇 markdown 包装成 Map<pageNum, content>
-            Map<String, String> markdown = splitMarkdownByPage(markdownStr);
-            documentService.savePdfMarkdown(id, markdown);
-
-            // 提取并保存 OCR 坐标数据（用于在 PDF 原图位置叠加文字层，支持框选复制）
-            Map<String, Object> ocrData = pdfRecognizeService.extractOcrData(result);
-            if (!ocrData.isEmpty()) {
-                documentService.savePdfOcrData(id, ocrData);
-                log.info("已保存 OCR 坐标数据: docId={}, pages={}", id, ocrData.size());
-            }
-
-            documentService.markPdfRecognized(id);
+    public ResponseEntity<Map<String, Object>> recognize(
+            @PathVariable Long id,
+            HttpServletRequest httpRequest) {
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+        Long userId = getCurrentUserId();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        Long taskId;
+        try {
+            jakarta.persistence.Query q = entityManager.createNativeQuery(
+                    "INSERT INTO mt_pdf_task (document_id, task_type, status, parameters, model, language, progress, created_by, created_at, updated_at) " +
+                    "VALUES (?1, ?2, ?3, CAST(?4 AS jsonb), 'mobile', 'ch', 0, ?5, ?6, ?6) RETURNING id");
+            q.setParameter(1, id);
+            q.setParameter(2, "ocr_pdfbox");
+            q.setParameter(3, "pending");
+            q.setParameter(4, "{\"engine\":\"pdfbox\"}");
+            q.setParameter(5, userId);
+            q.setParameter(6, now);
+            taskId = ((Number) q.getSingleResult()).longValue();
+        } catch (Exception e) {
+            log.error("创建 PDF 识别任务失败: docId={}, error={}", id, e.getMessage(), e);
+            return ResponseEntity.ok(Map.of(
+                    "status", "failed",
+                    "code", "DB_ERROR",
+                    "message", "创建任务失败: " + e.getMessage()));
         }
-
-        return ResponseEntity.ok(result);
+        try {
+            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage(
+                    taskId, id, userId, "mobile", "ch", System.currentTimeMillis());
+            // 复用 Producer,但用特定 routing key 区分(此处直接走同一队列,Consumer 按 taskType 分发)
+            pdfOcrTaskProducer.send(msg);
+        } catch (Exception e) {
+            log.error("PDF 识别任务入队失败: docId={}, error={}", id, e.getMessage());
+            return ResponseEntity.ok(Map.of(
+                    "status", "failed",
+                    "code", "QUEUE_FAILED",
+                    "message", "OCR 任务入队失败,请稍后重试"));
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "pending");
+        resp.put("taskId", taskId);
+        resp.put("docId", id);
+        resp.put("sseUrl", "/api/pdf/" + id + "/ocr-progress/" + taskId);
+        resp.put("message", "PDF 识别任务已提交,正在处理");
+        return ResponseEntity.ok(resp);
     }
 
     /**
-     * Phase 11.4: 强制走 PaddleOCR(中文扫描件带 bbox 坐标)
-     * 跳过 Docling 路径,直接用 PaddleOCR 拿到完整坐标数据
+     * Phase 11.4 + OCR AI 改造 v3: 强制走 PaddleOCR(异步任务模式)
+     *
+     * 流程(改造后):
+     *   1. 创建 mt_pdf_task 记录(状态 pending)
+     *   2. 发 RabbitMQ 消息 pdf.ocr.task
+     *   3. 立即返回 {taskId, status: "pending"},前端订阅 SSE 获取进度
+     *
+     * Consumer 端(PdfOcrTaskConsumer):
+     *   - 标记 processing
+     *   - 调 PaddleOcrClient 异步识别,带进度回调
+     *   - 实时更新 mt_pdf_task.progress
+     *   - 完成时标记 completed/failed,SSE 自动推送 done/error
      */
     @PostMapping("/{id}/recognize-paddle")
     public ResponseEntity<Map<String, Object>> recognizePaddle(
             @PathVariable Long id,
             @RequestParam(value = "model", required = false, defaultValue = "mobile") String model) {
-        Map<String, Object> result = pdfRecognizeService.recognizeWithPaddle(id, model);
-        if ("success".equals(result.get("status"))) {
-            Object mdObj = result.get("markdown");
-            if (mdObj != null) {
-                Map<String, String> markdown = splitMarkdownByPage(String.valueOf(mdObj));
-                documentService.savePdfMarkdown(id, markdown);
-            }
-            Map<String, Object> ocrData = pdfRecognizeService.extractOcrData(result);
-            if (!ocrData.isEmpty()) {
-                documentService.savePdfOcrData(id, ocrData);
-                log.info("Phase 11.4 PaddleOCR 坐标数据已保存: docId={}, model={}, pages={}", id, model, ocrData.size());
-            }
-            documentService.markPdfRecognized(id);
+        // 校验文档
+        Document doc = documentService.getDocument(id);
+        validatePdf(doc);
+
+        // 创建任务(用 SQL 原生 INSERT 避开 parameters jsonb 类型问题)
+        Long userId = getCurrentUserId();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        Long taskId;
+        try {
+            jakarta.persistence.Query q = entityManager.createNativeQuery(
+                    "INSERT INTO mt_pdf_task (document_id, task_type, status, parameters, model, language, progress, created_by, created_at, updated_at) " +
+                    "VALUES (?1, ?2, ?3, CAST(?4 AS jsonb), ?5, ?6, 0, ?7, ?8, ?8) RETURNING id");
+            q.setParameter(1, id);
+            q.setParameter(2, "ocr_paddle");
+            q.setParameter(3, "pending");
+            q.setParameter(4, "{}");
+            q.setParameter(5, model);
+            q.setParameter(6, "ch");
+            q.setParameter(7, userId);
+            q.setParameter(8, now);
+            taskId = ((Number) q.getSingleResult()).longValue();
+        } catch (Exception e) {
+            log.error("创建 OCR 任务失败: docId={}, error={}", id, e.getMessage(), e);
+            return ResponseEntity.ok(Map.of(
+                    "status", "failed",
+                    "code", "DB_ERROR",
+                    "message", "创建任务失败: " + e.getMessage()));
         }
-        return ResponseEntity.ok(result);
+
+        // 发 MQ 消息
+        try {
+            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage(
+                    taskId, id, userId, model, "ch", System.currentTimeMillis());
+            pdfOcrTaskProducer.send(msg);
+        } catch (Exception e) {
+            log.error("OCR 任务入队失败: docId={}, error={}", id, e.getMessage());
+            updateTaskStatusFailed(taskId, "入队失败: " + e.getMessage());
+            return ResponseEntity.ok(Map.of(
+                    "status", "failed",
+                    "code", "QUEUE_FAILED",
+                    "message", "OCR 任务入队失败,请稍后重试"));
+        }
+
+        // 立即返回 taskId(异步模式)
+        return ResponseEntity.ok(Map.of(
+                "status", "pending",
+                "taskId", taskId,
+                "docId", id,
+                "model", model,
+                "message", "OCR 任务已提交,正在处理",
+                "sseUrl", "/api/pdf/" + id + "/ocr-progress/" + taskId));
+    }
+
+    /** 标记 OCR 任务为 failed(SQL 原生 UPDATE 避免 jsonb 字段) */
+    private void updateTaskStatusFailed(Long taskId, String errMsg) {
+        try {
+            jakarta.persistence.Query q = entityManager.createNativeQuery(
+                    "UPDATE mt_pdf_task SET status='failed', error_message=?1, completed_at=now(), updated_at=now() WHERE id=?2");
+            q.setParameter(1, errMsg);
+            q.setParameter(2, taskId);
+            q.executeUpdate();
+        } catch (Exception e) {
+            log.warn("更新任务失败状态出错: taskId={}, error={}", taskId, e.getMessage());
+        }
     }
 
     /**
@@ -998,13 +1180,24 @@ public class PdfController {
     /**
      * POST 版本搜索(支持中文 query,绕过 Tomcat 严格 URL 解析)
      * body: { "q": "搜索词", "caseSensitive": false }
+     *
+     * Phase 26 fix:手动 UTF-8 读 body。
      */
     @PostMapping("/{id}/search")
     public ResponseEntity<Map<String, Object>> searchPost(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, Object> body) {
-        String q = body != null ? (String) body.get("q") : null;
-        boolean caseSensitive = body != null && Boolean.TRUE.equals(body.get("caseSensitive"));
+            HttpServletRequest httpRequest) {
+        String q;
+        boolean caseSensitive = false;
+        try {
+            Map<String, Object> body = readUtf8Body(httpRequest);
+            q = body != null ? (String) body.get("q") : null;
+            if (body != null && Boolean.TRUE.equals(body.get("caseSensitive"))) {
+                caseSensitive = true;
+            }
+        } catch (java.io.IOException e) {
+            throw new BusinessException("请求体解析失败: " + e.getMessage());
+        }
         return doSearch(id, q, caseSensitive);
     }
 
@@ -1053,11 +1246,11 @@ public class PdfController {
             status = "pending";
         }
 
-        return ResponseEntity.ok(Map.of(
-            "status", status,
-            "recognized", doc.getPdfRecognized() != null && doc.getPdfRecognized(),
-            "recognizedAt", doc.getPdfRecognizedAt() != null ? doc.getPdfRecognizedAt().toString() : null
-        ));
+        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("status", status);
+        resp.put("recognized", doc.getPdfRecognized() != null && doc.getPdfRecognized());
+        resp.put("recognizedAt", doc.getPdfRecognizedAt() != null ? doc.getPdfRecognizedAt().toString() : null);
+        return ResponseEntity.ok(resp);
     }
 
     // ==================== 辅助方法 ====================
@@ -1106,35 +1299,47 @@ public class PdfController {
     /**
      * Phase 12.2: 填充表单字段
      * 接收 { values: { fieldName: value, ... } },返回新 PDF 字节
+     *
+     * Phase 26 fix:手动 UTF-8 读 body。
      */
     @PostMapping("/{id}/form-fields/fill")
     public ResponseEntity<byte[]> fillFormFields(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
-        Map<String, String> values = (Map<String, String>) body.get("values");
-        byte[] result = pdfToolService.fillFormFields(id, values);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("filled.pdf").build());
-        return new ResponseEntity<>(result, headers, HttpStatus.OK);
+            HttpServletRequest httpRequest) {
+        try {
+            Map<String, Object> body = readUtf8Body(httpRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, String> values = (Map<String, String>) body.get("values");
+            byte[] result = pdfToolService.fillFormFields(id, values);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_PDF);
+            headers.setContentDisposition(ContentDisposition.attachment().filename("filled.pdf").build());
+            return new ResponseEntity<>(result, headers, HttpStatus.OK);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("请求体解析失败: " + e.getMessage());
+        }
     }
 
     /**
      * Phase 13.26: 表单填充 in-place(落盘 + 返回 filePath,不下载)
+     *
+     * Phase 26 fix:手动 UTF-8 读 body。
      */
     @PostMapping("/{id}/form-fields/fill-in-place")
     public ResponseEntity<Map<String, Object>> fillFormFieldsInPlace(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> body) {
+            HttpServletRequest httpRequest) {
         Document doc = documentService.getDocument(id);
         validatePdf(doc);
         try {
+            Map<String, Object> body = readUtf8Body(httpRequest);
             @SuppressWarnings("unchecked")
             Map<String, String> values = (Map<String, String>) body.get("values");
             byte[] result = pdfToolService.fillFormFields(id, values);
             String filePath = pdfToolService.replacePdfBytes(id, result, "form-fill");
             return ResponseEntity.ok(Map.of("success", true, "filePath", filePath, "message", "表单已填充并保存"));
+        } catch (java.io.IOException e) {
+            throw new BusinessException("请求体解析失败: " + e.getMessage());
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -1223,7 +1428,7 @@ public class PdfController {
         String bodyStr = new String(httpRequest.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
         @SuppressWarnings("unchecked")
-        Map<String, Object> body = om.readValue(bodyStr, Map.class);
+        Map<String, Object> body = bodyStr.isBlank() ? Map.of() : om.readValue(bodyStr, Map.class);
 
         int pages = body.get("pages") instanceof Number n ? n.intValue() : 1;
         float widthPt = body.get("width") instanceof Number w ? w.floatValue() : 595f;

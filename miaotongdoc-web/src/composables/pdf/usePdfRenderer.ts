@@ -57,7 +57,8 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   const pdfjsLib = shallowRef<typeof PdfJs | null>(null)
   const pdfDoc = shallowRef<PdfJs.PDFDocumentProxy | null>(null)
   const totalPages = ref(0)
-  const scale = ref(options.initialScale ?? 1.2)
+  // Phase 27: 默认 1.0(原始尺寸)替代之前的 1.2,避免画布"太长"问题
+  const scale = ref(options.initialScale ?? 1.0)
   const pageWidth = ref(0)
   const pageHeight = ref(0)
   // Phase 13.35: 缩略图缩放可动态调整(侧栏 +/- 按钮)

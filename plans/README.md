@@ -8,7 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-23
+> 上次更新：2026-07-26
 
 ### 快速索引
 
@@ -25,13 +25,11 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
-暂无。
+- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中
+- [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
 
 ## 已完成
 
-<!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
-
-- [2026-07-26-merge-pdf-into-new-doc.md](2026-07-26-merge-pdf-into-new-doc.md) — 新建文档对话框合并 PDF 创建 + 模板可折叠 + 按 docType 过滤
 
 ## 已废弃
 

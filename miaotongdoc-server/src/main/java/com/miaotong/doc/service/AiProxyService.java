@@ -19,6 +19,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Slf4j
@@ -58,6 +59,54 @@ public class AiProxyService {
             }
         }
         return (defaultModel != null && !defaultModel.isEmpty()) ? defaultModel : "gpt-4o-mini";
+    }
+
+    // ============ VISION Provider (OCR AI 改造 v2) ============
+
+    /** 是否配置了 VISION Provider */
+    public boolean isVisionConfigured() {
+        return getVisionConfig() != null;
+    }
+
+    /** 取 VISION Provider 配置(从 AiConfigService.getActive("VISION")) */
+    public AiConfigService.AiConfig getVisionConfig() {
+        if (aiConfigService.isPresent()) {
+            return aiConfigService.get().getActive("VISION");
+        }
+        return null;
+    }
+
+    public String getVisionUrl() {
+        AiConfigService.AiConfig c = getVisionConfig();
+        return (c != null && c.baseUrl != null && !c.baseUrl.isEmpty()) ? c.baseUrl : null;
+    }
+
+    public String getVisionKey() {
+        AiConfigService.AiConfig c = getVisionConfig();
+        return (c != null && c.apiKey != null && !c.apiKey.isEmpty()) ? c.apiKey : null;
+    }
+
+    public String getVisionModel() {
+        AiConfigService.AiConfig c = getVisionConfig();
+        if (c != null && c.defaultModel != null && !c.defaultModel.isEmpty()) {
+            return c.defaultModel;
+        }
+        // VISION 未配置 model 时回退 LLM 的 model
+        return getDefaultModel();
+    }
+
+    /** VISION 状态信息(供前端 /api/ai/status 用) */
+    public Map<String, Object> getVisionStatus() {
+        AiConfigService.AiConfig c = getVisionConfig();
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (c != null) {
+            m.put("configured", true);
+            m.put("name", c.name);
+            m.put("defaultModel", c.defaultModel);
+        } else {
+            m.put("configured", false);
+        }
+        return m;
     }
 
     public String getTargetUrl() {

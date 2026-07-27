@@ -29,9 +29,18 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
 # 复制应用代码
 COPY app.py /app/app.py
 
-# 预下载 PaddleOCR 3.0 默认模型（构建期缓存，避免运行时首次慢）
-# PP-OCRv5_mobile（检测+识别）约 30MB
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(lang='ch', use_textline_orientation=True)" || true
+# ============================================================
+# 纯内网离线改造：预下载模型缓存烧入镜像
+# 模型文件约 232MB（含 PP-OCRv5_mobile/server 检测+识别）
+# 运行时零外网请求，PaddleOCR 优先使用本地缓存
+# ============================================================
+
+# 复制预下载的 PaddleOCR 模型缓存（来自 paddlex-cache/.paddlex）
+# 确保构建期下载完整，运行时零联网
+COPY paddlex-cache/.paddlex /root/.paddlex
+
+# 验证模型缓存完整性（构建期运行，失败则中断构建）
+RUN python -c "from paddleocr import PaddleOCR; ocr = PaddleOCR(lang='ch', use_textline_orientation=True); print('PaddleOCR 模型加载成功')"
 
 EXPOSE 5003
 

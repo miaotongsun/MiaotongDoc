@@ -1050,7 +1050,7 @@ function switchTab(tab: string) {
     return
   }
   if (tab === 'recent') {
-    documentStore.fetchDocuments({ sort: 'updatedAt', size: 50 })
+    documentStore.fetchDocuments({ page: 0, size: 10, sort: 'updatedAt' })
     return
   }
 
@@ -1106,6 +1106,10 @@ function goToDocument(docId: number) {
 }
 
 function handlePageChange(newPage: number) {
+  if (activeTab.value === 'recent') {
+    documentStore.fetchDocuments({ page: newPage - 1, size: documentStore.pageSize, sort: 'updatedAt' })
+    return
+  }
   const params: any = { page: newPage - 1, size: documentStore.pageSize, sort: sortBy.value }
   if (activeTab.value !== 'all') params.type = activeTab.value
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
@@ -1113,6 +1117,10 @@ function handlePageChange(newPage: number) {
 }
 
 function handleSizeChange(newSize: number) {
+  if (activeTab.value === 'recent') {
+    documentStore.fetchDocuments({ page: 0, size: newSize, sort: 'updatedAt' })
+    return
+  }
   const params: any = { page: 0, size: newSize, sort: sortBy.value }
   if (activeTab.value !== 'all') params.type = activeTab.value
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
