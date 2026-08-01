@@ -104,10 +104,10 @@
             :stroke="activeColor" stroke-width="2" fill="none"
             stroke-dasharray="4 2"
           />
-          <!-- 箭头(使用 pendingRect.startX/startY 保留绘制方向) -->
+          <!-- 箭头(pendingRect 是画布像素,直接用 startX/startY + 推算的 endX/endY) -->
           <path
             v-else-if="activeTool === 'arrow'"
-            :d="arrowPathCanvas(toCanvasRectFromPending(pendingRect), pendingRect)"
+            :d="previewArrowPath(pendingRect)"
             :stroke="activeColor" stroke-width="2" fill="none"
             stroke-linecap="round" stroke-linejoin="round"
           />
@@ -523,9 +523,21 @@ function arrowPathCanvas(r: { x: number; y: number; w: number; h: number }, rawR
   return `M ${x1} ${y1} L ${x2} ${y2} M ${w1x} ${w1y} L ${x2} ${y2} L ${w2x} ${w2y}`
 }
 
-/** Phase 13.26: pendingRect(画布像素,{x,y,width,height}) -> {x,y,w,h} 给 arrowPathCanvas 用 */
-function toCanvasRectFromPending(r: { x: number; y: number; width: number; height: number }) {
-  return { x: r.x, y: r.y, w: r.width, h: r.height }
+/** Phase 13.26: pendingRect(画布像素)箭头预览路径 —— 从按下点指向松开点 */
+function previewArrowPath(r: PendingRect): string {
+  // startX/startY 是鼠标按下点(画布像素);推算松开点为矩形对角
+  const x1 = r.startX
+  const y1 = r.startY
+  const x2 = (r.startX === r.x) ? r.x + r.width : r.x
+  const y2 = (r.startY === r.y) ? r.y + r.height : r.y
+  const angle = Math.atan2(y2 - y1, x2 - x1)
+  const headLen = 12
+  const wingAngle = Math.PI / 7
+  const w1x = x2 - headLen * Math.cos(angle - wingAngle)
+  const w1y = y2 - headLen * Math.sin(angle - wingAngle)
+  const w2x = x2 - headLen * Math.cos(angle + wingAngle)
+  const w2y = y2 - headLen * Math.sin(angle + wingAngle)
+  return `M ${x1} ${y1} L ${x2} ${y2} M ${w1x} ${w1y} L ${x2} ${y2} L ${w2x} ${w2y}`
 }
 
 const cardStyle = computed(() => ({
