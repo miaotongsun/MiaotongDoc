@@ -575,7 +575,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useDocumentStore } from '@/stores/document'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
@@ -594,11 +594,69 @@ import AdminPanel from '@/views/Admin.vue'
 import ContractList from '@/views/ContractList.vue'
 
 const router = useRouter()
+const route = useRoute()
 const documentStore = useDocumentStore()
 const userStore = useUserStore()
 
-const activeTab = ref('all')
-const searchKeyword = ref('')
+// ===== 视图状态恢复：URL query + sessionStorage 双保险 =====
+const LAST_VIEW_KEY = 'miaotong:home:lastView'
+
+function readLastView(): {
+  tab?: string; folder?: number; sort?: string; keyword?: string; page?: number;
+  expanded?: number[]; sectionCollapsed?: boolean;
+} | null {
+  try {
+    const raw = sessionStorage.getItem(LAST_VIEW_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function writeLastView() {
+  try {
+    sessionStorage.setItem(LAST_VIEW_KEY, JSON.stringify({
+      tab: activeTab.value,
+      folder: activeFolderId.value ?? undefined,
+      sort: sortBy.value !== 'updatedAt' ? sortBy.value : undefined,
+      keyword: searchKeyword.value || undefined,
+      page: documentStore.page > 0 ? documentStore.page + 1 : undefined,
+      expanded: Array.from(expandedFolders.value),
+      sectionCollapsed: folderSectionCollapsed.value
+    }))
+  } catch {
+    // 忽略 sessionStorage 写入失败
+  }
+}
+
+// 把当前视图同步到 URL，replace 不污染历史栈
+function syncQuery() {
+  if (!router) return
+  try {
+    const q: Record<string, any> = {}
+    // tab: 只在非 all 时写入,保持 URL 简洁
+    if (activeTab.value && activeTab.value !== 'all') q.tab = activeTab.value
+    if (activeFolderId.value) q.folder = activeFolderId.value
+    if (sortBy.value !== 'updatedAt') q.sort = sortBy.value
+    if (searchKeyword.value) q.keyword = searchKeyword.value
+    if (documentStore.page > 0) q.page = documentStore.page + 1
+    router.replace({ path: '/home', query: q })
+  } catch {
+    // ignore
+  }
+}
+
+// 初始值：URL query > sessionStorage > 默认值
+const _lastView = readLastView()
+const _routeTab = (route.query.tab as string) || _lastView?.tab || 'all'
+const _routeFolder = route.query.folder != null
+  ? Number(route.query.folder)
+  : (_lastView?.folder ?? null)
+const _routeSort = (route.query.sort as string) || _lastView?.sort || 'updatedAt'
+const _routeKeyword = (route.query.keyword as string) || _lastView?.keyword || ''
+
+const activeTab = ref(_routeTab)
+const searchKeyword = ref(_routeKeyword)
 const showCreate = ref(false)
 const departments = ref<Department[]>([])
 const selectedDeptIds = ref<Set<number>>(new Set())
@@ -622,7 +680,7 @@ const filteredTrashDocuments = computed(() => {
 })
 watch(viewMode, (val) => localStorage.setItem('viewMode', val))
 const deptTreeRef = ref<InstanceType<typeof ElTree>>()
-const sortBy = ref('updatedAt')
+const sortBy = ref(_routeSort)
 
 // 列表拖拽
 function onDocDragStart(e: DragEvent, doc: any) {
@@ -644,10 +702,11 @@ function onDocDragEnd() {
 
 // 文件夹
 const folders = ref<FolderType[]>([])
-const activeFolderId = ref<number | null>(null)
+const activeFolderId = ref<number | null>(_routeFolder)
 const dragOverFolderId = ref<number | null>(null)
-const expandedFolders = ref<Set<number>>(new Set())
-const folderSectionCollapsed = ref(true)
+// 文件夹区展开/折叠 + 子文件夹展开集合——从上次视图恢复,否则取默认
+const expandedFolders = ref<Set<number>>(new Set(_lastView?.expanded || []))
+const folderSectionCollapsed = ref(_lastView?.sectionCollapsed === false ? false : true)
 
 function toggleFolderSection() {
   folderSectionCollapsed.value = !folderSectionCollapsed.value
@@ -655,6 +714,7 @@ function toggleFolderSection() {
   if (!folderSectionCollapsed.value && activeTab.value !== 'folders') {
     switchTab('folders')
   }
+  writeLastView()
 }
 
 function toggleFolder(id: number) {
@@ -665,10 +725,12 @@ function toggleFolder(id: number) {
     newSet.add(id)
   }
   expandedFolders.value = newSet
+  writeLastView()
 }
 
 function collapseAllFolders() {
   expandedFolders.value = new Set()
+  writeLastView()
 }
 
 // 侧边栏文件夹拖拽排序
@@ -883,6 +945,8 @@ function selectFolder(id: number | null) {
     expandedFolders.value = newExpanded
   }
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10, ...(activeFolderId.value ? { folderId: activeFolderId.value } : {}) })
+  writeLastView()
+  syncQuery()
 }
 
 function enterFolder(id: number) {
@@ -898,6 +962,8 @@ function enterFolder(id: number) {
   }
   expandedFolders.value = newExpanded
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10, ...(id ? { folderId: id } : {}) } as any)
+  writeLastView()
+  syncQuery()
 }
 
 async function handleFolderCommand(cmd: string, folder: any) {
@@ -939,6 +1005,8 @@ async function handleDeleteFolder(folder: any) {
     if (activeFolderId.value === folder.id) {
       activeFolderId.value = null
       documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+      writeLastView()
+      syncQuery()
     }
     loadFolders()
   } catch {}
@@ -1055,12 +1123,46 @@ const emptyText = computed(() => {
 })
 
 onMounted(async () => {
-  documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+  if (activeTab.value === 'recent') {
+    documentStore.fetchDocuments({
+      page: _lastView?.page ? _lastView.page - 1 : 0,
+      size: 10,
+      sort: 'updatedAt'
+    })
+  } else {
+    documentStore.fetchDocuments({
+      sort: sortBy.value,
+      size: 10,
+      ...(activeFolderId.value ? { folderId: activeFolderId.value } : {}),
+      ...(activeTab.value !== 'all' ? { type: activeTab.value } : {}),
+      ...(searchKeyword.value ? { keyword: searchKeyword.value } : {})
+    })
+  }
   loadFolders()
   try {
     departments.value = await departmentApi.getAll()
   } catch {
     ElMessage.warning('部门列表加载失败')
+  }
+})
+
+// 浏览器后退/前进按钮 → 同步状态
+watch(() => route.query.tab, (v) => {
+  const tab = typeof v === 'string' ? v : 'all'
+  if (tab !== activeTab.value) {
+    activeTab.value = tab
+    switchTab(tab)
+  }
+})
+watch(() => route.query.folder, (v) => {
+  const id = v != null && v !== '' ? Number(v) : null
+  if (id !== activeFolderId.value) {
+    activeFolderId.value = id
+    documentStore.fetchDocuments({
+      sort: sortBy.value,
+      size: 10,
+      ...(id ? { folderId: id } : {})
+    })
   }
 })
 
@@ -1086,6 +1188,7 @@ function switchTab(tab: string) {
     params.type = tab
   }
   documentStore.fetchDocuments(params)
+  syncQuery()
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -1097,6 +1200,7 @@ function handleSearchInput() {
   if (!keyword) {
     suggestions.value = []
     documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+    syncQuery()
     return
   }
 
@@ -1117,42 +1221,50 @@ function handleSearchEnter() {
   activeTab.value = 'all'
   selectedDeptIds.value = new Set()
   documentStore.fetchDocuments({ keyword: searchKeyword.value.trim(), sort: sortBy.value, size: 10 })
+  syncQuery()
 }
 
 function handleSearchClear() {
   suggestions.value = []
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+  syncQuery()
 }
 
 function goToDocument(docId: number) {
   suggestions.value = []
+  writeLastView()
   router.push(`/editor/${docId}`)
 }
 
 function handlePageChange(newPage: number) {
   if (activeTab.value === 'recent') {
     documentStore.fetchDocuments({ page: newPage - 1, size: documentStore.pageSize, sort: 'updatedAt' })
+    syncQuery()
     return
   }
   const params: any = { page: newPage - 1, size: documentStore.pageSize, sort: sortBy.value }
   if (activeTab.value !== 'all') params.type = activeTab.value
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
   documentStore.fetchDocuments(params)
+  syncQuery()
 }
 
 function handleSizeChange(newSize: number) {
   if (activeTab.value === 'recent') {
     documentStore.fetchDocuments({ page: 0, size: newSize, sort: 'updatedAt' })
+    syncQuery()
     return
   }
   const params: any = { page: 0, size: newSize, sort: sortBy.value }
   if (activeTab.value !== 'all') params.type = activeTab.value
   if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
   documentStore.fetchDocuments(params)
+  syncQuery()
 }
 
 function handleSortChange() {
   documentStore.fetchDocuments({ sort: sortBy.value, size: 10 })
+  syncQuery()
 }
 
 async function handleUpload(file: File) {
@@ -1167,6 +1279,7 @@ async function handleUpload(file: File) {
 }
 
 function openDocument(id: number) {
+  writeLastView()
   router.push(`/editor/${id}`)
 }
 

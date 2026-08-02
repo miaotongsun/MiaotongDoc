@@ -2538,7 +2538,12 @@ public class PdfToolService {
                 }
             }
             log.info("区间拆分完成: docId={}, ranges={}, 生成PDF数={}", documentId, ranges, result.size());
+            if (result.isEmpty()) {
+                throw new BusinessException("所选区间在文档中没有匹配页(文档共 0 页或区间越界)");
+            }
             return result;
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             log.error("区间拆分失败", e);
             throw new BusinessException("区间拆分失败: " + e.getMessage());

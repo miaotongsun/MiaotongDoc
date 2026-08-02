@@ -144,12 +144,29 @@ public class ContractController {
     @PostMapping("/{id}/submit")
     public ResponseEntity<Map<String, String>> submitForApproval(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> request,
+            @RequestBody(required = false) Map<String, Object> request,
             HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
-        @SuppressWarnings("unchecked")
-        List<Long> approverIds = ((List<Number>) request.get("approverIds")).stream().map(Number::longValue).toList();
-        java.time.LocalDate deadline = parseDate(request.get("deadline"));
+        // 缺字段时直接返 400(此前会因 NPE 抛 500 内部错误)
+        List<Long> approverIds = null;
+        java.time.LocalDate deadline = null;
+        if (request != null) {
+            Object approverObj = request.get("approverIds");
+            if (approverObj instanceof List<?> rawList) {
+                approverIds = rawList.stream()
+                        .filter(Number.class::isInstance)
+                        .map(Number.class::cast)
+                        .map(Number::longValue)
+                        .toList();
+            }
+            deadline = parseDate(request.get("deadline"));
+        }
+        if (approverIds == null || approverIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "code", "400",
+                "message", "approverIds 不能为空,请指定至少一名审批人"
+            ));
+        }
         contractService.submitForApproval(id, approverIds, deadline, userId);
         return ResponseEntity.ok(Map.of("message", "已提交审批"));
     }

@@ -1,11 +1,13 @@
 package com.miaotong.doc.config;
 
 import com.miaotong.doc.config.JwtAuthFilter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -15,9 +17,15 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.www.BasicAuthenticationEntryPoint;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.http.HttpStatus;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.annotation.PostConstruct;
+
+import java.util.Map;
 
 @Configuration
 @EnableWebSecurity
@@ -76,6 +84,20 @@ public class SecurityConfig {
             .sessionManagement(session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
+            .exceptionHandling(ex -> ex
+                // 未认证访问受保护资源:返回 401 而非 403(RFC 7235 合规)
+                .authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    response.setCharacterEncoding("UTF-8");
+                    // 用 HashMap 允许 null 值(Map.of 不允许)
+                    Map<String, Object> body = new java.util.HashMap<>();
+                    body.put("code", 40101);
+                    body.put("message", "未登录或令牌无效");
+                    body.put("data", null);
+                    new ObjectMapper().writeValue(response.getWriter(), body);
+                })
+            )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -90,6 +112,20 @@ public class SecurityConfig {
         FilterRegistrationBean<OpenApiAuthFilter> registration = new FilterRegistrationBean<>(openApiAuthFilter);
         registration.addUrlPatterns("/api/open/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
+    }
+
+    /**
+     * 显式禁用 JwtAuthFilter 的自动 servlet 注册(由 SecurityFilterChain.addFilterBefore 加入 Security 链)。
+     * 不加这个 Bean 会导致 JwtAuthFilter 被注册两次:
+     *   1) Spring Boot 默认把 @Component Filter 注册到 servlet 链(`/*`)
+     *   2) SecurityConfig.addFilterBefore 加入 SecurityFilterChain
+     * 第二次执行时 response 已 commit,write 抛 IOException → Tomcat 默认错误 500
+     */
+    @Bean
+    public FilterRegistrationBean<JwtAuthFilter> jwtAuthFilterRegistration() {
+        FilterRegistrationBean<JwtAuthFilter> registration = new FilterRegistrationBean<>(jwtAuthFilter);
+        registration.setEnabled(false);  // 关键:禁用 servlet 自动注册
         return registration;
     }
 

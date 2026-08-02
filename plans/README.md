@@ -26,12 +26,13 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
-- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中
+- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中 ⚠️ 文件不存在,看板虚假状态,需清理或补文件
 - [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
 
 ## 已完成
 
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
+- [2026-08-02-pre-prod.md](2026-08-02-pre-prod.md) — 投产前全维度验证+深度测试+补充测试+Bug修复(13个P0/P1修复,最终回归100% (135/135) ✅) (2026-08-02)
 - [2026-08-02-pdf-redaction-refactor.md](2026-08-02-pdf-redaction-refactor.md) — PDF 编辑器「密文遮盖」功能重构 (RedactionEngine + 红色 banner + OCR 路径 + E2E 15/15 + text API 强验证 166→1 char) — 完成 2026-08-02
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 <!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
@@ -40,6 +41,7 @@
 - [2026-07-26-pdf-bugfix.md](2026-07-26-pdf-bugfix.md) — PDF 编辑器 Bug 修复(7 个 P0/P1 修复,含中文搜索/水印/文本清理等) — 完成日期 2026-07-26
 - [2026-07-26-ocr-ai-refactor.md](2026-07-26-ocr-ai-refactor.md) — PDF OCR/AI 完整改造(5 阶段全完成:AI配置接入 + SSE统一 + MQ异步 + 前端引导 + E2E) — 完成 2026-07-26
 - [2026-07-26-pdf-editor-tools-bugfix.md](2026-07-26-pdf-editor-tools-bugfix.md) — PDF 编辑器「编辑 TAB」8 类 BUG 修复(手型拖拽/评论/勾画/箭头/图章/签名 + Acrobat 对齐) — 完成 2026-07-27
+- [2026-08-01-pre-prod-audit.md](2026-08-01-pre-prod-audit.md) — 投产前全维度验证(10 维度) + GO WITH FIXES 决策 + 3 P0 + 2 P1 — 完成 2026-08-01
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 
@@ -60,6 +62,7 @@
 <!-- ADR-NNN 索引 -->
 
 - [ADR-001-open-api-design.md](ADR-001-open-api-design.md) — 对外服务 API 规范设计（API Key 多 Key 管理 vs OAuth2 选择）
+- [openapi-integration-guide.md](openapi-integration-guide.md) — 对外服务 API 集成指南（接口清单/入参出参/错误码/示例代码/最佳实践）
 
 ---
 
@@ -115,6 +118,9 @@
 
 | 时间 | 更新内容 | 操作人 |
 |---|---|---|
+| 2026-08-02 | 合并归档: 2026-08-01-pre-prod-audit + 2026-08-02-pre-prod-full-audit + 2026-08-02-pre-prod-supplement + 2026-08-02-bugfixes → 2026-08-02-pre-prod.md | Claude |
+| 2026-08-02 | 最终回归验证 100% (135/135), reindex 异步化修复完成, 计划文档更新至 100% | Claude |
+| 2026-08-02 | 补充入档: FolderController 尾斜杠 500 修复 (@GetMapping({"", "/"})) 作为 Bug #15, 13 Bug 全部入档 | Claude |
 | 2026-07-26 | 新建文档对话框合并 PDF 创建 + 模板可折叠 + 按 docType 过滤（phase15-e2e 27/27 通过） | Claude |
 | 2026-07-25 | 迁入计划文档模板/ADR 模板/提交规范（从 CLAUDE.md §3 瘦身） | Claude |
 | 2026-07-23 | 重构看板：精简 + 明确"进行中/已完成/已废弃"三类索引 | Claude |

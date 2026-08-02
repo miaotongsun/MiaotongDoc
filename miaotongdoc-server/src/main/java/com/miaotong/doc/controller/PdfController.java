@@ -1554,7 +1554,10 @@ public class PdfController {
     public ResponseEntity<byte[]> splitByRanges(
             @PathVariable Long id,
             @RequestBody Map<String, String> body) throws java.io.IOException {
-        String ranges = body.getOrDefault("ranges", "");
+        if (body == null || !body.containsKey("ranges") || body.get("ranges") == null || body.get("ranges").isBlank()) {
+            return ResponseEntity.badRequest().body(("{\"code\":400,\"message\":\"ranges 必须是非空字符串,如 \\\"1-3,5\\\"\",\"data\":null}").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        String ranges = body.get("ranges");
         List<byte[]> parts = pdfToolService.splitByRanges(id, ranges);
         // Phase 13.38: 只有一个 PDF 时直接返回 PDF,不打包 zip
         if (parts.size() == 1) {
