@@ -16,7 +16,7 @@ export type ZoomMode = 'fit-width' | 'fit-page' | 'actual' | 'custom'
 
 export function usePdfViewMode() {
   const viewMode = ref<ViewMode>('continuous')
-  const zoomMode = ref<ZoomMode>('fit-width')
+  const zoomMode = ref<ZoomMode>('fit-page')  // 2026-08-02: 默认适合尺寸(整页可见)
   /** 当前缩放比例(custom 模式时直接使用;fit-* 时由 fit 计算) */
   const scale = ref(1.2)
 

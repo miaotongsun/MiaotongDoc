@@ -1022,8 +1022,14 @@ public class PdfController {
                     "message", "创建任务失败: " + e.getMessage()));
         }
         try {
-            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage(
-                    taskId, id, userId, "mobile", "ch", System.currentTimeMillis());
+            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage();
+            msg.setTaskId(taskId);
+            msg.setDocumentId(id);
+            msg.setUserId(userId);
+            msg.setModel("mobile");
+            msg.setLanguage("ch");
+            msg.setSubmittedAt(System.currentTimeMillis());
+            msg.setPageNum(null);
             // 复用 Producer,但用特定 routing key 区分(此处直接走同一队列,Consumer 按 taskType 分发)
             pdfOcrTaskProducer.send(msg);
         } catch (Exception e) {
@@ -1059,10 +1065,29 @@ public class PdfController {
     @PostMapping("/{id}/recognize-paddle")
     public ResponseEntity<Map<String, Object>> recognizePaddle(
             @PathVariable Long id,
-            @RequestParam(value = "model", required = false, defaultValue = "mobile") String model) {
+            @RequestParam(value = "model", required = false, defaultValue = "mobile") String model,
+            // 2026-08-02 PR3: 右键菜单传 pageNum,只识别当前页(不传 = 全文识别)
+            @RequestParam(value = "pageNum", required = false) Integer pageNum) {
         // 校验文档
         Document doc = documentService.getDocument(id);
         validatePdf(doc);
+
+        // 2026-08-02: 任务去重 - 同 docId 已有 pending/processing 任务就拒绝,
+        // 避免并发请求堆积导致 PaddleOCR 间歇性 std::exception
+        try {
+            jakarta.persistence.Query dupQ = entityManager.createNativeQuery(
+                    "SELECT COUNT(*) FROM mt_pdf_task WHERE document_id = ?1 AND task_type = 'ocr_paddle' AND status IN ('pending', 'processing')");
+            dupQ.setParameter(1, id);
+            Number dupCnt = (Number) dupQ.getSingleResult();
+            if (dupCnt != null && dupCnt.longValue() > 0) {
+                return ResponseEntity.ok(Map.of(
+                        "status", "duplicate",
+                        "code", "DUPLICATE_TASK",
+                        "message", "该文档已有进行中的 OCR 任务,请等待完成后再试"));
+            }
+        } catch (Exception e) {
+            log.warn("OCR 任务去重检查失败: docId={}, err={}", id, e.getMessage());
+        }
 
         // 创建任务(用 SQL 原生 INSERT 避开 parameters jsonb 类型问题)
         Long userId = getCurrentUserId();
@@ -1075,7 +1100,7 @@ public class PdfController {
             q.setParameter(1, id);
             q.setParameter(2, "ocr_paddle");
             q.setParameter(3, "pending");
-            q.setParameter(4, "{}");
+            q.setParameter(4, pageNum != null ? String.format("{\"pageNum\":%d}", pageNum) : "{}");
             q.setParameter(5, model);
             q.setParameter(6, "ch");
             q.setParameter(7, userId);
@@ -1091,8 +1116,14 @@ public class PdfController {
 
         // 发 MQ 消息
         try {
-            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage(
-                    taskId, id, userId, model, "ch", System.currentTimeMillis());
+            com.miaotong.doc.mq.PdfOcrTaskMessage msg = new com.miaotong.doc.mq.PdfOcrTaskMessage();
+            msg.setTaskId(taskId);
+            msg.setDocumentId(id);
+            msg.setUserId(userId);
+            msg.setModel(model);
+            msg.setLanguage("ch");
+            msg.setSubmittedAt(System.currentTimeMillis());
+            msg.setPageNum(pageNum); // 2026-08-02 PR3: 单页识别
             pdfOcrTaskProducer.send(msg);
         } catch (Exception e) {
             log.error("OCR 任务入队失败: docId={}, error={}", id, e.getMessage());
@@ -1401,15 +1432,32 @@ public class PdfController {
     }
 
     /**
-     * Phase 12.4: 应用密文(绘制黑色矩形覆盖)
-     * 接收 { regions: [{page, x, y, width, height}, ...] }
+     * 2026-08-02: 密文应用（真脱敏）
+     *  - mode=download (默认): 返回 Blob,前端直接下载副本
+     *  - mode=in-place: 落盘到原文档,返回 {success:true, filePath, fileSize} 触发 reload
+     * 接收 { regions: [{pageNum, x, y, width, height}, ...], mode: 'in-place'|'download' }
      */
     @PostMapping("/{id}/redact")
-    public ResponseEntity<byte[]> applyRedaction(
+    public ResponseEntity<?> applyRedaction(
             @PathVariable Long id,
             @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> regions = (List<Map<String, Object>>) body.get("regions");
+        String mode = body.get("mode") == null ? "download" : body.get("mode").toString();
+
+        if ("in-place".equalsIgnoreCase(mode)) {
+            // 落盘模式：先 byte[] 出来 → 调 replacePdfBytes → 返回文件元数据
+            byte[] result = pdfToolService.applyRedaction(id, regions);
+            String newFilePath = pdfToolService.replacePdfBytes(id, result, "redacted");
+            java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+            resp.put("success", true);
+            resp.put("filePath", newFilePath);
+            resp.put("fileSize", result.length);
+            resp.put("regions", regions.size());
+            return ResponseEntity.ok(resp);
+        }
+
+        // download 模式：返回 Blob
         byte[] result = pdfToolService.applyRedaction(id, regions);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_PDF);

@@ -44,11 +44,11 @@
             </button>
             <button class="pdf-ctx-item" role="menuitem" @click="onOcr('mobile')">
               <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7zM12 9v6M9 12h6"/></svg>
-              <span>OCR 快速识别</span>
+              <span>OCR 快速识别(本页)</span>
             </button>
             <button class="pdf-ctx-item" role="menuitem" @click="onOcr('server')">
               <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7zM12 9v6M9 12h6"/></svg>
-              <span>OCR 高精度</span>
+              <span>OCR 高精度识别(本页)</span>
               <span class="pdf-ctx-shortcut">server</span>
             </button>
             <div v-if="hasSelection" class="pdf-ctx-divider"></div>
@@ -172,7 +172,7 @@ const emit = defineEmits<{
   (e: 'ai-translate'): void
   (e: 'ai-summarize'): void
   (e: 'ai-chat'): void
-  (e: 'ocr-recognize', model: 'mobile' | 'server'): void
+  (e: 'ocr-recognize', model: 'mobile' | 'server', pageNum?: number): void
 }>()
 
 const menuRef = ref<HTMLElement | null>(null)
@@ -208,7 +208,8 @@ function onDelete() { emit('delete', props.pageNum); close() }
 function onAiTranslate() { emit('ai-translate'); close() }
 function onAiSummarize() { emit('ai-summarize'); close() }
 function onAiChat() { emit('ai-chat'); close() }
-function onOcr(model: 'mobile' | 'server') { emit('ocr-recognize', model); close() }
+// 2026-08-02 PR3: 右键菜单 OCR 加 pageNum,只识别当前页
+function onOcr(model: 'mobile' | 'server') { emit('ocr-recognize', model, props.pageNum); close() }
 
 /** 鼠标离开整个菜单区域才关闭(避免移到子菜单时误关) */
 function onMenuLeave(e: MouseEvent) {

@@ -24,7 +24,6 @@ import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.text.PDFTextStripper;
-import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -985,7 +984,27 @@ public class PdfToolService {
     private List<Map<String, Object>> extractPositionsFromOcr(
             Map<String, Object> ocrData, int pageNum, PDRectangle pageSize) {
         List<Map<String, Object>> result = new ArrayList<>();
+
+        // 2026-08-02: 兼容两种 OCR 数据结构:
+        // 1) 旧格式: { "1": { "regions": [...], "dpi": 200 } } (按页号 key)
+        // 2) PaddleOCR 实际格式: { "pages": [{ "pageNum": 1, "regions": [...] }] }
         Object pageObj = ocrData.get(String.valueOf(pageNum));
+        if (!(pageObj instanceof Map)) {
+            // 尝试 PaddleOCR 格式: 从 pages 数组中按 pageNum 查找
+            Object pagesObj = ocrData.get("pages");
+            if (pagesObj instanceof List) {
+                for (Object p : (List<?>) pagesObj) {
+                    if (p instanceof Map) {
+                        Map<?, ?> page = (Map<?, ?>) p;
+                        Object pNum = page.get("pageNum");
+                        if (pNum != null && Integer.parseInt(String.valueOf(pNum)) == pageNum) {
+                            pageObj = page;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         if (!(pageObj instanceof Map)) return result;
         Map<String, Object> pageData = (Map<String, Object>) pageObj;
         Object regionsObj = pageData.get("regions");
@@ -1014,8 +1033,10 @@ public class PdfToolService {
             // Phase 13.7: 像素 y(图像左上原点)转 PDF Y(左下原点)
             // 之前未翻转导致 OCR 文字上下相反,渲染不在原文位置
             double yPdf = pageSize.getHeight() - (yPx + hPx) * pxToPt;
-            // bbox 高度估算字符大小
-            double fontSize = h;
+            // 2026-08-02: OCR bbox 是行级高度(含行间距),实际字号约为行高的 0.82 倍。
+            // 实测: 标题 20pt -> bbox 24.5pt (比例 0.82); 正文 11pt -> bbox 13pt (比例 0.85)
+            // 取 0.82 作为平均校准系数,避免渲染文字偏大
+            double fontSize = h * 0.82;
 
             Map<String, Object> pos = new java.util.LinkedHashMap<>();
             pos.put("text", text);
@@ -1078,21 +1099,30 @@ public class PdfToolService {
             super.processOperator(operator, operands);
         }
 
-        protected void writeString(String text, TextPosition textPosition) throws java.io.IOException {
+        /**
+         * 2026-08-02: 修复 PDFBox 3.0.3 writeString 签名错误。
+         * 错误签名 writeString(String, TextPosition) 永远不会被 PDFBox 调用(无 @Override,
+         * 也不存在该重载),导致 extractTextPositions 永远返回空数组,textEdit 模式下
+         * 画布上没有 token 元素可点。修复:遍历 List<TextPosition> 逐个产出 position。
+         */
+        @Override
+        protected void writeString(String text, java.util.List<org.apache.pdfbox.text.TextPosition> textPositions) throws java.io.IOException {
             if (text == null || text.trim().isEmpty()) return;
-
-            Map<String, Object> pos = new java.util.LinkedHashMap<>();
-            pos.put("text", text);
-            pos.put("x", textPosition.getXDirAdj());
-            pos.put("y", textPosition.getYDirAdj());
-            pos.put("fontSize", textPosition.getFontSize());
-            pos.put("font", textPosition.getFont().getName());
-            pos.put("width", textPosition.getWidth());
-            pos.put("height", textPosition.getHeight());
-            // Phase 13.22: 原文字颜色 — PDFBox 3.x TextPosition 无 getColor()
-            // 简化: 解析 graphics state 非描边色(非描边=文字色),用最后一个 NonStroking 指令
-            pos.put("color", currentTextColor != null ? currentTextColor : "#000000");
-            positions.add(pos);
+            if (textPositions == null || textPositions.isEmpty()) return;
+            for (org.apache.pdfbox.text.TextPosition tp : textPositions) {
+                Map<String, Object> pos = new java.util.LinkedHashMap<>();
+                pos.put("text", tp.getUnicode());
+                pos.put("x", tp.getXDirAdj());
+                pos.put("y", tp.getYDirAdj());
+                pos.put("fontSize", tp.getFontSize());
+                pos.put("font", tp.getFont() != null ? tp.getFont().getName() : "default");
+                pos.put("width", tp.getWidth());
+                pos.put("height", tp.getHeight());
+                // Phase 13.22: 原文字颜色 — PDFBox 3.x TextPosition 无 getColor()
+                // 简化: 解析 graphics state 非描边色(非描边=文字色),用最后一个 NonStroking 指令
+                pos.put("color", currentTextColor != null ? currentTextColor : "#000000");
+                positions.add(pos);
+            }
         }
     }
 
@@ -2291,6 +2321,10 @@ public class PdfToolService {
                 text.setDefaultAppearance(da);
             }
             text.setValue(value);
+        } else if (field instanceof org.apache.pdfbox.pdmodel.interactive.form.PDSignatureField) {
+            // 2026-08-02 PR5: signature 字段支持 — 调用方应在 value 里传图片 base64
+            // (其他字段类型传文本;签名字段前端会弹签名创建对话框后嵌入)
+            throw new BusinessException("signature 字段需通过 /signature 端点嵌入图片");
         } else {
             throw new BusinessException("不支持的字段类型: " + field.getClass().getSimpleName());
         }
@@ -2365,12 +2399,19 @@ public class PdfToolService {
         }
     }
 
-    // ==================== Phase 12.4: 密文(redact) ====================
+    // ==================== Phase 12.4 → 2026-08-02: 密文(redact) v2 真脱敏 ====================
+
+    /** Phase 2026-08-02: 真脱敏引擎（替代旧的画黑框逻辑） */
+    private final RedactionEngine redactionEngine;
 
     /**
-     * 应用密文:在指定区域绘制黑色矩形 + 删除该区域的文字内容
+     * 应用密文:精确删除底层文字 token（不只是画黑框）
+     *  - 路径 1：有内嵌文字 → 直接栅格化整页 + 涂黑 region → 嵌回（彻底抹掉文字层）
+     *  - 路径 2：扫描件 → 调 PaddleOCR 拿行级 bbox → 涂白命中行 → 嵌回
+     *  - 路径 3：OCR 不可用 → 整块黑框（兜底）
+     *
      * @param documentId 文档 ID
-     * @param regions 密文区域列表 [{page, x, y, width, height}]
+     * @param regions 密文区域列表 [{pageNum, x, y, width, height}]（pdf pt,左下原点,1-indexed）
      * @return 新 PDF 字节
      */
     public byte[] applyRedaction(Long documentId, List<Map<String, Object>> regions) {
@@ -2381,36 +2422,18 @@ public class PdfToolService {
         }
         try {
             byte[] pdfBytes = storageService.load(doc.getFilePath());
-            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
-                int successCount = 0;
-                for (Map<String, Object> r : regions) {
-                    int page = ((Number) r.get("page")).intValue();
-                    double x = ((Number) r.get("x")).doubleValue();
-                    double y = ((Number) r.get("y")).doubleValue();
-                    double w = ((Number) r.get("width")).doubleValue();
-                    double h = ((Number) r.get("height")).doubleValue();
-                    if (page < 1 || page > pdf.getNumberOfPages()) {
-                        log.warn("密文页码超出范围: page={}", page);
-                        continue;
-                    }
-                    PDPage targetPage = pdf.getPage(page - 1);
-                    // 1. 绘制黑色填充矩形覆盖原内容
-                    try (PDPageContentStream cs = new PDPageContentStream(pdf, targetPage, org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode.APPEND, true, true)) {
-                        cs.setNonStrokingColor(java.awt.Color.BLACK);
-                        cs.addRect((float) x, (float) y, (float) w, (float) h);
-                        cs.fill();
-                    }
-                    // 2. 删除该区域内的文字(PDFBox 3.x 用 PDFStreamEngine 替换,这里简化:整体清理文字)
-                    // 完整实现需要先解析文本位置,再删除对应 tokens
-                    // 当前简化版只覆盖黑色矩形,足以视觉脱敏;文本底层 token 仍在
-                    // TODO: 用 org.apache.pdfbox.contentstream.PDFStreamEngine 实现精确删除
-                    successCount++;
-                }
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                pdf.save(baos);
-                log.info("密文应用完成: docId={}, regions={}, success={}", documentId, regions.size(), successCount);
-                return baos.toByteArray();
+            // 转换为 RedactRegion DTO
+            List<RedactionEngine.RedactRegion> redactRegions = new ArrayList<>();
+            for (Map<String, Object> r : regions) {
+                redactRegions.add(new RedactionEngine.RedactRegion(
+                        ((Number) r.get("pageNum")).intValue(),
+                        ((Number) r.get("x")).doubleValue(),
+                        ((Number) r.get("y")).doubleValue(),
+                        ((Number) r.get("width")).doubleValue(),
+                        ((Number) r.get("height")).doubleValue()
+                ));
             }
+            return redactionEngine.redact(documentId, pdfBytes, redactRegions);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {

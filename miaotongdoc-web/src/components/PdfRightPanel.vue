@@ -175,6 +175,22 @@
           >
             {{ f.label }}
           </button>
+          <!-- 2026-08-02 PR5: 必填筛选 chip -->
+          <button
+            class="pdf-rp-form-filter-btn"
+            :class="{ 'is-active': formFilterRequired }"
+            @click="formFilterRequired = !formFilterRequired"
+            title="只显示必填字段"
+          >
+            仅必填
+          </button>
+          <!-- 2026-08-02 PR5: 字段搜索框 -->
+          <input
+            v-model="formSearchKeyword"
+            type="text"
+            placeholder="搜索字段名..."
+            class="pdf-rp-form-search"
+          />
         </div>
         <div v-if="formLoading" class="pdf-rp-loading">识别中…</div>
         <div v-else-if="filteredFormFields.length === 0" class="pdf-rp-empty">
@@ -229,7 +245,7 @@
                   <option v-for="opt in (f.options || [])" :key="opt" :value="opt">{{ opt }}</option>
                 </select>
                 <span v-else-if="f.type === 'signature'" class="pdf-rp-form-signature-hint">
-                  签名字段请在画布上签署
+                  <span>📝 在画布上点此字段位置 → 弹签名对话框 → 嵌入签名图片</span>
                 </span>
                 <span v-else class="pdf-rp-form-readonly-hint">不支持编辑</span>
               </div>
@@ -453,6 +469,9 @@ async function loadMetadata() {
 const formFields = ref<PdfFormField[]>([])
 const formLoading = ref(false)
 const formTypeFilter = ref<'all' | PdfFormField['type']>('all')
+// 2026-08-02 PR5: 必填筛选 + 搜索
+const formFilterRequired = ref(false)
+const formSearchKeyword = ref('')
 const formTypeFilters: Array<{ id: 'all' | PdfFormField['type']; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'text', label: '文本' },
@@ -462,8 +481,24 @@ const formTypeFilters: Array<{ id: 'all' | PdfFormField['type']; label: string }
   { id: 'signature', label: '签名' },
 ]
 const filteredFormFields = computed(() => {
-  if (formTypeFilter.value === 'all') return formFields.value
-  return formFields.value.filter(f => f.type === formTypeFilter.value)
+  let result = formFields.value
+  // 类型筛选
+  if (formTypeFilter.value !== 'all') {
+    result = result.filter(f => f.type === formTypeFilter.value)
+  }
+  // 必填筛选 (PR5)
+  if (formFilterRequired.value) {
+    result = result.filter(f => f.required)
+  }
+  // 名称搜索 (PR5)
+  const kw = formSearchKeyword.value.trim().toLowerCase()
+  if (kw) {
+    result = result.filter(f =>
+      (f.name || '').toLowerCase().includes(kw) ||
+      (f.partialName || '').toLowerCase().includes(kw)
+    )
+  }
+  return result
 })
 function formTypeLabel(t: PdfFormField['type']): string {
   const m: Record<string, string> = {
@@ -558,7 +593,9 @@ watch(
 watch(activeTab, (t) => {
   if (t === 'outline' && outline.value.length === 0) loadOutline()
   if (t === 'info' && !metadata.value) loadMetadata()
-  if (t === 'form' && formFields.value.length === 0 && !formLoading.value) loadFormFields()
+  // 2026-08-02 PR5 优化: 表单 tab 激活时无条件 loadFormFields
+  // (之前用 length===0 判定,可能在某次 race condition 后永远不再触发)
+  if (t === 'form' && !formLoading.value) loadFormFields()
 })
 
 // 跳转
@@ -1043,6 +1080,22 @@ function formatSize(bytes: number): string {
 .pdf-rp-form-filter-btn.is-active {
   background: var(--color-primary-soft);
   color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+/* 2026-08-02 PR5: 表单字段搜索框 */
+.pdf-rp-form-search {
+  flex: 1;
+  min-width: 100px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-left: auto;
+  background: var(--color-surface);
+  color: var(--color-foreground);
+}
+.pdf-rp-form-search:focus {
+  outline: none;
   border-color: var(--color-primary);
 }
 .pdf-rp-form-list {

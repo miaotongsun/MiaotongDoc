@@ -30,4 +30,6 @@ public class PdfOcrTaskMessage implements Serializable {
     private String model;
     private String language;
     private Long submittedAt;
+    /** 2026-08-02 PR3: 单页识别(null = 全文,否则只识别该页) */
+    private Integer pageNum;
 }

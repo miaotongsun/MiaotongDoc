@@ -67,6 +67,8 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
   const pageSizes = ref<Map<number, { w: number; h: number }>>(new Map())
   const loading = ref(false)
   const error = ref<Error | null>(null)
+  /** 可动态更新的文件 URL（用于 reloadAfterPageOp 等场景传递缓存失效 URL） */
+  const _fileUrl = ref(options.fileUrl)
   // Phase 11.8: 缩略图渲染并发锁
   let thumbsRendering = false
 
@@ -105,13 +107,13 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     if (loading.value) return
     loading.value = true
     error.value = null
-    console.log('[renderer] load start, fileUrl=', options.fileUrl)
+    console.log('[renderer] load start, fileUrl=', _fileUrl.value)
     try {
       const lib = await ensurePdfjs()
       console.log('[renderer] pdfjs lib ready, version=', lib.version)
       console.log('[renderer] calling getDocument...')
       const loadingTask = lib.getDocument({
-        url: options.fileUrl,
+        url: _fileUrl.value,
         httpHeaders: options.token ? { Authorization: `Bearer ${options.token}` } : {},
         // 中文扫描件 / PaddleOCR 输出需要 cMap 才能正确解析
         cMapUrl: `${window.location.origin}/cmaps/`,
@@ -154,6 +156,9 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     // Phase 11.8: pdfjs 要求 canvas.width/height 为整数,浮点 viewport 会导致渲染异常
     canvasEl.width = Math.ceil(viewport.width)
     canvasEl.height = Math.ceil(viewport.height)
+    // 2026-08-02: 显式设 CSS 显示尺寸,防止 canvas 默认 300x150 或被父容器撑高
+    canvasEl.style.width = canvasEl.width + 'px'
+    canvasEl.style.height = canvasEl.height + 'px'
     pageWidth.value = canvasEl.width
     pageHeight.value = canvasEl.height
     // Phase 13.30: 存每页 raw 尺寸(去 scale),支持多尺寸页
@@ -347,6 +352,11 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     thumbScale.value = Math.max(0.15, Math.min(newScale, 1.0))
   }
 
+  /** 设置文件 URL（用于 reloadAfterPageOp 等场景传递缓存失效 URL） */
+  function setFileUrl(url: string) {
+    _fileUrl.value = url
+  }
+
   /** 销毁 PDF 文档，释放 worker */
   function destroy() {
     console.log('[renderer] destroy called (soft — 不取消进行中的 load)')
@@ -354,6 +364,9 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     // 只标记 doc 为 null,新 load 会覆盖
     pdfDoc.value = null
     totalPages.value = 0
+    // 2026-08-02: 修复 race condition,destroy 后必须重置 loading 标志,
+    // 否则后续 load() 会因 if (loading.value) return 静默跳过,导致 pdfDoc.value 永远为 null
+    loading.value = false
   }
 
   // 自动清理
@@ -372,6 +385,7 @@ export function usePdfRenderer(options: UsePdfRendererOptions) {
     error,
     // actions
     load,
+    setFileUrl,
     renderPage,
     renderOcrTextLayer,
     renderAllThumbs,

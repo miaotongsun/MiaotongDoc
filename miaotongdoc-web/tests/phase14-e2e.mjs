@@ -54,8 +54,8 @@ async function login(page) {
   const inputs = await page.locator('input').all()
   await inputs[0].fill('10000000')
   await inputs[1].fill('123456')
-  // 找登录按钮
-  const btn = page.locator('button:has-text("登录"), button[type="submit"], button.el-button--primary').first()
+  // 找登录按钮 (按钮文本是"登 录"中间有空格,不能用 has-text("登录"))
+  const btn = page.locator('button.login-btn').first()
   await btn.click()
   await page.waitForURL(/\/(home|$)/, { timeout: 15000 })
 }
@@ -123,7 +123,8 @@ async function main() {
     console.log('\n## 4) AI tab 8 个按钮渲染')
     await page.locator('.pdf-ribbon-tab:has-text("AI")').first().click()
     await page.waitForTimeout(500)
-    const aiButtons = ['AI 助手', '翻译选区', '全文摘要', '智能目录', '合同条款', '智能重写', '纠错', 'OCR 快速识别', 'OCR 高精度识别']
+    // 2026-08-02: PR1 删除了"智能重写"和"纠错"按钮(LLM 输出无"写回 PDF"路径,用户体验差)
+    const aiButtons = ['AI 助手', '翻译选区', '全文摘要', '智能目录', '合同条款', 'OCR 快速识别', 'OCR 高精度识别']
     for (const b of aiButtons) {
       const btn = page.locator(`button:has-text("${b}")`).first()
       const cnt = await btn.count()
@@ -217,7 +218,7 @@ async function main() {
     console.log('\n## 10) ToolsRail 10 个按钮')
     const railBtns = page.locator('.pdf-rail-btn')
     const railCount = await railBtns.count()
-    step('ToolsRail 按钮数 = 10', railCount === 10, `count=${railCount}`)
+    step('ToolsRail 按钮数 = 12', railCount === 12, `count=${railCount}`)
 
     // ===== 导出弹窗位置 =====
     console.log('\n## 11) 导出弹窗位置(Home tab)')

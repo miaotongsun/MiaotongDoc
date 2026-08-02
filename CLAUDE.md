@@ -396,6 +396,7 @@ MiaotongDoc/
 | `service/DocumentService.java` | 文档业务逻辑 |
 | `service/AiService.java` | AI 业务逻辑 (service/ai/) |
 | `service/PdfToolService.java` | PDF 工具服务 |
+| `service/RedactionEngine.java` | **2026-08-02 PDF 密文真脱敏引擎** (擦除原 ContentStream + 栅格化覆盖 + OCR 路径) |
 | `service/storage/StorageService.java` | 存储接口抽象 |
 | `service/storage/MinioStorageService.java` | MinIO 存储实现 |
 | `service/storage/FileSystemStorageService.java` | 本地文件系统存储实现 |
@@ -778,7 +779,7 @@ draft (草稿)
 | POST | `/{id}/header-footer` | 添加页眉页脚 |
 | POST | `/{id}/encrypt` | 密码加密 |
 | POST | `/{id}/decrypt` | 密码解密 |
-| POST | `/{id}/redact` | 密文遮盖 |
+| POST | `/{id}/redact` | **2026-08-02 真脱敏** — `mode:'in-place'` 落盘返回 JSON / `mode:'download'` 返回 Blob (底层用 PDFRenderer 擦除+栅格化覆盖,文字层彻底抹除,扫描件自动走 PaddleOCR 行级 bbox 精确涂黑) |
 | **PDF 表单与签名** | | |
 | GET | `/{id}/form-fields` | 表单字段识别 |
 | POST | `/{id}/form-fields/fill` | 表单填充 |

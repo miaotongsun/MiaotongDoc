@@ -151,9 +151,8 @@
           <RibbonBtn icon="watermark" label="水印" @click="$emit('watermark')" />
           <RibbonBtn icon="header" label="页眉页脚" @click="$emit('header-footer')" />
         </RibbonGroup>
-        <RibbonGroup label="优化">
-          <RibbonBtn icon="export" label="压缩" @click="$emit('compress')" />
-        </RibbonGroup>
+        <!-- 2026-08-02: "压缩"按钮从此处删除,统一从导出菜单(PdfExportMenu)的
+             "压缩及导出"按钮进,带级别下拉(低/中/高)。避免双入口行为分裂。 -->
       </div>
 
       <!-- View -->
@@ -197,10 +196,8 @@
           <RibbonBtn icon="outline" label="智能目录" @click="$emit('ai-auto-outline')" />
           <RibbonBtn icon="contract" label="合同条款" @click="$emit('ai-extract-terms')" />
         </RibbonGroup>
-        <RibbonGroup label="编辑">
-          <RibbonBtn icon="rewrite" label="智能重写" @click="$emit('ai-rewrite')" />
-          <RibbonBtn icon="proofread" label="纠错" @click="$emit('ai-proofread')" />
-        </RibbonGroup>
+        <!-- 2026-08-02: 删除空的"编辑"组(智能重写/纠错按钮已删,组内无内容占位)
+             删除后再保留 RibbonGroup 标签会导致空容器,直接去掉整组 -->
         <RibbonGroup label="识别">
           <RibbonBtn icon="ocr" label="OCR 快速识别" @click="$emit('ocr-recognize', 'mobile')" />
           <RibbonBtn icon="ocr" label="OCR 高精度识别" @click="$emit('ocr-recognize', 'server')" />
@@ -254,11 +251,11 @@ const emit = defineEmits<{
   (e: 'watermark' | 'header-footer'): void
   (e: 'export-menu', evt: MouseEvent): void
   /** Phase 13.23: 新增功能按钮 */
-  (e: 'save-as-new' | 'redact' | 'compress' | 'remove-watermark'): void
+  (e: 'save-as-new' | 'redact' | 'remove-watermark'): void  // 2026-08-02: 'compress' 移除(统一从导出菜单进)
   (e: 'fill-form' | 'rotate-current' | 'crop-page' | 'split-pdf'): void
-  (e: 'ai-summarize' | 'ai-translate' | 'ai-full-summary' | 'ai-rewrite' | 'ai-generate'): void
+  (e: 'ai-summarize' | 'ai-translate' | 'ai-full-summary' | 'ai-generate'): void  // 2026-08-02: 'ai-rewrite' 移除
   (e: 'ai-vqa' | 'ai-image-desc' | 'ai-extract-terms' | 'ai-optimize-ocr' | 'ai-extract-structured'): void
-  (e: 'ai-auto-outline' | 'ai-keywords' | 'ai-annotate' | 'ai-proofread' | 'ai-recognize-status' | 'ai-view-outline'): void
+  (e: 'ai-auto-outline' | 'ai-keywords' | 'ai-annotate' | 'ai-recognize-status' | 'ai-view-outline'): void  // 2026-08-02: 'ai-proofread' 移除
   (e: 'extract-images'): void
   /** Phase 10.3: 用户改了图章文字 */
   (e: 'update:stampText', text: string): void

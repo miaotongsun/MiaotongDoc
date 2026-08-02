@@ -55,7 +55,6 @@
       @export-menu="(e: MouseEvent) => onOpenExport(e)"
       @save-as-new="onSaveAsNew"
       @redact="onRedact"
-      @compress="onCompress"
       @remove-watermark="onRemoveWatermark"
       @fill-form="() => toggleRightPanel('form')"
       @rotate-current="() => onRotatePage(currentPage, 90)"
@@ -63,7 +62,6 @@
       @ai-summarize="onCanvasMenuAiSummarize"
       @ai-translate="onCanvasMenuAiTranslate"
       @ai-full-summary="onAiFullSummary"
-      @ai-rewrite="onAiRewrite"
       @ai-generate="onAiGenerate"
       @ai-vqa="() => selectTool('vqa')"
       @ai-image-desc="onAiImageDesc"
@@ -74,7 +72,6 @@
       @ai-view-outline="() => toggleRightPanel('outline')"
       @ai-keywords="onAiKeywords"
       @ai-annotate="onAiAnnotate"
-      @ai-proofread="onAiProofread"
       @extract-images="onExtractImages" />
     />
 
@@ -156,7 +153,7 @@
           <!-- V3: 单页 / 连续 / 双页 三种视图 -->
           <template v-if="viewMode === 'single'">
             <PdfCanvas
-              :key="currentPage"
+              :key="`${reloadKey}-${currentPage}`"
               :page-num="currentPage"
               :total-pages="totalPages"
               :scale="scale"
@@ -168,6 +165,9 @@
               :pending-rect="pendingRect"
               :drawing-path="drawingPath"
               :eraser-cursor="eraserCursor"
+              :redact-mode="redactMode"
+              :redact-staging="redactStaging"
+              :redact-saved-snapshot="redactSavedSnapshot"
               :eraser-radius="eraserRadius"
               :stamp-ghost="stampGhost"
               :ghost-signature="ghostSignature"
@@ -187,9 +187,10 @@
                   v-if="activeTool === 'textEdit'"
                   :page-num="pn"
                   :scale="sc"
-                  :page-raw-height="pageRawHeight"
+                  :page-raw-height="getPageRawSize(pn).h"
                   :can-edit="canEdit"
                   :editor="textEditor"
+                  @request-ocr="onRequestOcrFromEmpty"
                 />
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
@@ -197,7 +198,7 @@
                   v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && showOcrOverlay"
                   :page-num="pn"
                   :scale="sc"
-                  :page-raw-height="pageRawHeight"
+                  :page-raw-height="getPageRawSize(pn).h"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
                 />
@@ -210,7 +211,7 @@
             <div class="pdf-facing-pair">
               <PdfCanvas
                 v-if="currentPage <= totalPages"
-                :key="`L-${currentPage}`"
+                :key="`${reloadKey}-L-${currentPage}`"
                 :page-num="currentPage"
                 :total-pages="totalPages"
                 :scale="scale"
@@ -224,6 +225,9 @@
                 :stamp-ghost="stampGhost"
                 :ghost-signature="ghostSignature"
                 :recognized="recognizedPages.has(currentPage)"
+                :redact-mode="redactMode"
+                :redact-staging="redactStaging"
+                :redact-saved-snapshot="redactSavedSnapshot"
                 :form-highlight="formHighlightFor(currentPage)"
                 :is-editing="activeTool === 'textEdit'"
                 @ready="onPageReady"
@@ -234,7 +238,7 @@
               />
               <PdfCanvas
                 v-if="currentPage + 1 <= totalPages"
-                :key="`R-${currentPage + 1}`"
+                :key="`${reloadKey}-R-${currentPage + 1}`"
                 :page-num="currentPage + 1"
                 :total-pages="totalPages"
                 :scale="scale"
@@ -248,6 +252,9 @@
                 :stamp-ghost="stampGhost"
                 :recognized="recognizedPages.has(currentPage + 1)"
                 :form-highlight="formHighlightFor(currentPage + 1)"
+                :redact-mode="redactMode"
+                :redact-staging="redactStaging"
+                :redact-saved-snapshot="redactSavedSnapshot"
                 :is-editing="activeTool === 'textEdit'"
                 @ready="onPageReady"
                 @context-menu="onCanvasContextMenu"
@@ -260,7 +267,7 @@
           <template v-else>
             <PdfCanvas
               v-for="i in totalPages"
-              :key="i"
+              :key="`${reloadKey}-${i}`"
               :page-num="i"
               :total-pages="totalPages"
               :scale="scale"
@@ -277,6 +284,9 @@
               :ghost-signature="ghostSignature"
               :recognized="recognizedPages.has(i)"
               :form-highlight="formHighlightFor(i)"
+              :redact-mode="redactMode"
+              :redact-staging="redactStaging"
+              :redact-saved-snapshot="redactSavedSnapshot"
               :is-editing="activeTool === 'textEdit'"
               @ready="onPageReady"
               @mouse-down="onCanvasMouseDown"
@@ -291,9 +301,10 @@
                   v-if="activeTool === 'textEdit'"
                   :page-num="pn"
                   :scale="sc"
-                  :page-raw-height="pageRawHeight"
+                  :page-raw-height="getPageRawSize(pn).h"
                   :can-edit="canEdit"
                   :editor="textEditor"
+                  @request-ocr="onRequestOcrFromEmpty"
                 />
               </template>
               <template #ocr="{ pageNum: pn, scale: sc }">
@@ -301,7 +312,7 @@
                   v-if="recognizedPages.has(pn) && activeTool !== 'textEdit' && showOcrOverlay"
                   :page-num="pn"
                   :scale="sc"
-                  :page-raw-height="pageRawHeight"
+                  :page-raw-height="getPageRawSize(pn).h"
                   :tokens="ocrTokensForPage(pn)"
                   :selectable="activeTool === 'select'"
                   :show-text="showOcrOverlay"
@@ -608,6 +619,44 @@
       >{{ savingEdit ? '保存中...' : '保存' }}</button>
       <button class="pdf-edit-banner-exit" @click="exitEditMode">退出编辑</button>
     </div>
+    <!-- 2026-08-02: 密文遮盖模式 banner(红色主题,破坏性操作提示) -->
+    <div v-if="redactMode || redactSavedAt" class="pdf-redact-banner" :class="{ 'is-saved': !!redactSavedAt && !redactMode }" data-test="redact-banner">
+      <span class="pdf-redact-banner-icon">🔒</span>
+      <span class="pdf-redact-banner-text">
+        <strong v-if="!redactSavedAt">密文遮盖模式</strong>
+        <strong v-else>✓ 已保存 {{ redactSavedSnapshot.length }} 个遮盖区域到原文档</strong>
+        <span v-if="!redactSavedAt"> — 拖拽框选要遮盖的区域(底层文字将被彻底抹除)</span>
+        <span v-else> — 红色虚线框内为已遮盖位置,可在画布上继续添加</span>
+      </span>
+      <span v-if="!redactSavedAt" class="pdf-redact-banner-count" data-test="redact-count">
+        {{ redactStaging.length }} 个区域未保存
+      </span>
+      <button
+        v-if="!redactSavedAt && redactStaging.length > 0"
+        class="pdf-redact-banner-undo"
+        data-test="redact-undo"
+        @click="undoRedact"
+        title="撤销最后一个"
+      >↶ 撤销</button>
+      <button
+        v-if="!redactSavedAt"
+        class="pdf-redact-banner-primary"
+        data-test="redact-save"
+        :disabled="redactSubmitting || redactStaging.length === 0"
+        @click="saveRedactToDoc"
+      >{{ redactSubmitting ? '保存中...' : '保存到原文档' }}</button>
+      <button
+        v-if="!redactSavedAt"
+        class="pdf-redact-banner-secondary"
+        data-test="redact-download"
+        :disabled="redactSubmitting || redactStaging.length === 0"
+        @click="downloadRedactCopy"
+      >下载副本</button>
+      <button class="pdf-redact-banner-exit" data-test="redact-cancel" @click="cancelRedact">
+        {{ redactSavedAt ? '完成' : '取消' }}
+      </button>
+    </div>
+    <p v-if="redactErrorMsg" class="pdf-redact-error" data-test="redact-error">{{ redactErrorMsg }}</p>
     <!-- Phase 13.11: 保存模式对话框(覆盖/另存为) -->
     <PdfSaveModeDialog
       :open="saveModeDialogOpen"
@@ -706,6 +755,7 @@ import { usePdfAiFloat } from '@/composables/pdf/usePdfAiFloat'
 import { usePdfViewMode, type ViewMode } from '@/composables/pdf/usePdfViewMode'
 import type { PageOpResult } from '@/api/pdf'
 import { pdfApi } from '@/api/pdf'
+import { documentAiApi } from '@/api/documentAi'
 import { documentApi } from '@/api/document'
 
 const props = defineProps<{
@@ -905,6 +955,16 @@ async function reloadAfterPageOp(newFileUrl: string) {
     renderer.destroy()
     textEditor.clearCache()
     emit('fileUrlChanged', newFileUrl)
+    renderer.setFileUrl(newFileUrl)
+    // 2026-08-02: 落盘前先递增 reloadKey,这样先 clear() 之后 Vue 用新 key 重新挂载 PdfCanvas,
+    // 新挂载组件会在 onMounted 中 emit('ready') 重新填充 refs
+    reloadKey.value++
+    initialFitDone.value = false  // 2026-08-02: 重置,让重新挂载的 PdfCanvas 再触发 fit-width
+    canvasRefs.clear()
+    textLayerRefs.clear()
+    annotationRefs.clear()
+    thumbRefs.clear()
+    await nextTick()
     await renderer.load()
     if (renderer.pdfDoc.value) {
       const page = await renderer.pdfDoc.value.getPage(1)
@@ -913,10 +973,6 @@ async function reloadAfterPageOp(newFileUrl: string) {
       pageRawHeight.value = vp.height
     }
     currentPage.value = 1
-    canvasRefs.clear()
-    textLayerRefs.clear()
-    annotationRefs.clear()
-    thumbRefs.clear()
     saveStatus.value = 'saved'
     saveTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   } catch (e) {
@@ -1142,25 +1198,34 @@ function clearVqa() {
  * 2) 后端存 ocrData → text-positions
  * 3) 重新加载 positions,渲染 bbox 框
  */
-async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
+// 2026-08-02 PR3: 加可选 pageNum 参数(null = 全文识别,非 null = 只识别当前页)
+async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile', pageNum?: number) {
   if (recognizeStatus.value === 'recognizing') return
   recognizeStatus.value = 'recognizing'
   const modelLabel = model === 'server' ? '高精度' : '快速'
-  ElMessage.info(`OCR ${modelLabel}识别已提交,正在处理...`)
+  const scopeLabel = pageNum ? `(第 ${pageNum} 页)` : '(全文)'
+  ElMessage.info(`OCR ${modelLabel}识别${scopeLabel}已提交,正在处理...`)
 
   // OCR AI 改造 v3:异步任务模式
   let taskId: number | null = null
   const ocrCleanup: { abort?: () => void } = {}
 
   try {
-    const r: any = await pdfApi.recognizePaddle(props.docId, model)
+    // 2026-08-02 PR3: pageNum 透传到后端
+    const r: any = await pdfApi.recognizePaddle(props.docId, model, pageNum)
     if (r.status === 'failed') {
       recognizeStatus.value = 'error'
+      const hint = model === 'mobile' ? '。建议改用「高精度识别」重试' : ''
       ElMessage({
         type: 'error',
-        message: `OCR ${modelLabel}识别失败:${r.message || '提交失败'}`,
-        duration: 6000,
+        message: `OCR ${modelLabel}识别失败:${r.message || '提交失败'}${hint}`,
+        duration: 8000,
       })
+      return
+    }
+    if (r.status === 'duplicate') {
+      recognizeStatus.value = 'unrecognized'
+      ElMessage.warning(r.message || '该文档已有进行中的 OCR 任务,请等待完成')
       return
     }
     taskId = r.taskId
@@ -1208,15 +1273,19 @@ async function onOcrRecognize(model: 'mobile' | 'server' = 'mobile') {
               } else if (ev.event === 'done') {
                 recognizeStatus.value = 'recognized'
                 ElMessage.success(`OCR ${modelLabel}识别完成`)
-                await refreshAfterOcr()
+                await refreshAfterOcr(model, pageNum)
                 resolve()
                 return
               } else if (ev.event === 'error') {
                 recognizeStatus.value = 'error'
+                // 2026-08-02: mobile(快速)失败时建议用 server(高精度)
+                const hint = model === 'mobile'
+                  ? '。快速识别能力有限,建议改用「高精度识别」重试'
+                  : ''
                 ElMessage({
                   type: 'error',
-                  message: `OCR ${modelLabel}识别失败:${ev.data.message || '未知错误'}`,
-                  duration: 6000,
+                  message: `OCR ${modelLabel}识别失败:${ev.data.message || '未知错误'}${hint}`,
+                  duration: 8000,
                 })
                 resolve()
                 return
@@ -1267,13 +1336,28 @@ function parseOcrSseBlock(block: string): { event: string; data: any } | null {
 }
 
 /** OCR 完成后刷新 positions + 渲染 */
-async function refreshAfterOcr(_model: 'mobile' | 'server' = 'mobile') {
+async function refreshAfterOcr(_model: 'mobile' | 'server' = 'mobile', pageNum?: number) {
   try {
     await textEditor.loadAllPositions()
-    for (const [pageNum, canvasEl] of canvasRefs.entries()) {
-      const textLayerEl = textLayerRefs.get(pageNum)
+    // 2026-08-02: per-page recognizedPages
+    if (pageNum) {
+      const arr = textEditor.positionsByPage.value.get(pageNum) || []
+      if (arr.length > 0) {
+        const ns = new Set(recognizedPages.value)
+        ns.add(pageNum)
+        recognizedPages.value = ns
+      }
+    } else {
+      const ns = new Set<number>()
+      for (const [pn, arr] of textEditor.positionsByPage.value.entries()) {
+        if (arr.length > 0) ns.add(pn)
+      }
+      if (ns.size > 0) recognizedPages.value = ns
+    }
+    for (const [pn, canvasEl] of canvasRefs.entries()) {
+      const textLayerEl = textLayerRefs.get(pn)
       if (textLayerEl) {
-        try { await renderer.renderPage(pageNum, canvasEl, textLayerEl) } catch {}
+        try { await renderer.renderPage(pn, canvasEl, textLayerEl) } catch {}
       }
     }
   } catch (e) {
@@ -1338,6 +1422,25 @@ const zoomPercent = computed(() => Math.round(scale.value * 100))
 
 const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const saveTime = ref('')
+
+// ========== 2026-08-02: 密文遮盖模式状态 ==========
+interface RedactRegion {
+  pageNum: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+const redactMode = ref(false)
+const redactStaging = ref<RedactRegion[]>([])
+const redactSubmitting = ref(false)
+const redactErrorMsg = ref('')
+// 2026-08-02: 保存成功后保留遮盖区域的快照,渲染成红色描边覆盖在新画布上,
+// 让用户直观看到"刚才选的区域"已经变成黑色遮盖(不是空白)
+const redactSavedSnapshot = ref<RedactRegion[]>([])
+const redactSavedAt = ref<Date | null>(null)
+const redactModeColor = 'rgba(220, 38, 38, 0.35)' // 红色半透明
+const redactModeStroke = '#dc2626'
 
 const toolLabel = computed(() => {
   const map: Record<AnnotationTool, string> = {
@@ -1496,8 +1599,36 @@ async function onCanvasSetScale(s: number) {
 }
 
 // ========== Ribbon 事件占位(Phase 8-12 完整实现) ==========
-function onSave() { ElMessage.success('已保存(占位)') }
+// 2026-08-02: 占位 -> 真正调起 SaveModeDialog(覆盖当前 / 另存为)
+async function onSave() {
+  let count = 0
+  for (const arr of textEditor.pendingByPage.value.values()) count += arr.length
+  pendingEditCount.value = count
+  if (count === 0) {
+    ElMessage.info('当前没有未保存的编辑')
+    return
+  }
+  saveModeDialogOpen.value = true
+}
 /** Phase 14.U12: 打印功能 —— 在新标签页打开 PDF viewer,用户用 Ctrl+P */
+// 2026-08-02: textEdit 空态时点"一键 OCR" → 触发全文 OCR 识别,
+// 完成后强制重新加载所有页 text positions(从 OCR 数据生成 token)
+async function onRequestOcrFromEmpty() {
+  ElMessage.info('开始 OCR 高精度识别(全文),请稍候...')
+  try {
+    // 2026-08-02: 用 server(高精度)模型,扫描件识别率更高
+    await onOcrRecognize('server')
+    // OCR 完成后,手动调一次 loadAllPositions(防止 recognize-status 路由时序问题)
+    // + 后端 extractPositionsFromOcr fallback 从 OCR 数据生成 token
+    try {
+      await textEditor.loadAllPositions()
+    } catch {}
+    ElMessage.success('OCR 完成,现在可以编辑文字了')
+  } catch (e: any) {
+    ElMessage.error(e?.message || 'OCR 失败')
+  }
+}
+
 async function onPrint() {
   const url = `/api/documents/${props.docId}/file`
   const token = sessionStorage.getItem('token') || ''
@@ -1744,16 +1875,84 @@ async function onSaveAsNew() {
   } catch (e: any) { ElMessage.error(e?.message || '另存失败') }
 }
 async function onRedact() {
-  ElMessage.info('请在画布上用矩形工具框选要遮盖的区域,然后点保存')
+  // 2026-08-02: 进入密文遮盖模式
+  redactMode.value = true
+  redactStaging.value = []
+  redactErrorMsg.value = ''
   selectTool('rectangle')
+  ElMessage.info('密文遮盖模式：在画布上拖拽框选要遮盖的区域，点保存或下载副本')
 }
-async function onCompress() {
+
+// 保存到原文档（in-place）
+async function saveRedactToDoc() {
+  if (redactStaging.value.length === 0) {
+    ElMessage.warning('请先在画布上框选要遮盖的区域')
+    return
+  }
+  redactSubmitting.value = true
+  redactErrorMsg.value = ''
   try {
-    ElMessage.info('正在压缩...')
-    const blob = await pdfApi.compress(props.docId, { level: 'medium' })
-    dlTrigger(blob, dlName('压缩', 'pdf', props.filename))
-    ElMessage.success('压缩完成,已下载')
-  } catch (e: any) { ElMessage.error(e?.message || '压缩失败') }
+    saveStatus.value = 'saving'
+    const r = await pdfApi.applyRedactionInPlace(props.docId, redactStaging.value)
+    if (r?.success) {
+      const cnt = redactStaging.value.length
+      ElMessage.success(`已遮盖 ${cnt} 个区域并保存到原文档`)
+      // 重新加载文档 - 重新拉文件直链(已落盘到新路径)
+      const newFileUrl = pageOps.bustUrl({ success: true, filePath: r.filePath || '', message: 'redacted' })
+      // 2026-08-02: 保存后**不清空** redactStaging,这样已遮盖的区域以红色描边显示,
+      // 用户能看到"刚才选的区域"在哪里,验证遮盖生效。同时 banner 切到"成功"状态。
+      redactSavedSnapshot.value = JSON.parse(JSON.stringify(redactStaging.value))
+      redactSavedAt.value = new Date()
+      await reloadAfterPageOp(newFileUrl)
+      // 不自动 cancelRedact —— 让用户看到遮盖效果后自己点"完成"或继续添加更多区域
+    } else {
+      throw new Error('后端未返回 success')
+    }
+  } catch (e: any) {
+    redactErrorMsg.value = e?.message || '保存失败'
+    ElMessage.error(redactErrorMsg.value)
+    saveStatus.value = 'error'
+  } finally {
+    redactSubmitting.value = false
+  }
+}
+
+// 下载副本（不下落到原文档）
+async function downloadRedactCopy() {
+  if (redactStaging.value.length === 0) {
+    ElMessage.warning('请先在画布上框选要遮盖的区域')
+    return
+  }
+  redactSubmitting.value = true
+  redactErrorMsg.value = ''
+  try {
+    const blob = await pdfApi.applyRedaction(props.docId, redactStaging.value)
+    const filename = `redacted-${props.filename || 'document'}.pdf`
+    dlTrigger(blob, filename)
+    ElMessage.success(`已生成密文副本,正在下载`)
+    cancelRedact()
+  } catch (e: any) {
+    redactErrorMsg.value = e?.message || '下载失败'
+    ElMessage.error(redactErrorMsg.value)
+  } finally {
+    redactSubmitting.value = false
+  }
+}
+
+// 撤销最后一个 staging
+function undoRedact() {
+  redactStaging.value.pop()
+  ElMessage.info(`已撤销,待保存 ${redactStaging.value.length} 个区域`)
+}
+
+// 取消密文模式
+function cancelRedact() {
+  redactMode.value = false
+  redactStaging.value = []
+  redactErrorMsg.value = ''
+  redactSavedSnapshot.value = []
+  redactSavedAt.value = null
+  selectTool('select')
 }
 async function onRemoveWatermark() {
   try {
@@ -1768,15 +1967,29 @@ function onSplitPdf() {
 }
 
 // AI handler
+// 2026-08-02 PR4 + PR6 修复: 全文摘要 - 走专用 summarize 端点,直接把结果显示在 AI 浮窗气泡
 async function onAiFullSummary() {
-  aiVisible.value = true
-  await aiFloat.chat.sendUserMessage('请摘要整个文档的核心内容(300 字以内)。')
-}
-async function onAiRewrite() {
-  const sel = window.getSelection()?.toString() || ''
-  if (!sel) { ElMessage.warning('请先选中要重写的文字'); return }
-  aiVisible.value = true
-  await aiFloat.chat.sendUserMessage(`请润色重写以下文字(保持原意,更专业):\n\n${sel}`)
+  if (!(await ensureLlmConfigured())) return
+  try {
+    ElMessage.info('AI 正在摘要整个文档...')
+    const r = await documentAiApi.summarize(props.docId)
+    aiVisible.value = true
+    // 2026-08-02 修复: 直接构造 user/assistant 气泡显示结果,
+    // 之前把结果拼成 prompt 调 chat-stream,LLM 回复"好的..."答非所问
+    const now = Date.now()
+    aiFloat.chat.messages.value.push({
+      id: `m-user-${now}`,
+      role: 'user',
+      parts: [{ type: 'text', text: '请摘要整个文档的核心内容(300 字以内)', state: 'done' }],
+    })
+    aiFloat.chat.messages.value.push({
+      id: `m-asst-${now}`,
+      role: 'assistant',
+      parts: [{ type: 'text', text: r.content || '(摘要生成失败或内容为空)', state: 'done' }],
+    })
+  } catch (e: any) {
+    ElMessage.error(e?.message || '摘要失败')
+  }
 }
 async function onAiGenerate() {
   const sel = window.getSelection()?.toString() || ''
@@ -1787,11 +2000,12 @@ function onAiImageDesc() {
   selectTool('vqa')
   ElMessage.info('请框选图片区域,在 AI 浮窗输入"描述这张图"')
 }
+// 2026-08-02 PR4: 合同条款 - 打开 PdfTermsPanel 抽屉(专用 SSE 抽取)
 async function onAiExtractTerms() {
-  // OCR AI 改造 v2:先检查 LLM 是否配置
   if (!(await ensureLlmConfigured())) return
-  aiVisible.value = true
-  await aiFloat.chat.sendUserMessage('请抽取本文档的合同条款:金额、日期、甲乙方、违约责任等关键字段。')
+  // 打开条款抽屉;PdfTermsPanel 自动通过 usePdfExtractTerms 调 /extract-terms/stream
+  termsPanelOpen.value = true
+  ElMessage.info('正在抽取合同条款,请稍候...')
 }
 async function onAiOptimizeOcr() {
   if (!(await ensureLlmConfigured())) return
@@ -1831,28 +2045,19 @@ async function onAiAnnotate() {
   aiVisible.value = true
   await aiFloat.chat.sendUserMessage(`请为以下文字添加批注建议:\n\n${sel}`)
 }
-async function onAiProofread() {
-  const sel = window.getSelection()?.toString() || ''
-  if (!sel) { ElMessage.warning('请先选中要检查的文字'); return }
-  aiVisible.value = true
-  await aiFloat.chat.sendUserMessage(`请检查以下文字的错别字并给出修改建议:\n\n${sel}`)
-}
+// 2026-08-02 PR4: 智能目录 - 强制开 outline 面板(避免 toggle 关已开),删多余 getOutline
 async function onAiAutoOutline() {
   try {
     ElMessage.info('AI 正在生成智能目录...')
     const r = await pdfApi.autoOutline(props.docId)
     if (r.success) {
       ElMessage.success(`已生成 ${r.outline?.length || 0} 个章节目录`)
-      // Phase 27: 打开右侧大纲面板(不重载 PDF,保持当前 tab + 当前页码)
-      toggleRightPanel('outline')
-      // 自动跳到第一个章节,提供"页面确实响应了"的视觉反馈
-      if (r.outline && r.outline.length > 0 && r.outline[0].page) {
-        setTimeout(() => goToPage(r.outline[0].page), 300)
+      // 强制开 outline 面板(若已是 outline 则不变;若不是则打开)
+      if (rightPanelOpen.value !== 'outline') {
+        toggleRightPanel('outline')
       }
-      // 强制刷新右侧 outline panel 的缓存
-      if (pdfApi.getOutline) {
-        try { await pdfApi.getOutline(props.docId) } catch {} // 触发缓存刷新
-      }
+      // 不自动跳页(避免用户失去上下文);让用户点击目录项跳转
+      // 删多余 pdfApi.getOutline 调用(PdfRightPanel 已 watch docId 重载)
     } else { ElMessage.error(r.error || '智能目录生成失败') }
   } catch (e: any) { ElMessage.error(e?.message || '智能目录失败') }
 }
@@ -1932,6 +2137,11 @@ const textLayerRefs = new Map<number, HTMLDivElement>()
 const annotationRefs = new Map<number, SVGSVGElement>()
 const thumbRefs = new Map<number, HTMLCanvasElement>()
 const canvasAreaRef = ref<HTMLElement | null>(null)
+// 2026-08-02: 密文/页面操作落盘后递增,迫使 4 个 PdfCanvas 用新 key 强制重新挂载,
+// 触发 onMounted -> emit('ready') -> onPageReady -> renderPage,新 PDF 内容才能渲染到画布
+const reloadKey = ref(0)
+// 2026-08-02: 首次 fit-width 已完成标记,避免多次触发
+const initialFitDone = ref(false)
 
 /**
  * Phase 13.33: 画布滚动驱动当前页(改用 scroll + getBoundingClientRect,更可靠)
@@ -2022,6 +2232,33 @@ function onPageReady(
   canvasRefs.set(pageNum, canvasEl)
   textLayerRefs.set(pageNum, textLayerEl)
   annotationRefs.set(pageNum, annotationEl)
+
+  // 2026-08-02: 第一页 ready 时,在首次渲染前就设好 fit-page scale (适合尺寸),
+  // 取宽高比中较小的缩放,确保整页在视口内可见(不只是宽度适配)
+  if (pageNum === 1 && !initialFitDone.value) {
+    initialFitDone.value = true
+    try {
+      const el = canvasAreaRef.value
+      if (el && pageRawWidth.value > 0 && pageRawHeight.value > 0) {
+        const style = getComputedStyle(el)
+        const padL = parseFloat(style.paddingLeft) || 0
+        const padR = parseFloat(style.paddingRight) || 0
+        const padT = parseFloat(style.paddingTop) || 0
+        const padB = parseFloat(style.paddingBottom) || 0
+        const availW = el.clientWidth - padL - padR - 16
+        const availH = el.clientHeight - padT - padB - 16
+        const scaleW = availW / pageRawWidth.value
+        const scaleH = availH / pageRawHeight.value
+        // fit-page: 取宽高比中较小的,确保整页可见
+        const fitScale = Math.max(0.3, Math.min(scaleW, scaleH, 4))
+        renderer.setScale(fitScale)
+        viewModeLogic.setZoom('fit-page')
+      }
+    } catch (e) {
+      console.warn('[PdfEditor] 首次 fit-page 失败:', e)
+    }
+  }
+
   nextTick(() => renderPageIfReady(pageNum))
 }
 
@@ -2144,24 +2381,70 @@ function onCanvasMenuEditText() {
 function onCanvasMenuSelectTool(tool: AnnotationTool) {
   selectTool(tool)
 }
+// 2026-08-02 PR4 + PR6 修复: 翻译选区 - 调专用 translate 端点,结果直接显示
 async function onCanvasMenuAiTranslate() {
   const sel = window.getSelection()?.toString().trim()
   if (!sel) {
     ElMessage.warning('请先选中要翻译的文字')
     return
   }
-  aiVisible.value = true
-  await aiFloat.chat.sendUserMessage(`请将以下文字翻译成中文(保持原意,无需解释):\n\n${sel}`)
+  if (!(await ensureLlmConfigured())) return
+  try {
+    aiVisible.value = true
+    const r = await documentAiApi.translate(props.docId, { text: sel, targetLang: 'zh' })
+    // 直接把翻译结果显示在 AI 浮窗气泡,不再走 chat-stream
+    const now = Date.now()
+    aiFloat.chat.messages.value.push({
+      id: `m-user-${now}`,
+      role: 'user',
+      parts: [{ type: 'text', text: `请翻译成中文:\n\n${sel}`, state: 'done' }],
+    })
+    aiFloat.chat.messages.value.push({
+      id: `m-asst-${now}`,
+      role: 'assistant',
+      parts: [{ type: 'text', text: r.content || '(翻译失败或内容为空)', state: 'done' }],
+    })
+  } catch (e: any) {
+    ElMessage.error(e?.message || '翻译失败')
+  }
 }
+// 2026-08-02 PR4 + PR6 修复: 摘要当前页 - 走专用 summarize 端点(消除零上下文问答)
 async function onCanvasMenuAiSummarize() {
+  if (!(await ensureLlmConfigured())) return
+  const pageNum = canvasMenuPage.value
   aiVisible.value = true
-  await aiFloat.chat.sendUserMessage(`请摘要第 ${canvasMenuPage.value} 页的核心内容(100 字以内)。`)
+  try {
+    // 先拉该页文本(可能是扫描件需 OCR)
+    let pageText = ''
+    try {
+      const r: any = await pdfApi.getPageText(props.docId, pageNum)
+      pageText = typeof r === 'string' ? r : (r?.text || r?.fullText || '')
+    } catch {}
+    // 用 LLM 流式回答(用户已经选定了"摘要当前页",上下文已明确,
+    // 把页面文本作为 docContent 传给 LLM 让它真做摘要)
+    const prompt = pageText
+      ? `以下为第 ${pageNum} 页 PDF 内容:\n\n"""${pageText.slice(0, 3000)}"""\n\n请基于此内容用 100 字以内做摘要。`
+      : `第 ${pageNum} 页可能是扫描件,未提取到文本。请说明用户需先 OCR 识别该页。`
+    await aiFloat.chat.sendUserMessage(prompt, undefined, pageText)
+  } catch (e) {
+    ElMessage.error(`摘要失败: ${(e as Error).message}`)
+  }
 }
+// 2026-08-02 PR4: AI 问答 - 打开浮窗并自动发引导 prompt
 function onCanvasMenuAiChat() {
   onOpenAi()
+  // 自动发一条引导消息,避免用户进入空浮窗
+  nextTick(() => {
+    const sel = window.getSelection()?.toString().trim() || ''
+    const intro = sel
+      ? `我看到你选中了文字,请问我关于这段内容的问题。`
+      : `我看到你打开了 PDF,请问想了解什么?`
+    aiFloat.chat.sendUserMessage(intro)
+  })
 }
-function onCanvasMenuOcr(model: 'mobile' | 'server') {
-  void onOcrRecognize(model)
+// 2026-08-02 PR3: 右键菜单 OCR 传 pageNum,只识别当前页
+function onCanvasMenuOcr(model: 'mobile' | 'server', pageNum?: number) {
+  void onOcrRecognize(model, pageNum)
 }
 function exitEditMode() {
   selectTool('select')
@@ -2238,6 +2521,28 @@ function onCanvasMouseMove(evt: MouseEvent, pageNum: number, containerRect: DOMR
   }
 }
 function onCanvasMouseUp(evt: MouseEvent, pageNum: number, containerRect: DOMRect) {
+  // 2026-08-02: 密文模式拦截 -> 优先收集到 redactStaging,不入 Y.Array
+  if (redactMode.value && activeTool.value === 'rectangle' && annot.pendingRect.value) {
+    const pr = annot.pendingRect.value
+    if (pr.width > 8 && pr.height > 4) {
+      // 屏幕像素 → PDF pt（左下原点,与 composable 内部一致）
+      const pdfX = pr.x / scale.value
+      const pdfY = pageRawHeight.value - (pr.y + pr.height) / scale.value
+      const pdfW = pr.width / scale.value
+      const pdfH = pr.height / scale.value
+      redactStaging.value.push({
+        pageNum: pr.pageNumber,
+        x: pdfX,
+        y: pdfY,
+        width: pdfW,
+        height: pdfH,
+      })
+      ElMessage.success(`已添加密文区域 #${redactStaging.value.length}`)
+    }
+    // 清 pendingRect,避免 rectangle 工具后续把它存为 annotation
+    annot.pendingRect.value = null
+    return
+  }
   ;(annot as any).onMouseUp?.(evt, pageNum, containerRect, scale.value, pageRawHeight.value)
   // Phase 13.26: 识图(vqa)框选完成后截图发 AI
   if (activeTool.value === 'vqa' && annot.pendingRect.value) {
@@ -2493,20 +2798,23 @@ onMounted(async () => {
       pageRawHeight.value = vp.height
     }
     collab.connect()
-    void textEditor.loadAllPositions()
-    // Phase 13.4: 自动检查 OCR 识别状态,已识别的文档自动加载 bbox + 文字层
+    // Phase 13.4: 加载 positions(含 OCR fallback),按页标记 recognizedPages
     try {
-      const status = await pdfApi.getRecognizeStatus(props.docId)
-      if (status.recognized) {
-        recognizedPages.value = new Set(Array.from({ length: totalPages.value }, (_, i) => i + 1))
-        recognizeStatus.value = 'recognized'
-      } else {
-        recognizeStatus.value = 'unrecognized'
+      await textEditor.loadAllPositions()
+      // 2026-08-02: 只标记有 positions 的页为已识别(按页精确,不是全部页)
+      const newSet = new Set<number>()
+      for (const [pn, arr] of textEditor.positionsByPage.value.entries()) {
+        if (arr.length > 0) newSet.add(pn)
       }
+      recognizedPages.value = newSet
+      const status = await pdfApi.getRecognizeStatus(props.docId)
+      recognizeStatus.value = newSet.size > 0 ? 'recognized' : (status.recognized ? 'recognized' : 'unrecognized')
     } catch {
       recognizeStatus.value = 'unrecognized'
     }
     emit('ready')
+    // 2026-08-02: fit-width 已移到 onPageReady(在首次渲染前设好 scale,
+    // 避免先以 scale=1.0 渲染再 reRender 闪烁),这里不再重复调用
   } catch (e) {
     console.error('[PdfEditor] 加载失败:', e)
   }
@@ -2526,12 +2834,16 @@ watch(() => props.fileUrl, async (newUrl) => {
   if (!newUrl || newUrl === currentFileUrl) return
   currentFileUrl = newUrl
   console.log('[PdfEditor] fileUrl changed:', newUrl)
-  // 等当前正在进行的 render 完成,再切换
+  // 2026-08-02: 先 setFileUrl 再 load,否则 load 用的是旧 _fileUrl
+  renderer.setFileUrl(newUrl)
   renderer.destroy()
-  await renderer.load()
+  // 递增 reloadKey 强制 PdfCanvas 重新挂载,emit('ready') 重新填充 canvasRefs
+  reloadKey.value++
   canvasRefs.clear()
   textLayerRefs.clear()
   annotationRefs.clear()
+  await nextTick()
+  await renderer.load()
   // 重新触发已挂载页面的渲染
   for (const [pageNum, canvasEl] of canvasRefs.entries()) {
     const textLayerEl = textLayerRefs.get(pageNum)
@@ -3215,6 +3527,92 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   cursor: not-allowed;
   background: rgba(255,255,255,0.5);
   color: rgba(255,255,255,0.7);
+}
+
+/* 2026-08-02: 密文遮盖模式 banner (红色高亮,破坏性操作) */
+.pdf-redact-banner {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  color: #fff;
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  font-size: var(--text-sm, 14px);
+  animation: redact-banner-in 200ms ease-out;
+}
+@keyframes redact-banner-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.pdf-redact-banner-icon { font-size: 18px; }
+.pdf-redact-banner-text { font-weight: 400; }
+.pdf-redact-banner-text strong { font-weight: 700; margin-right: 4px; }
+.pdf-redact-banner-count {
+  margin-left: 4px;
+  padding: 2px 8px;
+  background: rgba(255,255,255,0.25);
+  border-radius: 999px;
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+}
+.pdf-redact-banner-undo,
+.pdf-redact-banner-secondary,
+.pdf-redact-banner-exit {
+  margin-left: 4px;
+  padding: 4px 12px;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-xs, 12px);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.pdf-redact-banner-undo:hover,
+.pdf-redact-banner-secondary:hover,
+.pdf-redact-banner-exit:hover {
+  background: rgba(255,255,255,0.3);
+}
+.pdf-redact-banner-primary {
+  margin-left: 8px;
+  padding: 4px 16px;
+  background: #fff;
+  color: #dc2626;
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-xs, 12px);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.pdf-redact-banner-primary:hover:not(:disabled) {
+  background: #fee2e2;
+}
+.pdf-redact-banner-primary:disabled,
+.pdf-redact-banner-undo:disabled,
+.pdf-redact-banner-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pdf-redact-error {
+  position: fixed;
+  top: 110px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 6px 16px;
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-xs, 12px);
 }
 /* Phase 13.11: dirty 提示(未保存编辑数) */
 .pdf-edit-banner-dirty {

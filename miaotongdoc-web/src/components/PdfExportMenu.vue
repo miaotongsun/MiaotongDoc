@@ -45,7 +45,8 @@
         <div class="pdf-menu-section-title">优化</div>
         <button class="pdf-menu-item" :disabled="busy" @click="onCompress">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>
-          <span>压缩 PDF</span>
+          <span>压缩及导出</span>
+          <span class="pdf-menu-shortcut">PDF</span>
         </button>
 
         <div class="pdf-menu-divider"></div>
@@ -120,20 +121,48 @@ async function onConvert(format: 'md' | 'docx' | 'txt' | 'png') {
 async function onCompress() {
   emit('close')
   try {
-    const result = await ElMessageBox({
-      title: '压缩级别',
-      message: '选择压缩强度(越高文件越小,但可能损失清晰度)',
-      showInput: true,
-      inputPlaceholder: 'high / medium / low',
-      inputValue: 'medium',
-      showCancelButton: true,
-    } as any).catch(() => null)
-    const level = (result as any)?.value
+    // 2026-08-02: 用 ElMessageBox + 自定义 HTML 渲染 ElSelect 三档级别选择,
+    // 避免之前 showInput 让用户手敲字符串的糟糕交互。
+    const level = await new Promise<'high' | 'medium' | 'low' | null>((resolve) => {
+      ElMessageBox({
+        title: '压缩及导出',
+        message: `
+          <div style="padding: 8px 0;">
+            <div style="margin-bottom: 12px; color: var(--el-text-color-secondary); font-size: 13px;">
+              选择压缩强度(越高文件越小,但可能损失清晰度)
+            </div>
+            <select id="pdf-compress-level-select" style="
+              width: 100%; padding: 8px 12px; border: 1px solid var(--el-border-color);
+              border-radius: 4px; font-size: 14px; background: var(--el-fill-color-blank);
+              color: var(--el-text-color-primary);
+            ">
+              <option value="low">低 (72 dpi · 文件最小 · 屏幕阅读)</option>
+              <option value="medium" selected>中 (150 dpi · 推荐 · 平衡质量与大小)</option>
+              <option value="high">高 (200 dpi · 最清晰 · 适合打印)</option>
+            </select>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: '开始压缩',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: true,
+        customClass: 'pdf-compress-dialog',
+        beforeClose: ((action: 'confirm' | 'close' | 'cancel', _instance: unknown, done: () => void) => {
+          if (action === 'confirm') {
+            const sel = document.getElementById('pdf-compress-level-select') as HTMLSelectElement | null
+            resolve((sel?.value as 'high' | 'medium' | 'low') || 'medium')
+          } else {
+            resolve(null)
+          }
+          done()
+        }) as any,
+      } as any).catch(() => resolve(null))
+    })
     if (!level) return
     busy.value = true
-    const blob = await pdfApi.compress(props.docId, { level: level as 'high' | 'medium' | 'low' })
-    dlTrigger(blob, dlName('compress', 'pdf', props.filename))
-    ElMessage.success('已压缩')
+    const blob = await pdfApi.compress(props.docId, { level })
+    dlTrigger(blob, dlName('压缩', 'pdf', props.filename))
+    ElMessage.success(`已压缩(level=${level})`)
   } catch (e) {
     ElMessage.error(`压缩失败:${(e as Error).message}`)
   } finally {

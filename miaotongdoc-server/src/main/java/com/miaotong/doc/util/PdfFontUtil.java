@@ -39,8 +39,13 @@ public final class PdfFontUtil {
      * 字体来源:wqy-microhei.ttf 是从 wqy-microhei.ttc 用 fonttools 抽出的第一个 TTF
      * (原版 TTC 是 TrueType Collection,PDFBox 解析时找不到 head table 失败)
      */
+    // 2026-08-02 PR5: 优先尝试 NotoSansSC-Regular-single.ttf (从 TTC 拆出的单个 TTF),
+    // 但 PDFBox 3.0.3 PDType0Font 对超大字符集字体有字形提取 bug,
+    // 部分字符(如 U+674E)仍在 showText 时报 No glyph;回退到 WQY MicroHei。
     private static final String[] FONT_RESOURCES = {
         "fonts/wqy-microhei.ttf",
+        "fonts/NotoSansSC-Regular-single.ttf",
+        "fonts/NotoSansSC-Regular.ttf",
     };
 
     /** Helvetica (ASCII only) — fallback */

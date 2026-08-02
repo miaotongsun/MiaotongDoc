@@ -6,6 +6,7 @@ import com.miaotong.doc.repository.DocumentRepository;
 import com.miaotong.doc.service.DocumentService;
 import com.miaotong.doc.service.PaddleOcrClient;
 import com.miaotong.doc.service.PdfRecognizeService;
+import com.miaotong.doc.service.storage.StorageService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
@@ -34,12 +35,14 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class PdfOcrTaskConsumer {
 
-    private static final int MAX_RETRY = 2;
+    // 2026-08-02: MAX_RETRY 从 2 提到 3,叠加指数退避
+    private static final int MAX_RETRY = 3;
 
     private final DocumentRepository documentRepository;
     private final PaddleOcrClient paddleOcrClient;
     private final PdfRecognizeService pdfRecognizeService;
     private final DocumentService documentService;
+    private final StorageService storageService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -54,7 +57,9 @@ public class PdfOcrTaskConsumer {
         // 标记任务为 processing
         updateTaskStatus(taskId, "processing", null, null, null, null, 0, 0, null, LocalDateTime.now());
 
-        // 快速重试(不 sleep),依赖 PaddleOcrClient / PdfRecognizeService 自带超时
+        // 2026-08-02: 重试加指数退避,避免 PaddleOCR std::exception 间歇性错误直接失败
+        // 退避: 3s, 6s, 12s, ... (3 * 2^(attempt-1))
+        // 3 秒起步是经验值:PaddleOCR worker 的 internal state 至少需要 2-3s 恢复
         Exception lastError = null;
         for (int attempt = 1; attempt <= MAX_RETRY; attempt++) {
             try {
@@ -70,6 +75,16 @@ public class PdfOcrTaskConsumer {
                 lastError = e;
                 log.warn("OCR 任务异常 (尝试 {}/{}): taskId={}, docId={}, error={}",
                         attempt, MAX_RETRY, taskId, docId, e.getMessage());
+                if (attempt < MAX_RETRY) {
+                    try {
+                        long backoffMs = 3000L * (1L << (attempt - 1));  // 3s, 6s
+                        log.info("OCR 重试退避: taskId={}, 等待 {}ms", taskId, backoffMs);
+                        Thread.sleep(backoffMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("OCR 重试被中断", ie);
+                    }
+                }
                 // 不 sleep,直接进下次重试
             }
         }
@@ -98,7 +113,8 @@ public class PdfOcrTaskConsumer {
             updateTaskProgress(fTaskId, p, page, fTotal);
         };
 
-        Map<String, Object> result = paddleOcrClient.recognizePdf(docId, message.getLanguage(), message.getModel(), callback);
+        // 2026-08-02 PR3: 单页识别 (pageNum != null 时传给 PaddleOcrClient)
+        Map<String, Object> result = paddleOcrClient.recognizePdf(docId, message.getLanguage(), message.getModel(), callback, message.getPageNum());
         String status = (String) result.get("status");
         if (!"success".equals(status)) {
             String err = (String) result.getOrDefault("error", "OCR 识别失败");
@@ -154,12 +170,52 @@ public class PdfOcrTaskConsumer {
         }
     }
 
+    /**
+     * 2026-08-02 PR3 修复: 之前硬编码 1,导致 SSE 进度永远显示 x/1 失真。
+     * 用 PDF 真实总页数。
+     */
     private int estimateTotalPages(Document doc) {
-        return 1;
+        try {
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
+            try (org.apache.pdfbox.pdmodel.PDDocument pdf = org.apache.pdfbox.Loader.loadPDF(pdfBytes)) {
+                return pdf.getNumberOfPages();
+            }
+        } catch (Exception e) {
+            log.warn("[OCR] estimateTotalPages 失败,fallback 到 1: docId={}, err={}", doc.getId(), e.getMessage());
+            return 1;
+        }
     }
 
+    /**
+     * 2026-08-02 PR3 修复: 之前是空实现(只打 debug 日志),PaddleOCR 完成后
+     * 结果从不落库 → 任务标 completed 但无数据,前端 GET /markdown 返回空。
+     * 现在按 doRecognizePdfbox 同模式调用:
+     *   1. savePdfMarkdown: 按页存 markdown 内容
+     *   2. savePdfOcrData: 存 OCR 原始坐标(给 textEdit OCR 模式用)
+     *   3. markPdfRecognized: 标记文档已识别
+     */
+    @SuppressWarnings("unchecked")
     private void saveOcrResult(Long docId, Map<String, Object> result) {
-        log.debug("OCR 结果已写入文档: docId={}", docId);
+        try {
+            // 1) 保存按页 markdown
+            Object markdownObj = result.get("markdown");
+            if (markdownObj instanceof Map) {
+                Map<String, String> markdownByPage = (Map<String, String>) markdownObj;
+                if (markdownByPage != null && !markdownByPage.isEmpty()) {
+                    documentService.savePdfMarkdown(docId, markdownByPage);
+                    log.info("[OCR] savePdfMarkdown 成功: docId={}, pages={}", docId, markdownByPage.size());
+                }
+            }
+            // 2) 保存原始 OCR 数据(含行级 bbox),给 textEdit 的 OCR fallback 路径用
+            documentService.savePdfOcrData(docId, result);
+            log.info("[OCR] savePdfOcrData 成功: docId={}", docId);
+            // 3) 标记文档已识别(影响前端 recognizedPages / 状态条)
+            documentService.markPdfRecognized(docId);
+            log.info("[OCR] markPdfRecognized 成功: docId={}", docId);
+        } catch (Exception e) {
+            log.error("[OCR] saveOcrResult 失败: docId={}", docId, e);
+            throw new RuntimeException("OCR 结果落库失败: " + e.getMessage(), e);
+        }
     }
 
     private void updateTaskStatus(Long taskId, String status, String errMsg, Long resultDocId,

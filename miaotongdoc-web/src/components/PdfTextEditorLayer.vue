@@ -19,8 +19,25 @@
 -->
 <template>
   <div class="pdf-text-edit-layer" @click.stop>
+    <!-- 2026-08-02: positions 为空时显示引导(PR2 根因修复后,大部分 PDF 应有 token;
+         仍为空的情况是扫描件 / 内嵌字体子集化等) -->
+    <div v-if="!isLoading && positions.length === 0" class="pdf-text-edit-empty">
+      <div class="pdf-text-edit-empty-icon">📝</div>
+      <div class="pdf-text-edit-empty-title">未提取到可编辑文字</div>
+      <div class="pdf-text-edit-empty-desc">
+        此 PDF 可能是扫描件或使用嵌入子集字体。<br>
+        请先运行 OCR 识别,然后再次进入文本编辑模式。
+      </div>
+      <button
+        v-if="canEdit"
+        class="pdf-text-edit-empty-btn"
+        type="button"
+        @click="emit('request-ocr')"
+      >一键 OCR 识别</button>
+    </div>
     <div
       v-for="(token, idx) in positions"
+      v-else
       :key="tokenKey(token, idx)"
       class="pdf-edit-token"
       :class="{
@@ -62,6 +79,11 @@ const props = defineProps<{
   editor: ReturnType<typeof usePdfTextEditor>
 }>()
 
+const emit = defineEmits<{
+  /** 2026-08-02: 空态时点"一键 OCR"按钮触发 */
+  (e: 'request-ocr'): void
+}>()
+
 const positions = computed<PdfTextPosition[]>(() => {
   return props.editor.positionsByPage.value.get(props.pageNum) || []
 })
@@ -75,6 +97,9 @@ const savedKey = ref<string | null>(null)
 function tokenKey(token: PdfTextPosition, idx: number): string {
   return `${props.pageNum}-${idx}-${Math.round(token.x)}-${Math.round(token.y)}`
 }
+
+// 2026-08-02: 当前页是否正在加载 positions(用于区分 loading / empty 两态)
+const isLoading = computed(() => props.editor.loadingPositions?.value?.has(props.pageNum) ?? false)
 
 // ====== 显示文字(可能已被 pending 编辑修改) ======
 function displayText(token: PdfTextPosition): string {
@@ -215,6 +240,51 @@ watch(
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* 2026-08-02: 空态引导(无 token 可编辑) */
+.pdf-text-edit-empty {
+  pointer-events: auto;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--el-fill-color-blank, #fff);
+  border: 1px dashed var(--el-border-color, #dcdfe6);
+  border-radius: 8px;
+  padding: 24px 32px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  max-width: 360px;
+}
+.pdf-text-edit-empty-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+.pdf-text-edit-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+  margin-bottom: 8px;
+}
+.pdf-text-edit-empty-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary, #606266);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+.pdf-text-edit-empty-btn {
+  background: var(--el-color-primary, #409eff);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 20px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.pdf-text-edit-empty-btn:hover {
+  opacity: 0.85;
 }
 
 .pdf-edit-token {

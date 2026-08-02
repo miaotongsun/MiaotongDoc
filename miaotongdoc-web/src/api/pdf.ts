@@ -180,10 +180,12 @@ export const pdfApi = {
   /** Phase 11.4: 强制 PaddleOCR 识别(返回 bbox 坐标)
    *  Phase 13.6: model 参数选择 mobile(轻量,默认)/ server(高精度)
    */
-  recognizePaddle(docId: number, model: 'mobile' | 'server' = 'mobile') {
-    return api.post<any, { status: string; engine: string; model?: string; degraded?: boolean; pages?: any[]; totalPages?: number }>(
-      `/pdf/${docId}/recognize-paddle?model=${model}`,
-    )
+  // 2026-08-02 PR3: 加 pageNum 可选参数(null = 全文,非 null = 单页)
+  recognizePaddle(docId: number, model: 'mobile' | 'server' = 'mobile', pageNum?: number) {
+    const url = pageNum
+      ? `/pdf/${docId}/recognize-paddle?model=${model}&pageNum=${pageNum}`
+      : `/pdf/${docId}/recognize-paddle?model=${model}`
+    return api.post<any, { status: string; engine: string; model?: string; degraded?: boolean; pages?: any[]; totalPages?: number }>(url)
   },
 
   /** 获取 Markdown 内容 */
@@ -412,14 +414,27 @@ export const pdfApi = {
   },
 
   /**
-   * Phase 12.4: 应用密文(绘制黑色矩形覆盖)
-   * POST /api/pdf/{id}/redact
+   * Phase 12.4: 应用密文（真脱敏 — 2026-08-02 重构）
+   * POST /api/pdf/{id}/redact  mode=download
+   * 返回脱敏后的 PDF Blob（下载副本模式，不修改原文档）
    */
-  applyRedaction(docId: number, regions: Array<{ page: number; x: number; y: number; width: number; height: number }>) {
+  applyRedaction(docId: number, regions: Array<{ pageNum: number; x: number; y: number; width: number; height: number }>) {
     return api.post<any, Blob>(
       `/pdf/${docId}/redact`,
-      { regions },
+      { regions, mode: 'download' },
       { responseType: 'blob' as any },
+    )
+  },
+
+  /**
+   * 2026-08-02: 密文 in-place 模式
+   * POST /api/pdf/{id}/redact  mode=in-place
+   * 落盘到原文档,返回 { success, filePath, fileSize }
+   */
+  applyRedactionInPlace(docId: number, regions: Array<{ pageNum: number; x: number; y: number; width: number; height: number }>) {
+    return api.post<any, { success: boolean; filePath: string; fileSize: number; regions: number }>(
+      `/pdf/${docId}/redact`,
+      { regions, mode: 'in-place' },
     )
   },
 

@@ -90,6 +90,23 @@ public class PaddleOcrClient {
      */
     public Map<String, Object> recognizePdf(Long documentId, String language, String model,
                                             ProgressCallback progressCallback) {
+        return recognizePdf(documentId, language, model, progressCallback, null);
+    }
+
+    /**
+     * 2026-08-02 PR3: 加 pageNum 参数(null = 全文识别,非 null = 只识别该页)
+     */
+    public Map<String, Object> recognizePdf(Long documentId, String language, String model,
+                                            ProgressCallback progressCallback, Integer pageNum) {
+        // 2026-08-02: 用 recognizePdfCore 实际执行,std::exception 客户端内重试 1 次
+        return recognizePdfCore(documentId, language, model, progressCallback, pageNum, false);
+    }
+
+    /**
+     * 2026-08-02: 实际 OCR 请求逻辑,retry 标记防止无限递归
+     */
+    private Map<String, Object> recognizePdfCore(Long documentId, String language, String model,
+                                                ProgressCallback progressCallback, Integer pageNum, boolean isRetry) {
         Map<String, Object> result = new HashMap<>();
         Document doc = documentService.getDocument(documentId);
 
@@ -140,6 +157,11 @@ public class PaddleOcrClient {
             body.add("model", model);
             body.add("use_table", String.valueOf(properties.isUseTableRecognition()));
             body.add("use_layout", String.valueOf(properties.isUseLayout()));
+            // 2026-08-02 PR3: 单页识别 -> 把 pageNum 透传给 Python /ocr/pdf
+            if (pageNum != null && pageNum > 0) {
+                body.add("pages", String.valueOf(pageNum));
+                log.info("[OCR] 单页识别: docId={}, pageNum={}", doc.getId(), pageNum);
+            }
             body.add("return_coords", String.valueOf(properties.isReturnCoordinates()));
 
             HttpEntity<org.springframework.util.LinkedMultiValueMap<String, Object>> requestEntity =
@@ -167,9 +189,9 @@ public class PaddleOcrClient {
                 Map<String, String> markdownByPage = new LinkedHashMap<>();
                 if (pagesList != null) {
                     for (Map<String, Object> page : pagesList) {
-                        Object pageNum = page.get("pageNum");
+                        Object pNum = page.get("pageNum");
                         Object pageText = page.get("text");
-                        markdownByPage.put(String.valueOf(pageNum), String.valueOf(pageText));
+                        markdownByPage.put(String.valueOf(pNum), String.valueOf(pageText));
                     }
                 }
                 // 若无分页信息，则放入单页全文
@@ -192,6 +214,19 @@ public class PaddleOcrClient {
 
             throw new RuntimeException("PaddleOCR 返回异常: HTTP " + response.getStatusCode());
         } catch (Exception e) {
+            // 2026-08-02: PaddleOCR 容器 text_detection predictor 持续 std::exception,
+            // 对 mobile + server 都可能发生。客户端内短退避重试 1 次(快速恢复)
+            String errMsg = e.getMessage() != null ? e.getMessage() : "";
+            if (errMsg.contains("std::exception") && !isRetry) {
+                log.warn("PaddleOCR std::exception,客户端内重试 1 次: docId={}, model={}", doc.getId(), model);
+                try {
+                    Thread.sleep(2000);
+                    return recognizePdfCore(documentId, language, model, progressCallback, pageNum, true);
+                } catch (Exception retryErr) {
+                    log.warn("客户端内重试仍失败: docId={}, model={}, err={}",
+                            doc.getId(), model, retryErr.getMessage());
+                }
+            }
             log.error("PaddleOCR 识别失败: docId={}", doc.getId(), e);
             result.put("status", "failed");
             result.put("error", e.getMessage());

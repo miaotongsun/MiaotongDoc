@@ -8,8 +8,8 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-27
-> 上次更新：2026-07-27
+> 上次更新：2026-08-02
+> 上次更新：2026-08-02
 
 ### 快速索引
 
@@ -32,6 +32,7 @@
 ## 已完成
 
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
+- [2026-08-02-pdf-redaction-refactor.md](2026-08-02-pdf-redaction-refactor.md) — PDF 编辑器「密文遮盖」功能重构 (RedactionEngine + 红色 banner + OCR 路径 + E2E 15/15 + text API 强验证 166→1 char) — 完成 2026-08-02
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 <!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
 
@@ -44,6 +45,8 @@
 
 ## 看板更新记录
 
+- 2026-08-02 —— 2026-08-02-pdf-redaction-refactor.md 完成（RedactionEngine + 红色 banner + E2E 15/15 + text API 强验证 166→1 char）
+- 2026-08-02 —— 新增 2026-08-02-pdf-redaction-refactor.md 进行中（用户提出 PDF 密文遮盖改造：交互闭环 + 后端真脱敏 + OCR fallback）
 - 2026-07-27 —— 新增 2026-07-26-pdf-editor-tools-bugfix.md 完成记录（用户提出 8 类 BUG，以 Acrobat DC 为标准重审，7 步实施完成）
 
 ## 已废弃

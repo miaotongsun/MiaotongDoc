@@ -84,14 +84,17 @@
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
         :viewBox="`0 0 ${canvasWidth} ${canvasHeight}`"
       >
+        <!-- 2026-08-02: staging 密文区域 (已迁移到下方集中渲染,由第二个 template 负责) -->
         <!-- Phase 13.26: pending rect (drawing preview) 按 activeTool 分支渲染各自形状 -->
         <template v-if="pendingRect && pendingRect.pageNumber === pageNum">
-          <!-- 矩形:实线边框 -->
+          <!-- 矩形:实线边框 (2026-08-02: 密文模式下用红色半透明) -->
           <rect
             v-if="activeTool === 'rectangle'"
             :x="pendingRect.x" :y="pendingRect.y"
             :width="pendingRect.width" :height="pendingRect.height"
-            :stroke="activeColor" stroke-width="2" fill="none" rx="2"
+            :stroke="redactMode ? '#dc2626' : activeColor"
+            :fill="redactMode ? 'rgba(220, 38, 38, 0.20)' : 'none'"
+            stroke-width="2" rx="2"
             stroke-dasharray="4 2"
           />
           <!-- 椭圆 -->
@@ -126,6 +129,80 @@
             :width="pendingRect.width" :height="pendingRect.height"
             :style="pendingRectStyle"
           />
+        </template>
+        <!-- 2026-08-02: 已暂存的密文区域(staging) - 红色实线 + 红色半透明填充 -->
+        <template v-if="redactStaging && redactStaging.length > 0">
+          <rect
+            v-for="(r, idx) in redactStaging.filter(r => r.pageNum === pageNum)"
+            :key="`redact-staging-${idx}-${r.pageNum}-${r.x}-${r.y}`"
+            :x="toCanvasRect(r).x"
+            :y="toCanvasRect(r).y"
+            :width="toCanvasRect(r).w"
+            :height="toCanvasRect(r).h"
+            fill="rgba(220, 38, 38, 0.45)"
+            stroke="#dc2626"
+            stroke-width="2"
+            stroke-dasharray="6 2"
+            rx="2"
+            data-test="redact-staging-layer"
+          />
+          <!-- 编号徽章 -->
+          <g
+            v-for="(r, idx) in redactStaging.filter(r => r.pageNum === pageNum)"
+            :key="`redact-staging-label-${idx}`"
+          >
+            <rect
+              :x="toCanvasRect(r).x"
+              :y="toCanvasRect(r).y - 18"
+              width="32" height="18"
+              fill="#dc2626" rx="3"
+            />
+            <text
+              :x="toCanvasRect(r).x + 16"
+              :y="toCanvasRect(r).y - 4"
+              fill="#fff"
+              font-size="12"
+              font-weight="700"
+              text-anchor="middle"
+            >#{{ idx + 1 }}</text>
+          </g>
+        </template>
+        <!-- 2026-08-02: 已保存的密文快照 - 红色虚线边框 + "已遮盖"徽章,
+             让用户直观看到刚才选中的区域在画布上的位置(画布已重新渲染为新 PDF) -->
+        <template v-if="redactSavedSnapshot && redactSavedSnapshot.length > 0">
+          <rect
+            v-for="(r, idx) in redactSavedSnapshot.filter(r => r.pageNum === pageNum)"
+            :key="`redact-saved-${idx}-${r.pageNum}-${r.x}-${r.y}`"
+            :x="toCanvasRect(r).x"
+            :y="toCanvasRect(r).y"
+            :width="toCanvasRect(r).w"
+            :height="toCanvasRect(r).h"
+            fill="none"
+            stroke="#dc2626"
+            stroke-width="3"
+            stroke-dasharray="8 3"
+            rx="2"
+            data-test="redact-saved-layer"
+          />
+          <g
+            v-for="(r, idx) in redactSavedSnapshot.filter(r => r.pageNum === pageNum)"
+            :key="`redact-saved-label-${idx}`"
+          >
+            <rect
+              :x="toCanvasRect(r).x"
+              :y="toCanvasRect(r).y - 18"
+              width="56" height="18"
+              fill="#dc2626" rx="3"
+            />
+            <text
+              :x="toCanvasRect(r).x + 28"
+              :y="toCanvasRect(r).y - 4"
+              fill="#fff"
+              font-size="12"
+              font-weight="700"
+              text-anchor="middle"
+            >已遮盖</text>
+          </g>
         </template>
         <!-- 渲染此页所有标注 -->
         <g v-for="ann in pageAnnotations" :key="ann.id">
@@ -334,7 +411,7 @@
           pointer-events="none"
           class="pdf-signature-ghost"
         />
-        <!-- Phase 12.1: 表单字段临时高亮矩形(4 秒) -->
+        <!-- Phase 12.1: 表单字段临时高亮矩形(4 秒,带渐隐动画 PR5) -->
         <rect
           v-if="formHighlightBox"
           :x="formHighlightBox.x"
@@ -389,6 +466,12 @@ const props = defineProps<{
   isRendered?: boolean
   /** Phase 12.1: 表单字段临时高亮(在画布上画矩形 4 秒) */
   formHighlight?: { x: number; y: number; w: number; h: number; name: string } | null
+  /** 2026-08-02: 密文遮盖模式 (rectangle 渲染用红色) */
+  redactMode?: boolean
+  /** 2026-08-02: 已暂存的密文区域列表(画布像素坐标,1-indexed pageNum) */
+  redactStaging?: Array<{ pageNum: number; x: number; y: number; width: number; height: number }>
+  /** 2026-08-02: 保存后保留的快照(画红色描边让用户看到已遮盖位置) */
+  redactSavedSnapshot?: Array<{ pageNum: number; x: number; y: number; width: number; height: number }>
   /** Phase 13.8: 编辑模式(画布蓝色边框) */
   isEditing?: boolean
   /** Phase 13.25: 橡皮擦跟手光标(画布像素 + 页码) */
@@ -679,6 +762,8 @@ function onContextMenu(evt: MouseEvent) {
   background: var(--color-surface);
   user-select: text;
   margin: 0 auto;
+  /* 2026-08-02: 防止子层(text-layer/ocr-layer 等)撑高容器导致画布下方空白 */
+  overflow: hidden;
 }
 /* Phase 13.26: 手型工具平移光标 */
 .pdf-page-canvas.is-pan-mode {
@@ -772,13 +857,20 @@ function onContextMenu(evt: MouseEvent) {
 .pdf-annotation-layer {
   position: absolute;
   inset: 0;
-  left: 0;
-  top: 0;
+  left: 0;  top: 0;
   z-index: calc(var(--z-canvas) + 3);
   pointer-events: none;
 }
 .pdf-annotation-layer > * {
   pointer-events: auto;
+}
+/* 2026-08-02: OCR 层容器必须 absolute,否则在文档流中占 canvasHeight 高度,
+   叠在 canvas 下方导致画布下方空白翻倍(用户反馈"OCR 后画布下方空白很大") */
+.pdf-ocr-layer-wrap {
+  position: absolute;
+  inset: 0;
+  left: 0;
+  pointer-events: none;
 }
 
 .pdf-comment-marker {
@@ -815,13 +907,20 @@ function onContextMenu(evt: MouseEvent) {
   50% { opacity: 1; }
 }
 
-/* Phase 12.1: 表单字段高亮闪烁 */
+/* Phase 12.1: 表单字段高亮闪烁 + PR5 渐隐 (3.5s 后 0.5s 淡出) */
 .pdf-form-highlight {
-  animation: pdf-form-highlight-pulse 1s ease-in-out infinite;
+  animation:
+    pdf-form-highlight-pulse 1s ease-in-out infinite,
+    pdf-form-highlight-fade 4s ease-in forwards;
   pointer-events: none;
 }
 @keyframes pdf-form-highlight-pulse {
   0%, 100% { stroke-opacity: 1; fill-opacity: 0.18; }
   50% { stroke-opacity: 0.6; fill-opacity: 0.32; }
+}
+@keyframes pdf-form-highlight-fade {
+  0% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
 }
 </style>
