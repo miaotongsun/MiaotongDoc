@@ -17,7 +17,7 @@ public class FolderController {
 
     private final FolderService folderService;
 
-    @GetMapping
+    @GetMapping({"", "/"})
     public ResponseEntity<List<Folder>> getFolders(
             @RequestParam(required = false) Long parentId,
             HttpServletRequest httpRequest) {

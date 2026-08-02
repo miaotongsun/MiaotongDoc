@@ -8,8 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-07-27
-> 上次更新：2026-07-27
+> 上次更新：2026-08-02
 
 ### 快速索引
 
@@ -32,7 +31,7 @@
 ## 已完成
 
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
-- [2026-08-02-pre-prod.md](2026-08-02-pre-prod.md) — 合并归档:投产前审计+深度测试+补充测试+Bug修复(8个P0/P1修复,最终回归92.3%通过) (2026-08-02)
+- [2026-08-02-pre-prod.md](2026-08-02-pre-prod.md) — 投产前全维度验证+深度测试+补充测试+Bug修复(13个P0/P1修复,最终回归100% (135/135) ✅) (2026-08-02)
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 <!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
 
@@ -43,10 +42,6 @@
 - [2026-08-01-pre-prod-audit.md](2026-08-01-pre-prod-audit.md) — 投产前全维度验证(10 维度) + GO WITH FIXES 决策 + 3 P0 + 2 P1 — 完成 2026-08-01
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
-
-## 看板更新记录
-
-- 2026-08-02 —— 合并归档:2026-08-01-pre-prod-audit + 2026-08-02-pre-prod-full-audit + 2026-08-02-pre-prod-supplement + 2026-08-02-bugfixes → 2026-08-02-pre-prod.md
 
 ## 已废弃
 
@@ -115,6 +110,9 @@
 
 | 时间 | 更新内容 | 操作人 |
 |---|---|---|
+| 2026-08-02 | 合并归档: 2026-08-01-pre-prod-audit + 2026-08-02-pre-prod-full-audit + 2026-08-02-pre-prod-supplement + 2026-08-02-bugfixes → 2026-08-02-pre-prod.md | Claude |
+| 2026-08-02 | 最终回归验证 100% (135/135), reindex 异步化修复完成, 计划文档更新至 100% | Claude |
+| 2026-08-02 | 补充入档: FolderController 尾斜杠 500 修复 (@GetMapping({"", "/"})) 作为 Bug #15, 13 Bug 全部入档 | Claude |
 | 2026-07-26 | 新建文档对话框合并 PDF 创建 + 模板可折叠 + 按 docType 过滤（phase15-e2e 27/27 通过） | Claude |
 | 2026-07-25 | 迁入计划文档模板/ADR 模板/提交规范（从 CLAUDE.md §3 瘦身） | Claude |
 | 2026-07-23 | 重构看板：精简 + 明确"进行中/已完成/已废弃"三类索引 | Claude |

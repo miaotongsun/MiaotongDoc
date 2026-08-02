@@ -136,14 +136,14 @@ public class DocumentController {
         return ResponseEntity.ok(Map.of("url", url));
     }
 
-    // 手动触发全文索引
+    // 手动触发全文索引（异步执行，避免阻塞 HTTP 请求线程）
     @PostMapping("/reindex")
     public ResponseEntity<Map<String, String>> reindex(HttpServletRequest httpRequest) {
         String role = (String) httpRequest.getAttribute("role");
         if (!"admin".equals(role)) {
             return ResponseEntity.status(403).body(Map.of("error", "需要管理员权限"));
         }
-        contentIndexService.indexNewDocuments();
+        java.util.concurrent.CompletableFuture.runAsync(() -> contentIndexService.indexNewDocuments());
         return ResponseEntity.ok(Map.of("message", "索引任务已触发"));
     }
 
