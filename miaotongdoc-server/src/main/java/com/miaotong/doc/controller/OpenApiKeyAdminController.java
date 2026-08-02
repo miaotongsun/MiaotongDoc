@@ -77,7 +77,9 @@ public class OpenApiKeyAdminController {
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("id", saved.getId());
-        resp.put("accessKey", saved.getAccessKey());   // 明文仅返回一次
+        // 统一对外字段:用 apiKey(测试/前端/SDK 期望值),accessKey 字段保留为别名兼容
+        resp.put("apiKey", saved.getAccessKey());   // 明文仅返回一次
+        resp.put("accessKey", saved.getAccessKey()); // 别名(向后兼容)
         resp.put("secretPrefix", saved.getSecretPrefix());
         resp.put("name", saved.getName());
         resp.put("ownerSystem", saved.getOwnerSystem());
@@ -105,7 +107,10 @@ public class OpenApiKeyAdminController {
             HttpServletRequest httpRequest) {
         checkAdmin(httpRequest);
         String accessKey = openApiKeyService.revealKey(id);
-        return ResponseEntity.ok(Map.of("accessKey", accessKey));
+        Map<String, String> body = new HashMap<>();
+        body.put("apiKey", accessKey);     // 统一对外字段
+        body.put("accessKey", accessKey);  // 别名兼容
+        return ResponseEntity.ok(body);
     }
 
     /** 启用 Key */

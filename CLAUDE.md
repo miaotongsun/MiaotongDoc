@@ -765,7 +765,7 @@ draft (草稿)
 | **页面操作** | | |
 | POST | `/merge` | 多文档合并 |
 | POST | `/{id}/split` | 拆分 |
-| POST | `/{id}/split-by-ranges` | 按页码范围拆分 |
+| POST | `/{id}/split-by-ranges` | 按页码范围拆分(参数 `{"ranges":"1-3,5,7-9"}`,**字符串**非数组,逗号分隔多个区间) |
 | POST | `/{id}/pages/rotate` | 旋转页面 |
 | DELETE | `/{id}/pages/{pageNum}` | 删除单页 |
 | POST | `/{id}/pages/extract` | 提取页面 |
@@ -1835,6 +1835,7 @@ npm run build --verbose
 ## 对外服务 API（v1 规范）
 
 > **鉴权方案**：API Key（多 Key 管理）。详细规范见 [plans/ADR-001-open-api-design.md](plans/ADR-001-open-api-design.md)。
+> **集成指南**：[plans/openapi-integration-guide.md](plans/openapi-integration-guide.md)（含各接口的入参/出参/错误码/示例代码/最佳实践）
 
 ### 设计要点
 
@@ -1852,6 +1853,11 @@ npm run build --verbose
 | GET | `/api/open/v1/health` | 健康检查 |
 | POST | `/api/open/v1/users` | 创建用户 |
 | POST | `/api/open/v1/departments` | 创建部门 |
+| GET | `/api/open/v1/documents` | 文档列表（分页） |
+| GET | `/api/open/v1/documents/{id}` | 文档详情 |
+| GET | `/api/open/v1/documents/{id}/file` | 下载文档文件 |
+| GET | `/api/open/v1/documents/{id}/sheet-data` | 读取 xlsx 结构化数据（按行列输出单元格） |
+| POST | `/api/open/v1/documents/upload` | 上传文档 |
 
 ### 管理员管理 API Key
 

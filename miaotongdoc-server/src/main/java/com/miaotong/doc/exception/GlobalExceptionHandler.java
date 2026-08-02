@@ -2,6 +2,7 @@ package com.miaotong.doc.exception;
 
 import com.miaotong.doc.dto.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -43,6 +44,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * JSON 请求体格式错误 / 类型不匹配(如传对象数组给 Map<String,String>):
+     * 返 400 而非 500
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler(
+        org.springframework.http.converter.HttpMessageNotReadableException.class
+    )
+    public ResponseEntity<ErrorResponse> handleNotReadable(
+            org.springframework.http.converter.HttpMessageNotReadableException e) {
+        log.warn("请求体解析失败: {}", e.getMostSpecificCause().getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse(400, "请求体格式错误或参数类型不匹配", null));
+    }
+
+    /**
      * Phase 27 测试报告:@PathVariable Long 收到 "abc" 时抛 NumberFormatException,
      * 统一 400 返回(不暴露 500 内部错误)
      */
@@ -71,6 +86,17 @@ public class GlobalExceptionHandler {
         log.error("未处理异常", e);
         return ResponseEntity.status(500)
                 .body(new ErrorResponse(500, "服务器内部错误", null));
+    }
+
+    /**
+     * 数据库外键/唯一约束违反(如评论 documentId 不存在 → 抛 DataIntegrityViolationException):
+     * 捕获并返回 400 而非 500,避免前端误判为服务器故障
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {
+        log.warn("数据完整性异常: {}", e.getMostSpecificCause().getMessage());
+        return ResponseEntity.badRequest()
+                .body(new ErrorResponse(400, "关联数据不存在或违反唯一约束", null));
     }
 
 }

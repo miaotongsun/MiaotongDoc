@@ -172,7 +172,21 @@ public class OpenApiAuthFilter extends OncePerRequestFilter {
         err.put("code", code);
         err.put("message", message);
         if (requestId != null) err.put("requestId", requestId);
-        response.setStatus(code >= 500 ? 500 : (code >= 40000 ? 400 : code >= 30000 ? 403 : 200));
+        // 业务码 → HTTP 状态码映射:
+        //   401xx(认证失败) → 401
+        //   403xx(权限不足) → 403
+        //   429xx(限流) → 429
+        //   400xx(参数/业务错误) → 400
+        //   5xxxx(服务器错误) → 500
+        //   其他 → 200(成功)
+        int httpStatus;
+        if (code >= 40100 && code < 40200) httpStatus = 401;
+        else if (code >= 40300 && code < 40400) httpStatus = 403;
+        else if (code >= 42900 && code < 43000) httpStatus = 429;
+        else if (code >= 40000 && code < 50000) httpStatus = 400;
+        else if (code >= 50000) httpStatus = 500;
+        else httpStatus = 200;
+        response.setStatus(httpStatus);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(objectMapper.writeValueAsString(err));
     }

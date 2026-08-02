@@ -615,6 +615,168 @@
               </div>
             </el-alert>
 
+            <!-- API 接口文档 -->
+            <div class="api-doc-wrap">
+              <el-tabs v-model="apiDocTab" type="border-card" size="small">
+                <el-tab-pane label="概览" name="overview">
+                  <div class="api-overview">
+                    <p>MiaotongDoc 对外服务 API 为外部系统（HR、ERP、OA 等）提供标准化的集成接口。
+                    所有接口使用 <strong>API Key 鉴权</strong>，管理员在后台「颁发新 Key」后，
+                    外部系统通过 <code>X-API-Key</code> 请求头传递密钥即可调用。</p>
+                    <el-row :gutter="16" style="margin-top:16px">
+                      <el-col :span="6" v-for="stat in apiStats" :key="stat.label">
+                        <el-card shadow="hover" class="api-stat-card">
+                          <div class="stat-num">{{ stat.count }}</div>
+                          <div class="stat-label">{{ stat.label }}</div>
+                        </el-card>
+                      </el-col>
+                    </el-row>
+                    <div style="margin-top:16px">
+                      <el-button size="small" @click="apiDocTab='endpoints'">查看接口列表 →</el-button>
+                      <el-button size="small" text @click="apiDocTab='errors'">错误码说明 →</el-button>
+                    </div>
+                    <div style="margin-top:12px;font-size:12px;color:#909399">
+                      详细集成指南（含示例代码、最佳实践）：<br>
+                      <a href="/openapi-integration-guide.md" target="_blank" style="color:#409eff">plans/openapi-integration-guide.md</a>
+                    </div>
+                  </div>
+                </el-tab-pane>
+                <el-tab-pane label="鉴权" name="auth">
+                  <div class="api-auth-section">
+                    <h4 class="api-section-title">请求头</h4>
+                    <el-table :data="authHeaders" stripe size="small">
+                      <el-table-column prop="header" label="请求头" width="180">
+                        <template #default="{ row }"><code>{{ row.header }}</code></template>
+                      </el-table-column>
+                      <el-table-column prop="required" label="必填" width="70" align="center">
+                        <template #default="{ row }">{{ row.required ? '✅' : '❌' }}</template>
+                      </el-table-column>
+                      <el-table-column prop="desc" label="说明" />
+                    </el-table>
+                    <h4 class="api-section-title" style="margin-top:20px">调用示例</h4>
+                    <div class="api-code-block">
+                      <div class="api-code-header">
+                        <span>curl</span>
+                        <el-button text size="small" @click="copyText('curl -s ${baseUrl}/api/open/v1/health -H \'X-API-Key: ak_xxx\'')">复制</el-button>
+                      </div>
+                      <pre><code>curl -s ${baseUrl}/api/open/v1/health \
+  -H "X-API-Key: ak_xxx"</code></pre>
+                    </div>
+                    <h4 class="api-section-title" style="margin-top:16px">幂等性</h4>
+                    <p style="color:#606266;font-size:13px">POST 请求支持 <code>Idempotency-Key</code> 请求头，24 小时内重复请求返回首次成功响应。</p>
+                    <div class="api-code-block">
+                      <div class="api-code-header">
+                        <span>curl</span>
+                        <el-button text size="small" @click="copyText('curl -s -X POST ... -H \'Idempotency-Key: uuid\'')">复制</el-button>
+                      </div>
+                      <pre><code>curl -s -X POST ${baseUrl}/api/open/v1/users \
+  -H "X-API-Key: ak_xxx" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: your-unique-id" \
+  -d '{"employeeId":"20001","username":"zhangsan","realName":"张三"}'</code></pre>
+                    </div>
+                  </div>
+                </el-tab-pane>
+                <el-tab-pane :label="'接口列表 (' + apiEndpoints.length + ')'" name="endpoints">
+                  <div class="api-endpoints">
+                    <div v-for="(ep, i) in apiEndpoints" :key="ep.method + ep.path" class="api-endpoint-card" :class="{ 'ep-collapsed': expandedIndex !== i }">
+                      <div class="ep-header" @click="toggleEndpoint(i)">
+                        <span :class="'ep-method ep-' + ep.method.toLowerCase()">{{ ep.method }}</span>
+                        <span class="ep-path">{{ ep.path }}</span>
+                        <span class="ep-desc">{{ ep.desc }}</span>
+                        <span class="ep-toggle">{{ expandedIndex === i ? '▾' : '▸' }}</span>
+                      </div>
+                      <template v-if="expandedIndex === i">
+                      <div class="ep-body" v-if="ep.body">
+                        <div class="ep-section">
+                          <div class="ep-section-title">请求参数</div>
+                          <el-table :data="ep.body" stripe size="small">
+                            <el-table-column prop="field" label="字段" width="150">
+                              <template #default="{ row }"><code>{{ row.field }}</code></template>
+                            </el-table-column>
+                            <el-table-column prop="type" label="类型" width="80" />
+                            <el-table-column prop="required" label="必填" width="60" align="center">
+                              <template #default="{ row }">{{ row.required ? '✅' : '❌' }}</template>
+                            </el-table-column>
+                            <el-table-column prop="default" label="默认值" width="100" />
+                            <el-table-column prop="desc" label="说明" />
+                          </el-table>
+                        </div>
+                      </div>
+                      <div class="ep-body" v-if="ep.reqExample">
+                        <div class="ep-section">
+                          <div class="ep-section-title">请求示例</div>
+                          <div class="api-code-block">
+                            <div class="api-code-header">
+                              <span>JSON</span>
+                              <el-button text size="small" @click="copyText(ep.reqExample)">复制</el-button>
+                            </div>
+                            <pre><code>{{ ep.reqExample }}</code></pre>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="ep-body" v-if="ep.respFields">
+                        <div class="ep-section">
+                          <div class="ep-section-title">响应字段</div>
+                          <el-table :data="ep.respFields" stripe size="small">
+                            <el-table-column prop="field" label="字段" width="150">
+                              <template #default="{ row }"><code>{{ row.field }}</code></template>
+                            </el-table-column>
+                            <el-table-column prop="type" label="类型" width="80" />
+                            <el-table-column prop="desc" label="说明" />
+                          </el-table>
+                        </div>
+                      </div>
+                      <div class="ep-curl" v-if="ep.curl">
+                        <div class="api-code-block">
+                          <div class="api-code-header">
+                            <span>curl 示例</span>
+                            <el-button text size="small" @click="copyText(curl(ep.curl))">复制</el-button>
+                          </div>
+                          <pre><code>{{ curl(ep.curl) }}</code></pre>
+                        </div>
+                      </div>
+                      <div class="ep-example" v-if="ep.example">
+                        <div class="api-code-block">
+                          <div class="api-code-header">
+                            <span>使用示例</span>
+                          </div>
+                          <pre class="example-pre"><code>{{ ep.example }}</code></pre>
+                        </div>
+                      </div>
+                      </template>
+                    </div>
+                  </div>
+                </el-tab-pane>
+                <el-tab-pane label="错误码" name="errors">
+                  <div class="api-errors-section">
+                    <h4 class="api-section-title">HTTP 状态码与业务码</h4>
+                    <el-table :data="errorCodes" stripe size="small">
+                      <el-table-column prop="http" label="HTTP" width="80" align="center" />
+                      <el-table-column prop="code" label="业务码" width="120">
+                        <template #default="{ row }"><code>{{ row.code }}</code></template>
+                      </el-table-column>
+                      <el-table-column prop="desc" label="含义" />
+                    </el-table>
+                    <h4 class="api-section-title" style="margin-top:20px">错误响应格式</h4>
+                    <div class="api-code-block">
+                      <pre><code>{
+  "code": 40102,
+  "message": "API Key 无效、已吊销或已过期",
+  "requestId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}</code></pre>
+                    </div>
+                    <h4 class="api-section-title" style="margin-top:20px">常见错误排查</h4>
+                    <el-table :data="errorFixes" stripe size="small">
+                      <el-table-column prop="error" label="错误" width="80" />
+                      <el-table-column prop="reason" label="原因" />
+                      <el-table-column prop="fix" label="解决" />
+                    </el-table>
+                  </div>
+                </el-tab-pane>
+              </el-tabs>
+            </div>
+
             <div class="tab-header">
               <div style="flex:1"></div>
               <el-button type="primary" @click="openOpenApiKeyDialog()">
@@ -1092,6 +1254,172 @@ const openApiKeyForm = ref<any>({ name: '', ownerSystem: '', contact: '', expire
 const newOpenApiKey = ref<OpenApiKeyCreateResponse | null>(null)
 const revealedKey = ref('')
 const revealedKeyInfo = ref<OpenApiKeyInfo | null>(null)
+
+// --- API 文档数据 ---
+const apiDocTab = ref('overview')
+const apiStats = [
+  { count: 8, label: '接口总数' },
+  { count: 4, label: 'GET 查询' },
+  { count: 4, label: 'POST 创建' },
+  { count: 6, label: '错误码' },
+]
+const authHeaders = [
+  { header: 'X-API-Key', required: true, desc: '颁发时获得的密钥，格式 ak_xxx' },
+  { header: 'Content-Type', required: true, desc: '固定为 application/json' },
+  { header: 'Idempotency-Key', required: false, desc: '幂等键（可选），防止重复创建' },
+]
+const errorCodes = [
+  { http: 401, code: '40101', desc: '缺少 X-API-Key 请求头' },
+  { http: 401, code: '40102', desc: 'API Key 无效、已吊销或已过期' },
+  { http: 403, code: '40301', desc: '客户端 IP 不在白名单内' },
+  { http: 429, code: '42901', desc: '请求过于频繁，超过限流阈值' },
+  { http: 400, code: '400xx', desc: '参数校验失败（如必填字段缺失）' },
+  { http: 500, code: '50001', desc: '服务内部错误' },
+]
+const errorFixes = [
+  { error: '40101', reason: '未传 X-API-Key', fix: '检查请求头是否携带' },
+  { error: '40102', reason: 'Key 无效/已吊销/已过期', fix: '确认 Key 状态，重新颁发' },
+  { error: '40301', reason: 'IP 不在白名单', fix: '管理员在颁发 Key 时添加调用方 IP' },
+  { error: '42901', reason: '超过限流阈值', fix: '降低调用频率，或申请提高限流' },
+  { error: '400', reason: '参数错误', fix: '查看 message 字段提示具体缺失字段' },
+]
+// 动态获取当前部署地址
+const baseUrl = window.location.protocol + '//' + window.location.host
+function curl(cmd: string) {
+  return cmd.split('${baseUrl}').join(baseUrl)
+}
+const apiEndpoints = [
+  {
+    method: 'GET', path: '/api/open/v1/health', desc: '健康检查',
+    curl: 'curl -s ${baseUrl}/api/open/v1/health -H "X-API-Key: ak_xxx"',
+    respFields: [
+      { field: 'status', type: 'string', desc: '"ok" 表示服务正常' },
+      { field: 'version', type: 'string', desc: 'API 版本号 "v1"' },
+      { field: 'timestamp', type: 'number', desc: '服务端时间戳（毫秒）' },
+    ]
+  },
+  {
+    method: 'POST', path: '/api/open/v1/users', desc: '创建用户',
+    curl: 'curl -s -X POST ${baseUrl}/api/open/v1/users -H "X-API-Key: ak_xxx" -H "Content-Type: application/json" -d \'{"employeeId":"20001","username":"zhangsan","realName":"张三","departmentCode":"HR"}\'',
+    body: [
+      { field: 'employeeId', type: 'string', required: true, default: '—', desc: '工号，最长 8 位' },
+      { field: 'username', type: 'string', required: true, default: '—', desc: '登录用户名，最长 50 位' },
+      { field: 'realName', type: 'string', required: true, default: '—', desc: '真实姓名' },
+      { field: 'password', type: 'string', required: false, default: '"123456"', desc: '登录密码' },
+      { field: 'departmentCode', type: 'string', required: false, default: 'null', desc: '部门编码，须已存在' },
+      { field: 'email', type: 'string', required: false, default: 'null', desc: '邮箱' },
+      { field: 'phone', type: 'string', required: false, default: 'null', desc: '手机号' },
+      { field: 'position', type: 'string', required: false, default: 'null', desc: '职位' },
+      { field: 'role', type: 'string', required: false, default: '"user"', desc: '角色："user" 或 "admin"' },
+    ],
+    respFields: [
+      { field: 'id', type: 'number', desc: '用户 ID' },
+      { field: 'employeeId', type: 'string', desc: '工号' },
+      { field: 'username', type: 'string', desc: '用户名' },
+      { field: 'realName', type: 'string', desc: '姓名' },
+      { field: 'email', type: 'string', desc: '邮箱' },
+      { field: 'phone', type: 'string', desc: '手机号' },
+      { field: 'departmentId', type: 'number', desc: '部门 ID' },
+      { field: 'position', type: 'string', desc: '职位' },
+      { field: 'role', type: 'string', desc: '角色' },
+      { field: 'isActive', type: 'boolean', desc: '是否启用' },
+    ]
+  },
+  {
+    method: 'POST', path: '/api/open/v1/departments', desc: '创建部门',
+    curl: 'curl -s -X POST ${baseUrl}/api/open/v1/departments -H "X-API-Key: ak_xxx" -H "Content-Type: application/json" -d \'{"code":"HR","name":"人力资源部","parentCode":null,"sortOrder":0}\'',
+    body: [
+      { field: 'code', type: 'string', required: true, default: '—', desc: '部门编码，最长 20 位，唯一' },
+      { field: 'name', type: 'string', required: true, default: '—', desc: '部门名称，最长 200 位' },
+      { field: 'parentCode', type: 'string', required: false, default: 'null', desc: '上级部门编码，不传则为根部门' },
+      { field: 'sortOrder', type: 'number', required: false, default: '0', desc: '排序序号' },
+    ],
+    respFields: [
+      { field: 'id', type: 'number', desc: '部门 ID' },
+      { field: 'code', type: 'string', desc: '部门编码' },
+      { field: 'name', type: 'string', desc: '部门名称' },
+      { field: 'parentId', type: 'number', desc: '上级部门 ID' },
+      { field: 'level', type: 'number', desc: '层级（根部门为 1）' },
+      { field: 'path', type: 'string', desc: '路径' },
+      { field: 'sortOrder', type: 'number', desc: '排序序号' },
+      { field: 'isActive', type: 'boolean', desc: '是否启用' },
+    ]
+  },
+  {
+    method: 'GET', path: '/api/open/v1/documents', desc: '文档列表（分页）',
+    curl: 'curl -s "${baseUrl}/api/open/v1/documents?type=pdf&keyword=报告&page=0&size=20" -H "X-API-Key: ak_xxx"',
+    respFields: [
+      { field: 'content', type: 'array', desc: '文档列表' },
+      { field: 'totalElements', type: 'number', desc: '总数' },
+      { field: 'totalPages', type: 'number', desc: '总页数' },
+      { field: 'number', type: 'number', desc: '当前页码' },
+      { field: 'size', type: 'number', desc: '每页大小' },
+    ]
+  },
+  {
+    method: 'GET', path: '/api/open/v1/documents/{id}', desc: '文档详情',
+    curl: 'curl -s ${baseUrl}/api/open/v1/documents/42 -H "X-API-Key: ak_xxx"',
+    respFields: [
+      { field: 'id', type: 'number', desc: '文档 ID' },
+      { field: 'title', type: 'string', desc: '文档标题' },
+      { field: 'docType', type: 'string', desc: '文档类型（word/pdf/markdown）' },
+      { field: 'fileType', type: 'string', desc: '文件扩展名' },
+      { field: 'fileSize', type: 'number', desc: '文件大小（字节）' },
+      { field: 'status', type: 'string', desc: '状态（draft/signing/signed）' },
+      { field: 'currentVersion', type: 'number', desc: '当前版本号' },
+      { field: 'createdAt', type: 'string', desc: '创建时间' },
+      { field: 'updatedAt', type: 'string', desc: '更新时间' },
+    ]
+  },
+  {
+    method: 'GET', path: '/api/open/v1/documents/{id}/file', desc: '下载文档文件',
+    curl: 'curl -s -o report.pdf ${baseUrl}/api/open/v1/documents/42/file -H "X-API-Key: ak_xxx"',
+    respFields: [
+      { field: '—', type: 'binary', desc: '返回文件二进制流（octet-stream）' },
+    ]
+  },
+  {
+    method: 'POST', path: '/api/open/v1/documents/upload', desc: '上传文档',
+    reqExample: 'multipart/form-data; file=@report.docx (支持docx/xlsx/pptx/md/pdf)',
+    curl: 'curl -s -X POST ${baseUrl}/api/open/v1/documents/upload -H "X-API-Key: ak_xxx" -F "file=@report.docx"',
+    respFields: [
+      { field: 'id', type: 'number', desc: '文档 ID' },
+      { field: 'title', type: 'string', desc: '文档标题' },
+      { field: 'docType', type: 'string', desc: '文档类型' },
+      { field: 'fileType', type: 'string', desc: '文件扩展名' },
+      { field: 'fileSize', type: 'number', desc: '文件大小（字节）' },
+      { field: 'status', type: 'string', desc: '状态（draft）' },
+    ]
+  },
+  {
+    method: 'GET', path: '/api/open/v1/documents/{id}/sheet-data', desc: '读取 xlsx 结构化数据',
+    curl: 'curl -s "${baseUrl}/api/open/v1/documents/42/sheet-data" -H "X-API-Key: ak_xxx"',
+    reqExample: '按名称筛选: curl -s "${baseUrl}/api/open/v1/documents/42/sheet-data?sheet=员工信息" | 按索引筛选: curl -s "${baseUrl}/api/open/v1/documents/42/sheet-data?sheet=0" | 不传sheet返回全部',
+    example: '假设有一个「员工信息表.xlsx」，内容如下：\n\n┌───────┬──────┬────────┬──────────┐\n│ 工号  │ 姓名 │ 部门   │ 职位     │\n├───────┼──────┼────────┼──────────┤\n│ 10001 │ 张三 │ 技术部 │ 高级工程师 │\n│ 10002 │ 李四 │ 市场部 │ 市场经理  │\n│ 10003 │ 王五 │ 财务部 │ 会计     │\n└───────┴──────┴────────┴──────────┘\n\n调用接口后返回 JSON，外部系统直接解析：\n\n{\n  "sheets": [{\n    "name": "员工信息",\n    "headers": ["工号","姓名","部门","职位"],\n    "rows": [\n      {"rowNum":2, "cells":["10001","张三","技术部","高级工程师"]},\n      {"rowNum":3, "cells":["10002","李四","市场部","市场经理"]},\n      {"rowNum":4, "cells":["10003","王五","财务部","会计"]}\n    ]\n  }]\n}\n\n外部系统用 Python 解析：\n\nimport requests, json\nresp = requests.get(\n  "${baseUrl}/api/open/v1/documents/42/sheet-data",\n  headers={"X-API-Key": "ak_xxx"}\n)\ndata = resp.json()\nfor sheet in data["sheets"]:\n  print(f"工作表: {sheet[\'name\']}")  \n  for row in sheet["rows"]:\n    print(f"  {row[\'cells\'][0]} | {row[\'cells\'][1]} | {row[\'cells\'][2]}")',
+    respFields: [
+      { field: 'documentId', type: 'number', desc: '文档 ID' },
+      { field: 'title', type: 'string', desc: '文档标题' },
+      { field: 'totalSheets', type: 'number', desc: '工作表数量' },
+      { field: 'sheets[].name', type: 'string', desc: '工作表名称' },
+      { field: 'sheets[].rowCount', type: 'number', desc: '数据行数' },
+      { field: 'sheets[].headers', type: 'array', desc: '列标题（第一行）' },
+      { field: 'sheets[].rows[].rowNum', type: 'number', desc: '行号' },
+      { field: 'sheets[].rows[].cells', type: 'array', desc: '单元格值列表（按列顺序）' },
+    ]
+  },
+]
+function copyText(text: string) {
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success('已复制到剪贴板')
+  }).catch(() => {
+    ElMessage.warning('复制失败，请手动复制')
+  })
+}
+// 折叠控制：记录当前展开的接口索引（-1=全部折叠，默认展开第一个）
+const expandedIndex = ref(0)
+function toggleEndpoint(index: number) {
+  expandedIndex.value = expandedIndex.value === index ? -1 : index
+}
 const openApiKeySaving = ref(false)
 const openApiKeyCopied = ref(false)
 
@@ -3341,5 +3669,198 @@ function formatTime(str?: string) {
 }
 .text-muted {
   color: #c0c4cc;
+}
+/* API 文档样式 - 全新设计 */
+.api-doc-wrap {
+  margin-bottom: 16px;
+}
+.api-doc-wrap :deep(.el-tabs--border-card) {
+  border: 1px solid #e4e7ed;
+  box-shadow: none;
+}
+.api-overview p {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.7;
+}
+.api-overview code {
+  background: #e6f1fc;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #409eff;
+}
+.api-stat-card {
+  text-align: center;
+  cursor: default;
+}
+.api-stat-card .stat-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: #409eff;
+  line-height: 1.2;
+}
+.api-stat-card .stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+.api-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebeef5;
+}
+.api-auth-section p {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+.api-auth-section code {
+  background: #e6f1fc;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #409eff;
+}
+.api-code-block {
+  margin: 8px 0;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.api-code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 12px;
+  background: #f5f7fa;
+  font-size: 12px;
+  color: #909399;
+  border-bottom: 1px solid #ebeef5;
+}
+.api-code-block pre {
+  margin: 0;
+  padding: 12px 16px;
+  background: #fafafa;
+  overflow-x: auto;
+}
+.api-code-block code {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #303133;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  background: transparent;
+  padding: 0;
+}
+.api-endpoint-card {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.api-endpoint-card .ep-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fafafa;
+  border-bottom: 1px solid #ebeef5;
+  cursor: pointer;
+  user-select: none;
+}
+.api-endpoint-card .ep-header:hover {
+  background: #f0f2f5;
+}
+.ep-collapsed .ep-header {
+  border-bottom: none;
+}
+.ep-toggle {
+  font-size: 12px;
+  color: #c0c4cc;
+  margin-left: auto;
+}
+.ep-method {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: #fff;
+  min-width: 42px;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+.ep-get { background: #409eff; }
+.ep-post { background: #67c23a; }
+.ep-path {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: #303133;
+  font-weight: 500;
+}
+.ep-desc {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+}
+.ep-body {
+  padding: 10px 14px;
+  border-bottom: 1px solid #ebeef5;
+}
+.ep-body:last-child {
+  border-bottom: none;
+}
+.ep-section {
+  margin-bottom: 8px;
+}
+.ep-section:last-child {
+  margin-bottom: 0;
+}
+.ep-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+  margin-bottom: 6px;
+}
+.ep-curl {
+  padding: 0;
+}
+.ep-curl .api-code-block {
+  margin: 0;
+  border: none;
+  border-top: 1px solid #ebeef5;
+  border-radius: 0;
+}
+.ep-example {
+  padding: 0;
+}
+.ep-example .api-code-block {
+  margin: 0;
+  border: none;
+  border-top: 1px solid #ebeef5;
+  border-radius: 0;
+}
+.ep-example .example-pre {
+  max-height: 400px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+.ep-example code {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.api-errors-section p {
+  font-size: 13px;
+  color: #606266;
+}
+.api-errors-section code {
+  background: #e6f1fc;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #409eff;
 }
 </style>

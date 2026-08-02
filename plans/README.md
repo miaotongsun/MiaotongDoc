@@ -26,12 +26,13 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
-- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中
+- [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中 ⚠️ 文件不存在,看板虚假状态,需清理或补文件
 - [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
 
 ## 已完成
 
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
+- [2026-08-02-pre-prod.md](2026-08-02-pre-prod.md) — 合并归档:投产前审计+深度测试+补充测试+Bug修复(8个P0/P1修复,最终回归92.3%通过) (2026-08-02)
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 <!-- 状态：已完成。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话成果 + 完成日期 -->
 
@@ -39,12 +40,13 @@
 - [2026-07-26-pdf-bugfix.md](2026-07-26-pdf-bugfix.md) — PDF 编辑器 Bug 修复(7 个 P0/P1 修复,含中文搜索/水印/文本清理等) — 完成日期 2026-07-26
 - [2026-07-26-ocr-ai-refactor.md](2026-07-26-ocr-ai-refactor.md) — PDF OCR/AI 完整改造(5 阶段全完成:AI配置接入 + SSE统一 + MQ异步 + 前端引导 + E2E) — 完成 2026-07-26
 - [2026-07-26-pdf-editor-tools-bugfix.md](2026-07-26-pdf-editor-tools-bugfix.md) — PDF 编辑器「编辑 TAB」8 类 BUG 修复(手型拖拽/评论/勾画/箭头/图章/签名 + Acrobat 对齐) — 完成 2026-07-27
+- [2026-08-01-pre-prod-audit.md](2026-08-01-pre-prod-audit.md) — 投产前全维度验证(10 维度) + GO WITH FIXES 决策 + 3 P0 + 2 P1 — 完成 2026-08-01
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
 
 ## 看板更新记录
 
-- 2026-07-27 —— 新增 2026-07-26-pdf-editor-tools-bugfix.md 完成记录（用户提出 8 类 BUG，以 Acrobat DC 为标准重审，7 步实施完成）
+- 2026-08-02 —— 合并归档:2026-08-01-pre-prod-audit + 2026-08-02-pre-prod-full-audit + 2026-08-02-pre-prod-supplement + 2026-08-02-bugfixes → 2026-08-02-pre-prod.md
 
 ## 已废弃
 
@@ -57,6 +59,7 @@
 <!-- ADR-NNN 索引 -->
 
 - [ADR-001-open-api-design.md](ADR-001-open-api-design.md) — 对外服务 API 规范设计（API Key 多 Key 管理 vs OAuth2 选择）
+- [openapi-integration-guide.md](openapi-integration-guide.md) — 对外服务 API 集成指南（接口清单/入参出参/错误码/示例代码/最佳实践）
 
 ---
 
