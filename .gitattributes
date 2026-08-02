@@ -1,0 +1,5 @@
+# Shell scripts 必须保持 LF,否则 Linux execve 会因 CRLF shebang 报 "no such file or directory"
+*.sh text eol=lf
+
+# editor entrypoint 显式声明(防止其他 .gitattributes 覆盖)
+MiaotongDoc-Docker/app/editor/scripts/entrypoint.sh text eol=lf
