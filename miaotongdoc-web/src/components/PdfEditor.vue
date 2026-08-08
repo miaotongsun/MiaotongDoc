@@ -695,6 +695,7 @@
       :visible="aiVisible"
       :vqa-image="vqaImage"
       :vqa-context="vqaContext"
+      :external-chat="aiFloat.chat"
       @update:visible="aiVisible = $event"
       @clear-vqa="clearVqa"
     />
@@ -1974,19 +1975,14 @@ async function onAiFullSummary() {
     ElMessage.info('AI 正在摘要整个文档...')
     const r = await documentAiApi.summarize(props.docId)
     aiVisible.value = true
-    // 2026-08-02 修复: 直接构造 user/assistant 气泡显示结果,
-    // 之前把结果拼成 prompt 调 chat-stream,LLM 回复"好的..."答非所问
     const now = Date.now()
-    aiFloat.chat.messages.value.push({
-      id: `m-user-${now}`,
-      role: 'user',
-      parts: [{ type: 'text', text: '请摘要整个文档的核心内容(300 字以内)', state: 'done' }],
-    })
-    aiFloat.chat.messages.value.push({
-      id: `m-asst-${now}`,
-      role: 'assistant',
-      parts: [{ type: 'text', text: r.content || '(摘要生成失败或内容为空)', state: 'done' }],
-    })
+    aiFloat.chat.messages.value = [
+      ...aiFloat.chat.messages.value,
+      { id: 'm-user-' + now, role: 'user' as const,
+        parts: [{ type: 'text' as const, text: '请摘要整个文档的核心内容(300 字以内)', state: 'done' as const }] },
+      { id: 'm-asst-' + now, role: 'assistant' as const,
+        parts: [{ type: 'text' as const, text: r.content || '(摘要生成失败或内容为空)', state: 'done' as const }] },
+    ]
   } catch (e: any) {
     ElMessage.error(e?.message || '摘要失败')
   }
@@ -2392,18 +2388,15 @@ async function onCanvasMenuAiTranslate() {
   try {
     aiVisible.value = true
     const r = await documentAiApi.translate(props.docId, { text: sel, targetLang: 'zh' })
-    // 直接把翻译结果显示在 AI 浮窗气泡,不再走 chat-stream
+    // 2026-08-02: ShallowRef push 不触发响应式,赋值为新数组
     const now = Date.now()
-    aiFloat.chat.messages.value.push({
-      id: `m-user-${now}`,
-      role: 'user',
-      parts: [{ type: 'text', text: `请翻译成中文:\n\n${sel}`, state: 'done' }],
-    })
-    aiFloat.chat.messages.value.push({
-      id: `m-asst-${now}`,
-      role: 'assistant',
-      parts: [{ type: 'text', text: r.content || '(翻译失败或内容为空)', state: 'done' }],
-    })
+    aiFloat.chat.messages.value = [
+      ...aiFloat.chat.messages.value,
+      { id: 'm-user-' + now, role: 'user' as const,
+        parts: [{ type: 'text' as const, text: '请翻译成中文:\n\n' + sel, state: 'done' as const }] },
+      { id: 'm-asst-' + now, role: 'assistant' as const,
+        parts: [{ type: 'text' as const, text: r.content || '(翻译失败或内容为空)', state: 'done' as const }] },
+    ]
   } catch (e: any) {
     ElMessage.error(e?.message || '翻译失败')
   }

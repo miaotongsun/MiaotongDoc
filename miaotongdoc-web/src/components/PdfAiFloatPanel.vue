@@ -186,6 +186,9 @@ const props = defineProps({
   visible: { type: Boolean, default: undefined },
   vqaImage: { type: String, default: undefined },  // dataURL，PDF 区域截图
   vqaContext: { type: String, default: '' },   // 上下文描述，如「第 3 页 表格区域」
+  // 2026-08-02: 父组件传入的 chat 实例(useAiChat 返回),如果传了就用外部的,
+  // 让父组件能直接 push 消息到 panel 渲染的 chat(否则 2 个 useAiChat 实例互不相通)
+  externalChat: { type: Object as PropType<ReturnType<typeof useAiChat>>, default: null },
 })
 
 const emit = defineEmits<{
@@ -276,8 +279,10 @@ watch(() => props.vqaImage, (v) => {
   }
 })
 
-// ===== AI 聊天（复用 useAiChat） =====
-const chat = useAiChat({
+// ===== AI 聊天(复用 useAiChat) =====
+// 2026-08-02: 优先用父组件传入的 chat(共享 useAiChat 实例),
+// 否则自己 new 一个(向后兼容)
+const chat = props.externalChat || useAiChat({
   docId: computed(() => props.docId),
   endpoint: 'chat-stream',
 })

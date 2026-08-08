@@ -421,6 +421,17 @@ public class DocumentAiController {
     private String extractDocumentText(Long docId) {
         Document doc = documentService.getDocument(docId);
         try {
+            // 2026-08-02: 优先用 OCR markdown(扫描件没内嵌文字,只能用这个)
+            if (doc.getPdfMarkdown() != null && !doc.getPdfMarkdown().isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (java.util.Map.Entry<String, String> e : doc.getPdfMarkdown().entrySet()) {
+                    sb.append("=== 第 ").append(e.getKey()).append(" 页 ===\n");
+                    sb.append(e.getValue()).append("\n\n");
+                }
+                String md = sb.toString().trim();
+                if (!md.isEmpty()) return md;
+            }
+
             byte[] bytes = storageService.load(doc.getFilePath());
 
             if ("md".equals(doc.getFileType())) {
