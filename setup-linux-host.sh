@@ -17,6 +17,7 @@
 #     --skip-firewall    跳过防火墙配置（已有其他防火墙时）
 #     --skip-ssh         跳过 SSH 加固
 #     --swap-size 16G    swap 大小（默认 16G）
+#     --ntp-server IP    内网 NTP 服务器地址（离线环境必填，否则 chrony 指向公网池不可用）
 #     --no-backup        不配置自动备份 cron
 #     -h | --help        显示帮助
 #
@@ -32,6 +33,7 @@ SKIP_FIREWALL=false
 SKIP_SSH=false
 SKIP_BACKUP=false
 SWAP_SIZE="16G"
+NTP_SERVER=""
 
 # ===== 参数解析 =====
 while [[ $# -gt 0 ]]; do
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         --skip-ssh) SKIP_SSH=true; shift ;;
         --skip-backup) SKIP_BACKUP=true; shift ;;
         --swap-size) SWAP_SIZE="$2"; shift 2 ;;
+        --ntp-server) NTP_SERVER="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,30p' "$0"
             exit 0
@@ -51,7 +54,7 @@ done
 
 # ===== 颜色输出 =====
 RED='\033[0;31m'
-GREEN='\033[0:32m'
+GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -101,14 +104,34 @@ net.ipv4.tcp_fin_timeout = 15
 fs.file-max = 2097152
 fs.nr_open = 1048576
 vm.oom_kill_allocating_task = 0
+# Elasticsearch 8.x 硬性要求 >= 262144，默认 65530 会导致 ES 启动失败
+vm.max_map_count = 262144
 EOF
 sysctl --system
 
 # ===== 3. Docker 守护进程 =====
 log_info "[3/9] 配置 Docker 守护进程..."
 if ! command -v docker &>/dev/null; then
-    log_warn "Docker 未安装，请先安装 Docker"
+    log_error "Docker 未安装。内网离线环境请先离线安装 Docker Engine >= 20.10 与 Compose V2"
+    log_error "参考：plans/offline-env-requirements.md §10"
+    exit 1
 else
+    # 版本校验：Engine >= 20.10
+    DOCKER_VER=$(docker --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    DOCKER_MAJOR=${DOCKER_VER%%.*}
+    DOCKER_MINOR=${DOCKER_VER##*.}
+    if [ "$DOCKER_MAJOR" -lt 20 ] || { [ "$DOCKER_MAJOR" -eq 20 ] && [ "$DOCKER_MINOR" -lt 10 ]; }; then
+        log_error "Docker 版本过低 ($DOCKER_VER)，要求 >= 20.10"
+        exit 1
+    fi
+    # 版本校验：必须 Compose V2（项目用了 profiles / depends_on.condition，V1 不支持）
+    if ! docker compose version &>/dev/null; then
+        log_error "未检测到 Docker Compose V2。项目强依赖 V2（profiles / depends_on.condition）"
+        log_error "请安装 docker-compose-plugin，参考：plans/offline-env-requirements.md §2"
+        exit 1
+    fi
+    log_info "Docker $DOCKER_VER + $(docker compose version --short 2>/dev/null) 校验通过"
+
     mkdir -p /etc/docker
     cat > /etc/docker/daemon.json <<'EOF'
 {
@@ -134,11 +157,32 @@ fi
 
 # ===== 4. 时间同步 =====
 log_info "[4/9] 配置时间同步 chrony..."
-if command -v apt-get &>/dev/null; then
-    apt-get install -y chrony
-elif command -v yum &>/dev/null; then
-    yum install -y chrony
+if ! command -v chronyd &>/dev/null; then
+    if command -v apt-get &>/dev/null; then
+        apt-get install -y chrony || log_warn "chrony 安装失败（离线环境请提前离线安装）"
+    elif command -v yum &>/dev/null; then
+        yum install -y chrony || log_warn "chrony 安装失败（离线环境请提前离线安装）"
+    fi
 fi
+
+# 离线环境：公网 NTP 池不可达，必须替换为内网 NTP 源
+if [ -n "$NTP_SERVER" ]; then
+    CHRONY_CONF=/etc/chrony.conf
+    [ -f /etc/chrony/chrony.conf ] && CHRONY_CONF=/etc/chrony/chrony.conf
+    if [ -f "$CHRONY_CONF" ]; then
+        cp "$CHRONY_CONF" "${CHRONY_CONF}.bak.$(date +%s)"
+        # 注释掉所有公网 pool/server 行，改用内网源
+        sed -i -E 's/^[[:space:]]*(pool|server)[[:space:]]/#&/' "$CHRONY_CONF"
+        echo "server ${NTP_SERVER} iburst" >> "$CHRONY_CONF"
+        log_info "chrony 已指向内网 NTP: ${NTP_SERVER}（原配置已备份）"
+    else
+        log_warn "未找到 chrony 配置文件，跳过 NTP 源替换"
+    fi
+else
+    log_warn "未指定 --ntp-server，chrony 将使用默认（公网）NTP 池"
+    log_warn "离线内网环境时间会漂移，导致 JWT 校验失败，请用 --ntp-server <内网IP> 重跑本步"
+fi
+
 systemctl enable --now chronyd
 chronyc tracking 2>/dev/null || log_warn "chrony 启动失败，请手动检查"
 
