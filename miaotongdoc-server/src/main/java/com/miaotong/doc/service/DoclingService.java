@@ -285,9 +285,9 @@ public class DoclingService {
     }
 
     /**
-     * 检查 Docling 服务是否可用
+     * 检查 Docling 服务是否可用(供 AiStatusController 状态查询用)
      */
-    private boolean isDoclingAvailable() {
+    public boolean isDoclingAvailable() {
         try {
             String url = doclingProperties.getServerUrl() + "/health";
             ResponseEntity<String> response = getRestTemplate().getForEntity(url, String.class);

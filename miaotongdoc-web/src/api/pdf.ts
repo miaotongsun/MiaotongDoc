@@ -75,9 +75,18 @@ export const pdfApi = {
 
   // ---------- 格式转换 ----------
 
-  /** PDF 格式转换 */
+  /**
+   * PDF 格式转换(Markdown / Word / TXT / PNG)
+   *
+   * 2026-08-09 修复:Docling 处理大 PDF(含表格/扫描件)经常超过 30s 全局默认超时,
+   * 前端会先报 "timeout of 30000ms exceeded" 而后端还在跑。
+   * 这里单独把超时调到 10 分钟(600000ms),对齐后端 DOCLING_TIMEOUT 默认 300s。
+   */
   convert(docId: number, data: PdfConvertRequest) {
-    return api.post<any, Blob>(`/pdf/${docId}/convert`, data, { responseType: 'blob' as any })
+    return api.post<any, Blob>(`/pdf/${docId}/convert`, data, {
+      responseType: 'blob' as any,
+      timeout: 600000
+    })
   },
 
   // ---------- 页面操作 (Phase 3:返回 JSON 而非 Blob) ----------
@@ -509,10 +518,20 @@ export const pdfApi = {
     return api.post<any, PageOpResult>(`/pdf/${docId}/watermark/remove`, { mode })
   },
 
-  /** Phase 13.23: 智能目录(AI 生成 + 写入 PDF outline) */
-  autoOutline(docId: number) {
-    return api.post<any, { success: boolean; outline: Array<{ title: string; page: number; level: number }>; filePath?: string; error?: string }>(
-      `/pdf/${docId}/ai/auto-outline`, {},
+  /**
+   * 2026-08-09: 智能目录支持双模式
+   *   - fast:    PDFTextStripper + LLM,纯文本 PDF 秒级,纯文本场景够用
+   *   - precise: Docling + LLM,支持扫描件/复杂版面,5-10 秒到 1-2 分钟(长 PDF)
+   *
+   * 精准模式单设 timeout=10 分钟(覆盖 axios 全局 30s),避免大 PDF 跑 1-2 分钟
+   * 时前端先报 "timeout of 30000ms exceeded"。
+   */
+  autoOutline(docId: number, mode: 'fast' | 'precise' = 'fast') {
+    const isPrecise = mode === 'precise'
+    return api.post<any, { success: boolean; mode?: string; outline: Array<{ title: string; page: number; level: number }>; filePath?: string; error?: string }>(
+      `/pdf/${docId}/ai/auto-outline`,
+      { mode },
+      { timeout: isPrecise ? 600000 : 60000 }  // precise=10 分钟,fast=60 秒(防 LLM 偶尔慢)
     )
   },
 

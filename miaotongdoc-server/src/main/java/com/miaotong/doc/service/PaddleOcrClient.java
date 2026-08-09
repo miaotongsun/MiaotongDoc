@@ -81,7 +81,8 @@ public class PaddleOcrClient {
      */
     public Map<String, Object> recognizePdf(Long documentId, String language,
                                             ProgressCallback progressCallback) {
-        return recognizePdf(documentId, language, "mobile", progressCallback);
+        // 从 properties 读默认模型档(mobile/server),可通过 PADDLE_OCR_DEFAULT_MODEL 环境变量配置
+        return recognizePdf(documentId, language, properties.getDefaultModel(), progressCallback);
     }
 
     /**

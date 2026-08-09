@@ -185,6 +185,24 @@ docling:
 ocr:
   server-url: ${OCR_SERVER_URL:http://ocr:5002}
   enabled: ${OCR_ENABLED:false}
+  # Tesseract 语言包:chi_sim+eng(默认),扩展用 + 连接(jpn/kor/chi_tra/fra/deu 等)
+  languages: ${OCR_LANGUAGES:chi_sim+eng}
+
+# ===== PaddleOCR 中文扫描件 OCR =====
+paddle-ocr:
+  server-url: ${PADDLE_OCR_SERVER_URL:http://ocr-paddle:5003}
+  enabled: ${PADDLE_OCR_ENABLED:true}
+  timeout: ${PADDLE_OCR_TIMEOUT:600}
+  # 默认语言:ch/en/japan/korean
+  language: ${PADDLE_OCR_LANGUAGE:ch}
+  # 默认模型档:mobile(轻量,快) 或 server(高精度,慢)
+  default-model: ${PADDLE_OCR_DEFAULT_MODEL:mobile}
+  # 是否启用表格识别(PP-Structure)
+  use-table-recognition: ${PADDLE_OCR_USE_TABLE:true}
+  # 是否启用版面分析(layout)
+  use-layout: ${PADDLE_OCR_USE_LAYOUT:true}
+  # 是否返回坐标(画布定位需要)
+  return-coordinates: ${PADDLE_OCR_RETURN_COORDS:true}
 
 # ===== 日志 =====
 logging:

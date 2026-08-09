@@ -29,6 +29,9 @@ public class PaddleOcrProperties {
     /** OCR 语言：ch / en / japan / korean */
     private String language = "ch";
 
+    /** 默认模型档：mobile(轻量) 或 server(高精度) */
+    private String defaultModel = "mobile";
+
     /** 是否启用表格识别（PP-Structure） */
     private boolean useTableRecognition = true;
 

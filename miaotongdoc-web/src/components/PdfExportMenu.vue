@@ -105,14 +105,38 @@ const position = computed(() => {
 async function onConvert(format: 'md' | 'docx' | 'txt' | 'png') {
   emit('close')
   busy.value = true
+
+  // 2026-08-09: 文档越复杂(表格/扫描件越多)耗时越长,OCR 处理可能 1-3 分钟。
+  // 进度提示要明确,避免用户在 30s+ 没反应时以为卡死。
+  // md/docx/txt 都走 OCR,只有 png 是 PDFBox 即时渲染。
+  const isDocling = format !== 'png'
+  const hint = isDocling
+    ? 'OCR 解析中,首次 5-10s 加载模型,大文档可能 1-3 分钟...'
+    : '导出中...'
+  const loadingMsg = ElMessage({
+    message: hint,
+    type: 'info',
+    duration: 0  // 不自动关闭,由 close 手动关
+  })
+
   try {
     const blob = await pdfApi.convert(props.docId, { targetFormat: format })
     const ext = format === 'docx' ? 'docx' : format
     const name = dlName(`convert-${ext}`, ext, props.filename)
     dlTrigger(blob, name)
+    loadingMsg.close()
     ElMessage.success(`已导出 ${name}`)
-  } catch (e) {
-    ElMessage.error(`导出失败:${(e as Error).message}`)
+  } catch (e: any) {
+    loadingMsg.close()
+    const msg = e?.message || '未知错误'
+    // axios 超时错误 message 通常含 'timeout','
+    if (msg.includes('timeout')) {
+      ElMessage.error(`导出超时(Docling 后端还在处理,可在 docker logs miaotongdoc-docling 查进度):${msg}`)
+    } else if (msg.includes('Network Error') || msg.includes('aborted')) {
+      ElMessage.error(`网络中断(后端可能仍处理中):${msg}`)
+    } else {
+      ElMessage.error(`导出失败:${msg}`)
+    }
   } finally {
     busy.value = false
   }
