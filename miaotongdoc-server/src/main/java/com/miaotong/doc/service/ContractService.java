@@ -1,19 +1,28 @@
 package com.miaotong.doc.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miaotong.doc.entity.*;
 import com.miaotong.doc.exception.BusinessException;
 import com.miaotong.doc.exception.NotFoundException;
 import com.miaotong.doc.repository.*;
+import com.miaotong.doc.service.ai.AiService;
+import com.miaotong.doc.service.ai.DocumentContentService;
+import com.miaotong.doc.service.ai.PromptTemplates;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.*;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ContractService {
@@ -26,18 +35,100 @@ public class ContractService {
     private final DocumentService documentService;
     private final ContractParser contractParser;
     private final AuditService auditService;
+    /** 2026-08-09 PDF 解析依赖：复用 DocumentContentService 提取 PDF 文本 */
+    private final DocumentContentService documentContentService;
+    /** 2026-08-09 PDF 解析依赖：调用 LLM 抽取结构化字段 */
+    private final AiService aiService;
+    private final ObjectMapper objectMapper;
 
+    /** 2026-08-09: 解析文档 — 支持 Word (正则) + PDF (LLM 抽取) */
     public Contract parseDocument(Long documentId) {
         Document doc = documentService.getDocument(documentId);
-        if (!"word".equals(doc.getDocType())) {
-            throw new BusinessException("仅支持解析 Word 文档");
+        String docType = doc.getDocType();
+        if ("word".equals(docType)) {
+            byte[] content = documentService.getFileContent(documentId);
+            try {
+                return contractParser.parse(content);
+            } catch (IOException e) {
+                throw new BusinessException("文档解析失败: " + e.getMessage());
+            }
+        } else if ("pdf".equals(docType)) {
+            // PDF 走 LLM 抽取
+            return parsePdfWithLlm(documentId);
+        } else {
+            throw new BusinessException("暂不支持解析 " + docType + " 类型文档（仅支持 Word 和 PDF）");
         }
-        byte[] content = documentService.getFileContent(documentId);
+    }
+
+    /**
+     * 2026-08-09: PDF 文档用 LLM 抽取结构化字段
+     * 流程：extractText → PromptTemplates.CONTRACT_PARSE → chat → 解析 JSON
+     */
+    private Contract parsePdfWithLlm(Long documentId) {
+        String text = documentContentService.extractText(documentId);
+        if (text.isBlank()) {
+            throw new BusinessException("PDF 文本提取为空，请确认文档已完成 OCR 识别");
+        }
+        // 限制长度（避免 token 超限）
+        if (text.length() > 12000) {
+            text = text.substring(0, 12000) + "\n...(已截断)";
+        }
+        String prompt = PromptTemplates.CONTRACT_PARSE.replace("{content}", text);
+        String result = aiService.chat(prompt);
+        log.info("PDF 合同抽取 LLM 响应(前 300 字): {}", result.substring(0, Math.min(300, result.length())));
+
+        // 解析 LLM 返回的 JSON（兼容 markdown 代码块）
+        String json = stripMarkdownCodeBlock(result);
+        Contract contract = new Contract();
         try {
-            return contractParser.parse(content);
-        } catch (IOException e) {
-            throw new BusinessException("文档解析失败: " + e.getMessage());
+            JsonNode node = objectMapper.readTree(json);
+            contract.setContractNo(textOrNull(node, "contractNo"));
+            contract.setContractType(textOrNull(node, "contractType"));
+            contract.setPartyA(textOrNull(node, "partyA"));
+            contract.setPartyB(textOrNull(node, "partyB"));
+            // 金额是数字
+            JsonNode amountNode = node.path("amount");
+            if (amountNode.isNumber()) {
+                contract.setAmount(BigDecimal.valueOf(amountNode.asDouble()));
+            } else if (amountNode.isTextual()) {
+                try { contract.setAmount(new BigDecimal(amountNode.asText().replace(",", ""))); } catch (Exception ignored) {}
+            }
+            contract.setSigningDate(parseDateField(node.path("signingDate")));
+            contract.setEffectiveDate(parseDateField(node.path("effectiveDate")));
+            contract.setExpiryDate(parseDateField(node.path("expiryDate")));
+        } catch (Exception e) {
+            log.warn("PDF 合同抽取 JSON 解析失败: {}", e.getMessage());
+            throw new BusinessException("PDF 抽取结果解析失败: " + e.getMessage());
         }
+        return contract;
+    }
+
+    private static String textOrNull(JsonNode node, String field) {
+        JsonNode n = node.path(field);
+        return n.isMissingNode() || n.isNull() ? null : n.asText();
+    }
+
+    private static LocalDate parseDateField(JsonNode n) {
+        if (n.isMissingNode() || n.isNull() || !n.isTextual()) return null;
+        String s = n.asText().trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
+        try {
+            return LocalDate.parse(s);
+        } catch (Exception ignored) {
+            // 尝试 yyyy年M月d日 格式
+            try {
+                return LocalDate.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
+            } catch (Exception ignored2) { return null; }
+        }
+    }
+
+    private static String stripMarkdownCodeBlock(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        if (t.startsWith("```json")) t = t.substring(7);
+        else if (t.startsWith("```")) t = t.substring(3);
+        if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+        return t.trim();
     }
 
     @Transactional

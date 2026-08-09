@@ -39,7 +39,7 @@ const router = createRouter({
     {
       path: '/contracts/:id',
       name: 'ContractDetail',
-      component: () => import('@/views/ContractDetail.vue'),
+      component: () => import('@/views/ContractDetailRedirect.vue'),
       meta: { requiresAuth: true }
     },
     {

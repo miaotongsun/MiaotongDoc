@@ -775,11 +775,147 @@ public class AiService {
     }
 
     /**
-     * 合同审查
+     * 合同审查（2026-08-09 重构：返回结构化 Map）
+     * <p>
+     * 调用 LLM（使用 JSON 输出模式），返回解析后的 Map：
+     * <ul>
+     *   <li>riskLevel: low / medium / high</li>
+     *   <li>riskScore: 0-100</li>
+     *   <li>riskItems: [{category, description, severity}]</li>
+     *   <li>keyClauses: [{title, summary}]</li>
+     *   <li>missingClauses: [...]</li>
+     *   <li>suggestions: [...]</li>
+     *   <li>summary: 字符串</li>
+     * </ul>
+     * 解析失败时返回默认安全值（含 raw 原始文本供前端展示）。
      */
-    public String reviewContract(String content) {
+    public java.util.Map<String, Object> reviewContract(String content) {
         String prompt = PromptTemplates.CONTRACT_REVIEW.replace("{content}", content);
-        return chat(prompt);
+        String raw = chatWithJson(prompt);
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("raw", raw);
+
+        if (raw == null || raw.isBlank()) {
+            return defaultReviewResult("AI 服务未返回内容");
+        }
+
+        // 解析 LLM 返回的 JSON（兼容 markdown 代码块包裹）
+        String json = stripMarkdownCodeBlock(raw);
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (!node.isObject()) {
+                return defaultReviewResult("AI 返回非 JSON 对象");
+            }
+            result.put("riskLevel", textOrDefault(node.path("riskLevel"), "medium"));
+            result.put("riskScore", node.path("riskScore").isNumber() ? node.path("riskScore").asInt() : 50);
+            result.put("riskItems", nodeToList(node.path("riskItems")));
+            result.put("keyClauses", nodeToList(node.path("keyClauses")));
+            result.put("missingClauses", nodeToStringList(node.path("missingClauses")));
+            result.put("suggestions", nodeToStringList(node.path("suggestions")));
+            result.put("summary", textOrDefault(node.path("summary"), ""));
+            return result;
+        } catch (Exception e) {
+            log.warn("合同审查 JSON 解析失败: {} | 原文: {}", e.getMessage(), json.substring(0, Math.min(200, json.length())));
+            return defaultReviewResult("AI 返回非 JSON 格式");
+        }
+    }
+
+    /**
+     * 调用 LLM 并强制 JSON 输出（利用 response_format: json_object）
+     */
+    private String chatWithJson(String userPrompt) {
+        long start = System.currentTimeMillis();
+        String model = getCurrentModel();
+        try {
+            var optionsBuilder = OpenAiChatOptions.builder()
+                    .model(model)
+                    .temperature(0.1)
+                    .maxTokens(2000);
+            // 启用 JSON 输出（Spring AI 1.0.0-M6: ResponseFormat.builder().type(JSON_OBJECT).build()）
+            try {
+                optionsBuilder.responseFormat(
+                        org.springframework.ai.openai.api.ResponseFormat.builder()
+                                .type(org.springframework.ai.openai.api.ResponseFormat.Type.JSON_OBJECT)
+                                .build());
+            } catch (Throwable t) {
+                log.debug("当前 Spring AI 版本不支持 ResponseFormat,降级为 prompt 约束: {}", t.getMessage());
+            }
+            String result = chatClient.prompt()
+                    .user(userPrompt)
+                    .options(optionsBuilder.build())
+                    .call()
+                    .content();
+            long duration = System.currentTimeMillis() - start;
+            aiMonitor.recordSuccess("chat_json", model, duration, -1, -1);
+            return result != null ? result.trim() : "";
+        } catch (Exception e) {
+            long duration = System.currentTimeMillis() - start;
+            aiMonitor.recordError("chat_json", model, duration, e.getClass().getSimpleName());
+            log.error("AI JSON 对话失败,降级为普通 chat: {}", e.getMessage());
+            // 降级：调用普通 chat（依赖 prompt 约束）
+            return chat(userPrompt);
+        }
+    }
+
+    private static String stripMarkdownCodeBlock(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        if (t.startsWith("```json")) t = t.substring(7);
+        else if (t.startsWith("```")) t = t.substring(3);
+        if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+        return t.trim();
+    }
+
+    private static String textOrDefault(JsonNode n, String def) {
+        if (n.isMissingNode() || n.isNull()) return def;
+        String s = n.asText();
+        return (s == null || s.isBlank()) ? def : s;
+    }
+
+    private static java.util.List<java.util.Map<String, Object>> nodeToList(JsonNode n) {
+        java.util.List<java.util.Map<String, Object>> list = new java.util.ArrayList<>();
+        if (n == null || !n.isArray()) return list;
+        for (JsonNode item : n) {
+            if (item.isObject()) {
+                java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+                item.fields().forEachRemaining(e -> {
+                    JsonNode v = e.getValue();
+                    if (v.isTextual()) map.put(e.getKey(), v.asText());
+                    else if (v.isNumber()) map.put(e.getKey(), v.asDouble());
+                    else if (v.isBoolean()) map.put(e.getKey(), v.asBoolean());
+                    else if (!v.isNull()) map.put(e.getKey(), v.toString());
+                });
+                list.add(map);
+            } else if (item.isTextual()) {
+                // 字符串数组
+                java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+                map.put("value", item.asText());
+                list.add(map);
+            }
+        }
+        return list;
+    }
+
+    private static java.util.List<String> nodeToStringList(JsonNode n) {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        if (n == null || !n.isArray()) return list;
+        for (JsonNode item : n) {
+            if (item.isTextual()) list.add(item.asText());
+            else if (!item.isNull()) list.add(item.toString());
+        }
+        return list;
+    }
+
+    private static java.util.Map<String, Object> defaultReviewResult(String reason) {
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("riskLevel", "medium");
+        result.put("riskScore", 50);
+        result.put("riskItems", java.util.Collections.emptyList());
+        result.put("keyClauses", java.util.Collections.emptyList());
+        result.put("missingClauses", java.util.Collections.emptyList());
+        result.put("suggestions", java.util.Collections.singletonList("AI 审查未能完成: " + reason + ",请人工复核"));
+        result.put("summary", "AI 审查未能完成(" + reason + "),建议人工复核合同条款");
+        return result;
     }
 
     /**

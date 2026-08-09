@@ -148,14 +148,30 @@ function runTest() {
     cwd: ROOT,
     env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
   })
-  child1.on('exit', () => {
+  child1.on('exit', (code1) => {
     // 2) Home 状态路由化(2026-08-02 新增)
     const child2 = spawn('node', ['tests/home-state-restore-e2e.mjs'], {
       stdio: 'inherit',
       cwd: ROOT,
       env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
     })
-    child2.on('exit', (code2) => process.exit(code2 || 1))
+    child2.on('exit', (code2) => {
+      // 3) 合同管理 E2E(2026-08-08 新增)
+      const child3 = spawn('node', ['tests/contract-e2e.mjs'], {
+        stdio: 'inherit',
+        cwd: ROOT,
+        env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
+      })
+      child3.on('exit', (code3) => {
+        // 4) MD 编辑器表格 7 大能力 E2E(2026-08-09 新增)
+        const child4 = spawn('node', ['tests/md-table-e2e.mjs'], {
+          stdio: 'inherit',
+          cwd: ROOT,
+          env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: CACHE_DIR },
+        })
+        child4.on('exit', (code4) => process.exit(code4 || code3 || code2 || 1))
+      })
+    })
   })
 }
 
