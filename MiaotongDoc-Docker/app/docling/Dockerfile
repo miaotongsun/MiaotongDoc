@@ -71,6 +71,10 @@ RUN echo "=== HF Hub Cache 结构 ===" && \
     echo "=== 文件大小 ===" && \
     du -sh /root/.cache/huggingface/hub
 
+# 复制深度健康检查脚本(检查 /health + /v1/health/ready 模型就绪状态)
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
 # 暴露端口
 EXPOSE 5001
 

@@ -8,7 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-08-02
+> 上次更新：2026-08-09
 > 上次更新：2026-08-02
 
 ### 快速索引
@@ -26,12 +26,18 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
+- [2026-08-09-md-table-rewrite.md](2026-08-09-md-table-rewrite.md) — MD 编辑器表格 7 大能力(策略改为 fix-in-place,E2E 33/33 ✅)— **已完成** 2026-08-09
+- [2026-08-09-contract-payment-plan.md](2026-08-09-contract-payment-plan.md) — 合同付款计划(新表 + AI 抽取 + scheduler + 通知跳转)— **已完成** (V29 + 32/32) 2026-08-09
 - [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中 ⚠️ 文件不存在,看板虚假状态,需清理或补文件
 - [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
 
 ## 已完成
 
 <!-- 状态：已完成。每条加一行 + 完成日期 -->
+- [2026-08-09-auto-outline-dual-mode.md](2026-08-09-auto-outline-dual-mode.md) - 智能目录双模式(fast=PDFStripper+LLM / precise=Docling+LLM,前端分体按钮 UI)- 完成 2026-08-09
+- [2026-08-09-docling-frontend-test.md](2026-08-09-docling-frontend-test.md) - Docling 启用 + AiStatusController bug 修复(硬编码 false -> 真实检查) + 前端测试手册 - 完成 2026-08-09
+- [2026-08-09-ocr-models-offline-deploy.md](2026-08-09-ocr-models-offline-deploy.md) — OCR 模型/引擎优化与内网离线部署(PaddleOCR 零外网探测 + Docling 深度健康检查 + Tesseract 语言包动态扩展 + 环境变量完整注释) — 完成 2026-08-09
+- [2026-08-08-contract-ai-review.md](2026-08-08-contract-ai-review.md) — 合同管理内容识别重塑（Word 正则增强 + PDF LLM 抽取 + AI 审查 SSE + 编辑对话框 + 部署）— 完成 2026-08-09
 - [2026-08-02-pre-prod.md](2026-08-02-pre-prod.md) — 投产前全维度验证+深度测试+补充测试+Bug修复(13个P0/P1修复,最终回归100% (135/135) ✅) (2026-08-02)
 - [2026-08-02-pdf-redaction-refactor.md](2026-08-02-pdf-redaction-refactor.md) — PDF 编辑器「密文遮盖」功能重构 (RedactionEngine + 红色 banner + OCR 路径 + E2E 15/15 + text API 强验证 166→1 char) — 完成 2026-08-02
 - [2026-07-27-admin-excel-import-tree-openapi.md](2026-07-27-admin-excel-import-tree-openapi.md) — 管理后台增强：Excel 导入用户/部门 + 树形选择器 + 对外 API 规范 (2026-07-27)
@@ -47,6 +53,16 @@
 
 ## 看板更新记录
 
+- 2026-08-09 -- 2026-08-09-md-table-rewrite.md **完成**(策略 fix-in-place,E2E 33/33 ✅:三向对齐回写+NxM 选择器+无表头支持+resize 基础设施,2 文件改动)
+- 2026-08-09 -- 4.1 E2E 入库完成(初始 31/32 FAIL,真实仅 7 fail,补后 33/33 ✅)
+- 2026-08-09 -- 新增 2026-08-09-auto-outline-dual-mode.md(智能目录支持 fast/precise 双模式,前端分体按钮)
+
+
+- 2026-08-09 -- 新增 2026-08-09-md-table-rewrite.md(MD 表格自研重做计划:5 天/7 阶段,等待用户审核)
+- 2026-08-09 -- 新增 2026-08-09-docling-frontend-test.md(Docling 启用 + AiStatusController bug 修复 + 前端测试手册)
+
+- 2026-08-09 —— 新增 2026-08-09-ocr-models-offline-deploy.md 完成记录（OCR 三套引擎内网离线优化 + .env 完整注释 + 6 文件改动）
+- 2026-08-09 —— 2026-08-08-contract-ai-review.md **完成**（部署 jar + dist + 重启 web-server/nginx + E2E 32/32 ✅；修 pickRemoteSelect 时序 + :visible 过滤）；新增 experience.md 沉淀 el-select 与 docker restart 经验
 - 2026-08-02 —— 2026-08-02-pdf-redaction-refactor.md 完成（RedactionEngine + 红色 banner + E2E 15/15 + text API 强验证 166→1 char）
 - 2026-08-02 —— 新增 2026-08-02-pdf-redaction-refactor.md 进行中（用户提出 PDF 密文遮盖改造：交互闭环 + 后端真脱敏 + OCR fallback）
 - 2026-07-27 —— 新增 2026-07-26-pdf-editor-tools-bugfix.md 完成记录（用户提出 8 类 BUG，以 Acrobat DC 为标准重审，7 步实施完成）

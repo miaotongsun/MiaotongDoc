@@ -29,9 +29,20 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
 # 复制应用代码
 COPY app.py /app/app.py
 
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    # ⭐ 纯内网离线:禁止 PaddleX/PaddleOCR 在模型缺失时探测外网下载源
+    # PADDLE_PDX_DISABLE_REMOTE=1:禁用远程模型仓库探测
+    # FLAGS_use_mkldnn=0:关闭 MKL-DNN 远程 license 检查(纯内网环境会卡启动)
+    # PADDLEX_DISABLE_REMOTE_SOURCE=1:PaddleX 备用禁用开关(兼容旧版本)
+    PADDLE_PDX_DISABLE_REMOTE=1 \
+    PADDLEX_DISABLE_REMOTE_SOURCE=1 \
+    FLAGS_use_mkldnn=0
+
 # ============================================================
 # 纯内网离线改造：预下载模型缓存烧入镜像
-# 模型文件约 232MB（含 PP-OCRv5_mobile/server 检测+识别）
+# 模型文件约 232MB（含 PP-OCRv5_mobile/server 检测+识别+方向分类）
 # 运行时零外网请求，PaddleOCR 优先使用本地缓存
 # ============================================================
 

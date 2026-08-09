@@ -26,11 +26,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制服务代码
+# 复制服务代码 + 入口脚本(支持 OCR_LANGUAGES 动态扩展语言包)
 COPY app.py /app/app.py
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# 默认暴露的语言包配置(运行时可通过 OCR_LANGUAGES 环境变量覆盖)
+# 格式:tesseract 语言代码,用 + 连接(chi_sim=简体,chi_tra=繁体,jpn=日文,kor=韩文,fra=法文,deu=德文)
+ENV OCR_LANGUAGES="chi_sim+eng"
 
 # 暴露端口
 EXPOSE 5002
 
-# 启动服务
-CMD ["python", "app.py"]
+# 通过 entrypoint.sh 启动(动态加载 OCR_LANGUAGES 指定的语言包,然后启动应用)
+CMD ["/app/entrypoint.sh"]

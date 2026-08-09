@@ -162,12 +162,25 @@ services:
       SPRING_RABBITMQ_USERNAME: miaotong
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       SPRING_RABBITMQ_VIRTUAL_HOST: /
+      # ===== OCR 服务配置(内网离线场景下三套引擎的开关/地址/超时) =====
+      # Docling: 结构化主力(PDF→Markdown,保留表格/标题),按 profile 启动
       DOCLING_ENABLED: ${DOCLING_ENABLED}
       DOCLING_SERVER_URL: http://docling:5001
+      DOCLING_TIMEOUT: ${DOCLING_TIMEOUT:-300}
+      DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-chi_sim+eng}
+      # Tesseract: 多语言兜底,中文+英文默认,扩展语言由 OCR_LANGUAGES 控制(动态安装)
       OCR_ENABLED: ${OCR_ENABLED}
       OCR_SERVER_URL: http://ocr:5002
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-chi_sim+eng}
+      # PaddleOCR: 中文扫描件主力(默认开),mobile=轻量,server=高精度
       PADDLE_OCR_ENABLED: ${PADDLE_OCR_ENABLED}
       PADDLE_OCR_SERVER_URL: http://ocr-paddle:5003
+      PADDLE_OCR_LANGUAGE: ${PADDLE_OCR_LANGUAGE:-ch}
+      PADDLE_OCR_TIMEOUT: ${PADDLE_OCR_TIMEOUT:-600}
+      PADDLE_OCR_DEFAULT_MODEL: ${PADDLE_OCR_DEFAULT_MODEL:-mobile}
+      PADDLE_OCR_USE_TABLE: ${PADDLE_OCR_USE_TABLE:-true}
+      PADDLE_OCR_USE_LAYOUT: ${PADDLE_OCR_USE_LAYOUT:-true}
+      PADDLE_OCR_RETURN_COORDS: ${PADDLE_OCR_RETURN_COORDS:-true}
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:9004/actuator/health/liveness || exit 1"]
       interval: 30s
@@ -476,9 +489,10 @@ services:
     # 读到 '.../blobs/xxx' 字符串而非 JSON, 启动时 warm_up_caches 崩溃
     # 模型已烧入镜像层(约 506MB), 容器内 overlay 文件系统支持真 symlink
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      # 深度健康检查: /health + 模型就绪状态(脚本见 app/docling/healthcheck.sh)
+      test: ["CMD-SHELL", "/usr/local/bin/healthcheck.sh"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
       start_period: 120s
     networks:
@@ -502,6 +516,10 @@ services:
       - "5002:5002"
     environment:
       - TZ=Asia/Shanghai
+      # Tesseract 语言包配置(运行时动态安装,内置 chi_sim+eng)
+      # 格式:tesseract 语言代码,用 + 连接
+      # 可选:chi_sim/eng/jpn/kor/chi_tra/fra/deu/rus/spa
+      - OCR_LANGUAGES=${OCR_LANGUAGES:-chi_sim+eng}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
       interval: 30s

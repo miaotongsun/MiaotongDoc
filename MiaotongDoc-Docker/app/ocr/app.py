@@ -18,20 +18,36 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 支持的语言
+# 支持的语言(根据 Dockerfile 安装的内置包 + entrypoint.sh 动态安装的包)
+# 包含默认值 + 可扩展集,jpn/kor/chi_tra/fra/deu 等需通过 OCR_LANGUAGES 环境变量动态安装
 SUPPORTED_LANGUAGES = {
     'zh': 'chi_sim',
     'en': 'eng',
     'ja': 'jpn',
     'ko': 'kor',
-    'auto': 'chi_sim+eng'
+    'zh_trad': 'chi_tra',
+    'fr': 'fra',
+    'de': 'deu',
+    'auto': 'chi_sim+eng',
 }
 
 
 @app.route('/health', methods=['GET'])
 def health():
-    """健康检查"""
-    return jsonify({'status': 'ok', 'service': 'ocr'})
+    """健康检查 - 返回已加载的 tessdata 语言包"""
+    import glob
+    tessdata_files = glob.glob('/usr/share/tesseract-ocr/*/tessdata/*.traineddata')
+    # 提取语言名(去掉 .traineddata 后缀)
+    loaded_langs = sorted(set(
+        Path(f).stem for f in tessdata_files
+    ))
+    return jsonify({
+        'status': 'ok',
+        'service': 'ocr',
+        'engine': 'Tesseract',
+        'loaded_languages': loaded_langs,
+        'supported_languages': list(SUPPORTED_LANGUAGES.keys()),
+    })
 
 
 @app.route('/ocr/pdf', methods=['POST'])
