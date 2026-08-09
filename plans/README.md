@@ -57,6 +57,7 @@
 - 2026-08-10 -- 清理 docling 残留 layout-heron-git/（HF 仓库 clone，模型仅 LFS 指针，Dockerfile 从未引用）· 新增 app/docling/README.md（HF 缓存三件套原理 + models/ 重建步骤 + 14 blob 校验脚本）· 修 .gitignore（混入的 XML 标签 + 重复行 + 误排除 plans/ 两个文档）
 - 2026-08-10 -- 离线部署三件套落地：修 setup-linux-host.sh 4 项（max_map_count 262144 / Docker 缺失改 exit 1 + 版本校验 / 颜色转义 / --ntp-server）· 新增 export-images.sh（实测导出通过，核心 tar 4.0GB）· 重写 offline-export-command.md（删 httpd:alpine，尺寸改实测）
 - 2026-08-10 -- 新增 offline-env-requirements.md（内网离线部署环境依赖清单：26 项依赖/9 项阻断级，含镜像清单核对、Compose V2 红线、172.20.0.0/16 网段冲突、目录名依赖陷阱、自检脚本、交付确认表；同时记录 7 项已知待修）
+- 2026-08-10 -- 2026-08-09-md-table-rewrite.md **真正完成**(NxM picker click-to-toggle + position:fixed 解决 toolbar overflow 裁剪,可视化截图确认)
 - 2026-08-09 -- 2026-08-09-md-table-rewrite.md **完成**(策略 fix-in-place,E2E 33/33 ✅:三向对齐回写+NxM 选择器+无表头支持+resize 基础设施,2 文件改动)
 - 2026-08-09 -- 4.1 E2E 入库完成(初始 31/32 FAIL,真实仅 7 fail,补后 33/33 ✅)
 - 2026-08-09 -- 新增 2026-08-09-auto-outline-dual-mode.md(智能目录支持 fast/precise 双模式,前端分体按钮)

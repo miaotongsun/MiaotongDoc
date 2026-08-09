@@ -150,7 +150,38 @@
             <path d="M8 10l-2 2 2 2M16 10l2 2-2 2M13 9l-2 6"/>
           </svg>
         </button>
-        <el-tooltip content="表格" :show-after="400"><button class="tb" @click="insertTable"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button></el-tooltip>
+        <!-- 8/9 关键：NxM 表格选择器 - 用普通 div 替代 el-popover(ElementPlus popover teleport+slot ref 交互复杂,自己实现更可控) -->
+        <div class="tb-wrap" style="position: relative; display: inline-block;">
+          <button
+            class="tb db-table-picker-trigger"
+            :class="{ on: tablePickerOpen }"
+            :title="'表格（点击选 NxM）'"
+            ref="tablePickerBtnRef"
+            @click.stop="toggleTablePicker()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
+          <!-- 8/9 关键：position:fixed 逃离 toolbar overflow:auto
+               位置通过 JS 根据按钮 bbox 动态计算 -->
+          <div
+            v-if="tablePickerOpen"
+            class="db-table-picker-popover"
+            :style="tablePickerStyle"
+            @mouseleave="scheduleTablePickerClose">
+            <div class="db-table-picker-hint">{{ tablePickerHoverRows }} × {{ tablePickerHoverCols }} 表格</div>
+            <div class="db-table-picker-grid">
+              <div
+                v-for="cell in 36"
+                :key="cell"
+                class="db-table-picker-cell"
+                :class="{
+                  active: Math.ceil(cell / 6) <= tablePickerHoverRows && ((cell - 1) % 6) + 1 <= tablePickerHoverCols,
+                  hint: Math.ceil(cell / 6) === tablePickerHoverRows && ((cell - 1) % 6) + 1 === tablePickerHoverCols && tablePickerHoverRows > 0
+                }"
+                @mouseenter="tablePickerHoverRows = Math.ceil(cell / 6); tablePickerHoverCols = ((cell - 1) % 6) + 1"
+                @click="onTablePickerPick(Math.ceil(cell / 6), ((cell - 1) % 6) + 1)"
+                :title="`插入 ${Math.ceil(cell / 6)} 行 × ${((cell - 1) % 6) + 1} 列`">
+              </div>
+            </div>
+          </div>
+        </div>
         <!-- 本地图片上传（7/5 关键：支持本地） -->
         <el-tooltip content="图片（本地或 URL）" :show-after="400">
           <button class="tb" @click="addImage">
@@ -338,14 +369,16 @@
           </div>
           <div
             v-show="aiFloatPanel.thinkingExpanded || (aiFloatPanel.status === 'streaming' && !aiFloatPanel.thinkingDone)"
+            ref="aiFloatThinkingBodyRef"
             class="thinking-body"
+            :class="{ expanded: aiFloatPanel.thinkingDone && aiFloatPanel.thinkingExpanded }"
           >
             <div class="thinking-text">
-              {{ aiFloatPanel.thinking || '...' }}
-              <span
+              {{ aiFloatPanel.thinking || '...' }}<span
                 v-if="aiFloatPanel.status === 'streaming' && !aiFloatPanel.thinkingDone"
+                ref="aiFloatThinkingCursorRef"
                 class="thinking-cursor"
-              >▍</span>
+              ></span>
             </div>
           </div>
         </div>
@@ -363,7 +396,7 @@
             <span
               v-if="aiFloatPanel.status === 'streaming'"
               class="ai-float-cursor"
-            >▍</span>
+            ></span>
           </div>
         </div>
 
@@ -1648,6 +1681,59 @@ turndownService.addRule('hljsStrip', {
   filter: (node) => node.nodeName === 'SPAN' && (node as HTMLElement).className?.includes?.('hljs-'),
   replacement: (_content, node) => node.textContent || '',
 })
+// 8/9 关键：表格 → MD 时输出对齐语法（| :--- | :---: | ---: |）保证 round-trip 无损
+// 默认 turndown 只输出 | --- | --- |,丢失对齐信息
+turndownService.addRule('mdTableAlignment', {
+  filter: (node) => node.nodeName === 'TABLE',
+  replacement: (content, node) => {
+    const table = node as HTMLTableElement
+    const rows = Array.from(table.querySelectorAll('tr'))
+    if (rows.length === 0) return content
+
+    // 读取每个 th/td 的对齐（从 style 或 align 属性）
+    const getAlign = (cell: Element | null): 'left' | 'center' | 'right' | null => {
+      if (!cell) return null
+      const styleAlign = (cell as HTMLElement).style.textAlign
+      const attrAlign = cell.getAttribute('align')
+      const v = (styleAlign || attrAlign || '').toLowerCase()
+      if (v === 'left' || v === 'center' || v === 'right') return v
+      return null
+    }
+
+    // 提取每行的 cells（每个 cell 取 textContent 并 trim+管道转义）
+    const escapeCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ').trim()
+    const rowTexts = rows.map((row) =>
+      Array.from(row.querySelectorAll('th, td')).map((cell) => escapeCell(cell.textContent || ''))
+    )
+    const colCount = Math.max(...rowTexts.map((r) => r.length))
+
+    // 第一行作为表头；读取表头对齐作为整列对齐
+    const headerAligns: ('left' | 'center' | 'right' | null)[] = []
+    const headerCells = rows[0]?.querySelectorAll('th, td') || []
+    headerCells.forEach((c: Element) => headerAligns.push(getAlign(c)))
+    // 数据行不足的列补 null
+    while (headerAligns.length < colCount) headerAligns.push(null)
+
+    // 构造 separator 行
+    const sepCell = (a: 'left' | 'center' | 'right' | null) => {
+      if (a === 'left') return ':---'
+      if (a === 'right') return '---:'
+      if (a === 'center') return ':---:'
+      return '---'
+    }
+    const separator = '| ' + headerAligns.map(sepCell).join(' | ') + ' |'
+
+    // 输出所有行
+    const out: string[] = []
+    rowTexts.forEach((cells, idx) => {
+      // 补齐列数（防止 colspan 不一致）
+      while (cells.length < colCount) cells.push('')
+      out.push('| ' + cells.join(' | ') + ' |')
+      if (idx === 0) out.push(separator)
+    })
+    return '\n\n' + out.join('\n') + '\n\n'
+  },
+})
 
 const props = defineProps<{ docId: number; docKey: string; initialContent?: string; canEdit: boolean; userName: string; userId: number }>()
 const emit = defineEmits(['ready', 'stateChange', 'contentChange'])
@@ -2371,6 +2457,69 @@ function setTextAlign(v: string) {
 }
 function insertTable() { editor.value?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() }
 
+// 8/9 关键：NxM 表格选择器 - 6x6 网格 hover 选中尺寸
+const tablePickerOpen = ref(false)
+const tablePickerHoverRows = ref(0)
+const tablePickerHoverCols = ref(0)
+const tablePickerBtnRef = ref<HTMLElement | null>(null)
+// 8/9 关键：picker 用 fixed 定位,style 动态计算(按钮正下方 4px)
+const tablePickerStyle = computed(() => {
+  if (!tablePickerOpen.value || !tablePickerBtnRef.value) return {}
+  const r = tablePickerBtnRef.value.getBoundingClientRect()
+  return {
+    left: r.left + 'px',
+    top: (r.bottom + 4) + 'px',
+  }
+})
+let tablePickerCloseTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleTablePickerClose() {
+  if (tablePickerCloseTimer) clearTimeout(tablePickerCloseTimer)
+  // 延迟 150ms 关闭 - 让鼠标有时间从按钮移动到 popover 上(中间有 ~50px gap)
+  tablePickerCloseTimer = setTimeout(() => {
+    tablePickerOpen.value = false
+    tablePickerHoverRows.value = 0
+    tablePickerHoverCols.value = 0
+  }, 150)
+}
+function cancelTablePickerClose() {
+  if (tablePickerCloseTimer) {
+    clearTimeout(tablePickerCloseTimer)
+    tablePickerCloseTimer = null
+  }
+}
+function onTablePickerClose() {
+  tablePickerHoverRows.value = 0
+  tablePickerHoverCols.value = 0
+}
+function onTablePickerPick(rows: number, cols: number) {
+  editor.value?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
+  tablePickerOpen.value = false
+  tablePickerHoverRows.value = 0
+  tablePickerHoverCols.value = 0
+}
+// 8/9 关键：点击表格按钮 → 切换 NxM popover
+function toggleTablePicker() {
+  tablePickerOpen.value = !tablePickerOpen.value
+  if (!tablePickerOpen.value) {
+    tablePickerHoverRows.value = 0
+    tablePickerHoverCols.value = 0
+  }
+}
+// 8/9 关键：点 popover 外 → 关闭(用 document click listener)
+function onTablePickerDocClick(e: MouseEvent) {
+  if (!tablePickerOpen.value) return
+  const target = e.target as HTMLElement
+  if (target.closest('.db-table-picker-popover')) return // 点 popover 内不关
+  // 8/9 关键:点 reference 按钮不关(用 class 标识而不是 title 匹配,避免中文 title 选择器不可靠)
+  if (target.closest('.db-table-picker-trigger')) return
+  tablePickerOpen.value = false
+  tablePickerHoverRows.value = 0
+  tablePickerHoverCols.value = 0
+}
+// 8/9 关键：表格按钮 click toggle 模式下,挂全局 click 监听实现"点外部关闭"
+onMounted(() => document.addEventListener('click', onTablePickerDocClick))
+onBeforeUnmount(() => document.removeEventListener('click', onTablePickerDocClick))
+
 /**
  * 7/15 关键：插入代码块（点击按钮直接插入）
  * - 默认无 language（Plain Text），光标进入代码块内
@@ -2459,6 +2608,8 @@ function startAiAutoScrollLoop() {
         const el = aiMsgRef.value
         // 强制 scrollHeight 同步 — 用 scrollTo 平滑滚动
         el.scrollTop = el.scrollHeight
+        // 7/27 关键：同时跟随滚动内层思考容器（思考内容超过 max-height 时）
+        scrollActiveThinkingToBottom()
       }
       aiAutoScrollLoop = requestAnimationFrame(tick)
     } else {
@@ -3279,10 +3430,15 @@ function cleanFloatText(t: string): string {
   return s
 }
 
+// 8/9 关键：DOM 引用（提前声明，供下方 IO watch 使用）
+const aiFloatThinkingBodyRef = ref<HTMLElement | null>(null)
+const aiFloatThinkingCursorRef = ref<HTMLElement | null>(null)
+
 // 同步 editAi 流式文本到浮窗
 watch(
   () => [
     editAi.status.value,
+    editAi.messageVersion.value,
     editAi.messages.value[editAi.messages.value.length - 1]?.parts?.length,
   ],
   () => {
@@ -3290,7 +3446,9 @@ watch(
     if (!last || last.role !== 'assistant') return
     const textPart = (last.parts || []).find((p: any) => p.type === 'text')
     const thinkingPart = (last.parts || []).find((p: any) => p.type === 'reasoning')
-    if (thinkingPart) aiFloatPanel.value.thinking = thinkingPart.text || ''
+    if (thinkingPart) {
+      aiFloatPanel.value.thinking = thinkingPart.text || ''
+    }
     if (textPart) {
       // 7/3 关键：流式阶段就清洗 <think>/<result> 标签，避免标签泄露
       const cleaned = cleanFloatText(textPart.text || '')
@@ -3308,6 +3466,71 @@ watch(
     }
   },
   { flush: 'post' }
+)
+
+// 8/9 关键：光标跟随文字 — 用 IntersectionObserver 自动跟随，光标出视区就 scrollIntoView
+//   为什么用 IO 而不是 watch+scrollTop：
+//   - watch 触发是 reactive 触发的"我要改"，IO 是浏览器"光标已不在视区"的事实触发 → 不依赖 nextTick 时序
+//   - scrollIntoView({block:'nearest', inline:'nearest'}) 浏览器原生智能滚动，比手算 scrollTop+scrollHeight 鲁棒
+//   - rootMargin: 0 保证用 .thinking-body 自身的滚动容器视区
+let aiFloatThinkingCursorIO: IntersectionObserver | null = null
+watch(
+  [aiFloatThinkingCursorRef, aiFloatThinkingBodyRef],
+  ([cursor, body]) => {
+    if (aiFloatThinkingCursorIO) {
+      aiFloatThinkingCursorIO.disconnect()
+      aiFloatThinkingCursorIO = null
+    }
+    if (!cursor || !body) return
+    aiFloatThinkingCursorIO = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) {
+            // 光标滚出视区 → 浏览器自动平滑滚到最近可见位置
+            ;(entry.target as HTMLElement).scrollIntoView({
+              block: 'nearest',
+              inline: 'nearest',
+              behavior: 'smooth',
+            })
+          }
+        }
+      },
+      {
+        root: body, // 用 .thinking-body 作为视区容器(它有 overflow-y:auto)
+        // 提前 4px 触发 → 光标刚贴到边就滚动，避免贴到边那一刻看着不跟手
+        rootMargin: '0px 0px 4px 0px',
+        threshold: 0.01,
+      }
+    )
+    aiFloatThinkingCursorIO.observe(cursor)
+  },
+  { immediate: true, flush: 'post' }
+)
+onBeforeUnmount(() => {
+  if (aiFloatThinkingCursorIO) {
+    aiFloatThinkingCursorIO.disconnect()
+    aiFloatThinkingCursorIO = null
+  }
+})
+
+// 7/27 关键：浮窗思考中每秒 tick 一次 — 让"正在思考… N 秒"实时刷新（不依赖 done 才结算）
+let aiFloatThinkingTickTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => editAi.status.value === 'streaming' || slashAi.status.value === 'streaming',
+  (streaming) => {
+    if (aiFloatThinkingTickTimer) { clearInterval(aiFloatThinkingTickTimer); aiFloatThinkingTickTimer = null }
+    if (streaming) {
+      aiFloatThinkingTickTimer = setInterval(() => {
+        if (aiFloatPanel.value.thinkingStartedAt && !aiFloatPanel.value.thinkingDone) {
+          aiFloatPanel.value.thinkingDurationSec = Math.max(
+            0,
+            Math.floor((Date.now() - aiFloatPanel.value.thinkingStartedAt) / 1000)
+          )
+        }
+      }, 1000)
+    }
+  },
+  { immediate: true }
 )
 
 // 同步 slashAi 流式文本到浮窗
@@ -3698,6 +3921,7 @@ watch(
 )
 onBeforeUnmount(() => {
   if (aiThinkingTickTimer) { clearInterval(aiThinkingTickTimer); aiThinkingTickTimer = null }
+  if (aiFloatThinkingTickTimer) { clearInterval(aiFloatThinkingTickTimer); aiFloatThinkingTickTimer = null }
 })
 
 /**
@@ -3803,13 +4027,16 @@ function smartScrollAiToBottom() {
   setTimeout(() => {
     if (aiMsgRef.value) {
       aiMsgRef.value.scrollTop = aiMsgRef.value.scrollHeight
+      scrollActiveThinkingToBottom()
       requestAnimationFrame(() => {
         if (aiMsgRef.value) {
           aiMsgRef.value.scrollTop = aiMsgRef.value.scrollHeight
+          scrollActiveThinkingToBottom()
           // 7/19 关键：再下一帧再校准一次（捕获 markdown 渲染/图片懒加载触发的 layout shift）
           requestAnimationFrame(() => {
             if (aiMsgRef.value) {
               aiMsgRef.value.scrollTop = aiMsgRef.value.scrollHeight
+              scrollActiveThinkingToBottom()
             }
           })
         }
@@ -3831,6 +4058,19 @@ function scrollAiToBottom(smooth = true) {
     top: el.scrollHeight,
     behavior: smooth ? 'smooth' : 'auto'
   })
+  scrollActiveThinkingToBottom()
+}
+
+/**
+ * 7/27 关键：思考区内层滚动容器跟随 — 思考内容超过 max-height 后自动滚到底
+ * 查询 chat 面板中正在流式的思考包裹器，滚到底部
+ */
+function scrollActiveThinkingToBottom() {
+  if (!aiMsgRef.value) return
+  const wrapper = aiMsgRef.value.querySelector('.thinking-section.ongoing .thinking-content-wrapper') as HTMLElement | null
+  if (wrapper) {
+    wrapper.scrollTop = wrapper.scrollHeight
+  }
 }
 
 /**
@@ -6593,8 +6833,9 @@ html.dark .db-cb-ai-btn:hover,
   z-index: 1000;
   min-width: 360px;
   max-width: 480px;
-  /* 7/4 关键：限制浮窗总高度不超过视口，避免超出屏幕 */
-  max-height: min(560px, calc(100vh - 24px));
+  /* 7/4 关键：限制浮窗总高度不超过视口，避免超出屏幕
+     8/9 改 560->720，给展开后的思考区留足空间（不然 6+ 段思考内容会被 flex 压扁重叠） */
+  max-height: min(720px, calc(100vh - 24px));
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 12px;
@@ -6602,7 +6843,7 @@ html.dark .db-cb-ai-btn:hover,
   backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: hidden;  /* 8/9 关键：面板自身不滚，子区域各自 overflow-y:auto 独立滚 */
   font-size: 13px;
   animation: floatPanelEnter 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -6640,10 +6881,39 @@ html.dark .db-cb-ai-btn:hover,
   padding: 0 6px; border-radius: 4px;
 }
 .ai-float-close:hover { background: rgba(0, 0, 0, 0.05); color: #6b7280; }
+
+/* 8/9 关键：NxM 表格选择器(自定义实现,不依赖 el-popover)
+   关键：position:fixed 逃离 toolbar 的 overflow:auto 裁剪 */
+.db-table-picker-popover {
+  position: fixed;  /* 逃出 toolbar/editor 的 overflow:hidden */
+  z-index: 10000;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+  user-select: none;
+  min-width: 180px;
+}
+.db-table-picker-hint { font-size: 12px; color: #4f46e5; margin-bottom: 8px; text-align: center; font-weight: 600; min-height: 18px; }
+.db-table-picker-grid { display: grid; grid-template-columns: repeat(6, 22px); grid-template-rows: repeat(6, 18px); gap: 2px; }
+.db-table-picker-cell {
+  background: #f3f4f6; border-radius: 3px; cursor: pointer;
+  transition: background 0.1s;
+}
+.db-table-picker-cell:hover { background: #e5e7eb; }
+.db-table-picker-cell.active { background: #6366f1; }
+.db-table-picker-cell.hint { background: #4f46e5; }
 .ai-float-thinking {
   margin: 6px 12px 0;
   border: 1px solid rgba(167, 139, 250, 0.3);
-  border-radius: 8px; background: #faf5ff; overflow: hidden;
+  border-radius: 8px; background: #faf5ff;
+  /* 8/9 关键：改 overflow:hidden -> visible，避免裁掉 .thinking-body 的滚动内容
+     圆角由 .thinking-body 自身 border-radius + .thinking-head 负责 */
+  overflow: visible;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   /* 7/4 关键：折叠/展开 head 高度突变 - 用 transition 平滑 */
   transition: max-height 0.2s ease;
 }
@@ -6711,19 +6981,56 @@ html.dark .db-cb-ai-btn:hover,
 .ai-float-chevron:hover { background: rgba(167, 139, 250, 0.25); }
 .ai-float-chevron.expanded { transform: rotate(180deg); background: rgba(167, 139, 250, 0.2); }
 .thinking-body {
+  position: relative;
   padding: 6px 10px; border-top: 1px solid rgba(167, 139, 250, 0.2);
   max-height: min(280px, calc(100vh - 360px));
   overflow-y: auto;
   animation: slideDown 0.2s ease-out;
   transform-origin: top;
+  /* 8/9 关键：flex 子项必须 min-height:0 才能被面板压缩时维持滚动 */
+  min-height: 0;
 }
+.thinking-body.expanded {
+  /* 8/9 关键：展开后用 flex:1 占满浮窗剩余空间，不要用 hardcoded height
+     之前用 height:420px 被 flex 压缩后行高被破坏，文字视觉重叠 */
+  flex: 1 1 auto;
+  min-height: 200px;
+  max-height: none;  /* 让 flex 决定 */
+}
+/* 8/9 关键：让思考区滚动条始终可见、足够粗、颜色明显，不再"能滚但看不见条" */
+.thinking-body::-webkit-scrollbar { width: 8px; }
+.thinking-body::-webkit-scrollbar-track { background: rgba(167, 139, 250, 0.08); border-radius: 4px; }
+.thinking-body::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.5); border-radius: 4px;
+}
+.thinking-body::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.8); }
+.thinking-body { scrollbar-width: thin; scrollbar-color: rgba(139, 92, 246, 0.5) rgba(167, 139, 250, 0.08); }
 .thinking-text { font-size: 12px; line-height: 1.5; color: #4b5563; white-space: pre-wrap; word-break: break-word; }
-.thinking-cursor::after { content: '▍'; animation: cursor-blink 0.8s infinite; color: #8b5cf6; }
+/* 8/9 关键：光标内联在文本末尾，跟随打字机 reveal
+   自动滚动逻辑由 IntersectionObserver 负责：光标滚出视区时触发 scrollIntoView({block:'nearest'}) */
+.thinking-cursor {
+  display: inline-block;
+  width: 0.5em;
+  color: #8b5cf6;
+  font-size: 14px;
+  line-height: 1;
+  vertical-align: middle;
+  animation: cursor-blink 0.8s infinite;
+  /* inline-block 让 ::after 的 content 不撑出额外高度 */
+}
+.thinking-cursor::after { content: '▍'; display: inline-block; }
 @keyframes cursor-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 .ai-float-body {
   padding: 10px 14px; min-height: 56px; max-height: 280px;
   overflow-y: auto; white-space: pre-wrap; word-break: break-word; line-height: 1.6;
+  /* 8/9 关键：结果区滚动条统一显式样式，与思考区一致 */
+  scrollbar-width: thin; scrollbar-color: rgba(99, 102, 241, 0.5) rgba(99, 102, 241, 0.08);
+  flex-shrink: 0;
 }
+.ai-float-body::-webkit-scrollbar { width: 8px; }
+.ai-float-body::-webkit-scrollbar-track { background: rgba(99, 102, 241, 0.08); border-radius: 4px; }
+.ai-float-body::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.5); border-radius: 4px; }
+.ai-float-body::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.8); }
 .ai-float-placeholder { color: #9ca3af; font-style: italic; }
 .ai-float-content { color: #1f2937; }
 .ai-float-cursor::after { content: '▍'; animation: cursor-blink 0.8s infinite; color: #6366f1; }
