@@ -645,14 +645,22 @@ public class PdfController {
     }
 
     /**
-     * Phase 13.23: 智能目录(AI 生成 + 写入 PDF outline)
+     * 智能目录(AI 生成 + 写入 PDF outline)
+     *
      * POST /api/pdf/{id}/ai/auto-outline
+     * Body: {"mode": "fast" | "precise"}  默认 "fast"
+     *   - fast:    PDFTextStripper 抽全文 + LLM 抽取(快,纯文本 PDF,秒级)
+     *   - precise: Docling 抽结构化 markdown + LLM 抽取(精准,支持扫描件,5-10 秒)
      */
     @PostMapping("/{id}/ai/auto-outline")
     public ResponseEntity<Map<String, Object>> autoOutline(
             @PathVariable Long id,
-            HttpServletRequest httpRequest) {
-        Map<String, Object> result = pdfToolService.autoOutline(id);
+            @RequestBody(required = false) Map<String, String> body) {
+        String mode = body == null ? "fast" : body.getOrDefault("mode", "fast");
+        if (!"fast".equals(mode) && !"precise".equals(mode)) {
+            mode = "fast";
+        }
+        Map<String, Object> result = pdfToolService.autoOutline(id, mode);
         return ResponseEntity.ok(result);
     }
 

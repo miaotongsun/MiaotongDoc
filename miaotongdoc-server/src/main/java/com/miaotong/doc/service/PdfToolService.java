@@ -52,6 +52,8 @@ public class PdfToolService {
     private final com.miaotong.doc.service.ai.AiService aiService;
     /** Phase 13.23: Docling 结构化提取(智能提取) */
     private final DoclingService doclingService;
+    /** 2026-08-09: Docling 配置(智能目录 precise 模式判断是否启用) */
+    private final com.miaotong.doc.config.DoclingProperties doclingProperties;
     /** Phase 26: PDF 任务仓库(智能目录旁路数据用) */
     private final com.miaotong.doc.repository.PdfTaskRepository pdfTaskRepository;
 
@@ -1466,11 +1468,43 @@ public class PdfToolService {
 
     /**
      * 智能目录:AI 分析全文生成章节标题+页码,写入 PDF outline 落盘
+     *
+     * @param docId 文档ID
+     * @param mode  "fast"(PDFTextStripper + LLM,纯文本 PDF 秒级)
+     *              "precise"(Docling + LLM,扫描件/复杂版面 5-10 秒)
      */
-    public Map<String, Object> autoOutline(Long docId) {
+    public Map<String, Object> autoOutline(Long docId, String mode) {
+        if ("precise".equalsIgnoreCase(mode)) {
+            return autoOutlinePrecise(docId);
+        }
+        return autoOutlineFast(docId);
+    }
+
+    /**
+     * 快速模式:PDFTextStripper 抽全文 + LLM 抽取章节
+     * 适用:纯文本 PDF,首页就看到标题
+     */
+    private Map<String, Object> autoOutlineFast(Long docId) {
+        return autoOutlineCore(docId, false);
+    }
+
+    /**
+     * 精准模式:Docling 抽结构化 markdown + LLM 抽取章节
+     * 适用:扫描件 PDF / 复杂版面 / 章节不明显的 PDF
+     */
+    private Map<String, Object> autoOutlinePrecise(Long docId) {
+        return autoOutlineCore(docId, true);
+    }
+
+    /**
+     * 智能目录核心逻辑
+     * @param useDocling true=用 Docling 拿 markdown,false=用 PDFTextStripper 抽纯文本
+     */
+    private Map<String, Object> autoOutlineCore(Long docId, boolean useDocling) {
         Document doc = documentService.getDocument(docId);
         validatePdf(doc);
         Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("mode", useDocling ? "precise" : "fast");
         // Phase 13.37: 预检 LLM 是否配置,未配置直接返回明确提示
         if (!aiService.isConfigured()) {
             resp.put("success", false);
@@ -1479,22 +1513,35 @@ public class PdfToolService {
             return resp;
         }
         try {
-            byte[] pdfBytes = storageService.load(doc.getFilePath());
-            // 1. 取全文 text(带页码),按页切(避免字符截断导致 LLM 看不到后续页码)
+            // === 关键差异:文本抽取方式 ===
             List<String> pageTexts = new ArrayList<>();
             int totalPages = 0;
-            try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
-                PDFTextStripper stripper = new PDFTextStripper();
-                totalPages = pdf.getNumberOfPages();
-                for (int i = 1; i <= totalPages; i++) {
-                    stripper.setStartPage(i);
-                    stripper.setEndPage(i);
-                    pageTexts.add(stripper.getText(pdf));
+            if (useDocling && doclingProperties.isEnabled()) {
+                // 精准模式:Docling 输出带 ## 标题的 markdown,LLM 抽取章节更准
+                String markdown = doclingService.parse(docId);
+                // 按 \f (form feed, PDF 页分隔符)切页;Docling 默认用 \f 分页
+                String[] pages = markdown.split("\\f");
+                totalPages = pages.length;
+                for (String p : pages) {
+                    pageTexts.add(p);
+                }
+                log.info("智能目录(precise):Docling 输出 {} 字符, {} 页", markdown.length(), totalPages);
+            } else {
+                // 快速模式:PDFTextStripper 逐页抽纯文本(原有逻辑)
+                byte[] pdfBytes = storageService.load(doc.getFilePath());
+                try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
+                    PDFTextStripper stripper = new PDFTextStripper();
+                    totalPages = pdf.getNumberOfPages();
+                    for (int i = 1; i <= totalPages; i++) {
+                        stripper.setStartPage(i);
+                        stripper.setEndPage(i);
+                        pageTexts.add(stripper.getText(pdf));
+                    }
                 }
             }
-            // 2. 喂 LLM(按页拼,前 N 页直到字符上限 12000)
+            // 2. 喂 LLM(按页拼,前 N 页直到字符上限)
             StringBuilder fullText = new StringBuilder();
-            int maxChars = 12000;
+            int maxChars = useDocling ? 60000 : 12000;  // Docling 输出更精炼,可放大字符上限
             int pagesIncluded = 0;
             for (int i = 0; i < pageTexts.size(); i++) {
                 String pageBlock = "[Page " + (i + 1) + "]\n" + pageTexts.get(i) + "\n";
@@ -1502,7 +1549,15 @@ public class PdfToolService {
                 fullText.append(pageBlock);
                 pagesIncluded++;
             }
-            String prompt = "分析以下 PDF 全文(共 " + totalPages + " 页,已按页标注 [Page N],本页范围内前 " + pagesIncluded + " 页),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数,必须使用 1~" + totalPages + " 之间的真实页码,不要猜!),\"level\":层级(0=一级,1=二级)}。只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" + fullText;
+            // Prompt 差异:精准模式告诉 LLM "markdown 已带 ## 标题,直接抽"
+            String prompt;
+            if (useDocling) {
+                prompt = "以下 PDF 已转为带 Markdown 章节标记的文本(`##` `###` 表示 H1/H2 标题,共 " + totalPages + " 页,已按页标注 [Page N],本页范围内前 " + pagesIncluded + " 页)。\n"
+                        + "请基于这些章节标记,输出章节目录 JSON 数组,每项 {\"title\":\"章节标题(原文,不要改写)\",\"page\":起始页码(整数,1~" + totalPages + " 真实页码),\"level\":层级(0=H1,1=H2)}。\n"
+                        + "只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" + fullText;
+            } else {
+                prompt = "分析以下 PDF 全文(共 " + totalPages + " 页,已按页标注 [Page N],本页范围内前 " + pagesIncluded + " 页),输出章节目录 JSON 数组,每项 {\"title\":章节标题,\"page\":起始页码(整数,必须使用 1~" + totalPages + " 之间的真实页码,不要猜!),\"level\":层级(0=一级,1=二级)}。只输出 JSON 数组,不要解释,不要 markdown 代码块。全文:\n" + fullText;
+            }
             String llmOut = aiService.generate(prompt);
             // Phase 13.36: 检测 LLM 调用失败(chat 异常时返回"AI 服务调用失败"字符串)
             if (llmOut == null || llmOut.isBlank()) {
@@ -1529,6 +1584,7 @@ public class PdfToolService {
             }
             resp.put("outline", outline);
             // 4. 写入 PDF outline 落盘 + page 范围校验(防 LLM 返回越界值)
+            byte[] pdfBytes = storageService.load(doc.getFilePath());
             try (PDDocument pdf = Loader.loadPDF(pdfBytes)) {
                 int totalPg = pdf.getNumberOfPages();
                 PDDocumentOutline root = new PDDocumentOutline();

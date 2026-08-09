@@ -947,11 +947,19 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 | minio | miaotongdoc-minio | 9000/9001 | 172.20.0.60 | 对象存储（单节点） |
 | elasticsearch | miaotongdoc-elasticsearch | (内部9200) | 172.20.0.70 | 全文搜索 |
 | yjs-server | miaotongdoc-yjs | 1234 | 172.20.0.80 | Yjs 协同服务器 |
-| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile，需离线改造见 plans/2026-07-26-offline） |
-| ocr | miaotongdoc-ocr | 5002 | 172.20.0.95 | OCR 服务（可选 profile） |
-| ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.20.0.96 | PaddleOCR 中文扫描件（可选 profile） |
+| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile,模型 506MB 已烧入镜像,内网零外网） |
+| ocr | miaotongdoc-ocr | 5002 | 172.20.0.95 | Tesseract 多语言兜底（可选 profile,语言包可运行时动态扩展） |
+| ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.20.0.96 | PaddleOCR 中文扫描件主力（默认启动,模型 232MB 已烧入） |
 
-> **可选 profile**：`docling` / `ocr` / `ocr-paddle` 默认不启动，需用 `docker compose --profile ocr up -d ocr` 等命令启用。完整启用：`--profile all`。
+> **可选 profile**：`docling` / `ocr` 默认不启动，需用 `docker compose --profile ocr up -d ocr` 等命令启用；`ocr-paddle` **默认启动**（中文扫描件主力）。完整启用：`--profile all`。
+>
+> **OCR 引擎选型速查**（2026-08-09 更新）：
+> - **Docling** → PDF→结构化 Markdown，保留表格/标题（PDF 编辑器结构化导出、合同 LLM 抽取）
+> - **PaddleOCR** → 中文扫描件首选，识别速度快、支持表格识别（PDF 编辑器 OCR 按钮组、扫描件转 Word）
+> - **Tesseract** → 多语言兜底（PDF 编辑器兜底、海外合同识别）
+> - **PDFBox** → 纯文本 PDF 兜底（始终可用,无需模型）
+>
+> 四层瀑布路由：`Docling → PaddleOCR → Tesseract → PDFBox`，由 `PdfRecognizeService.java:48-103` 实现。环境变量配置完整说明见 `.env.example` 的 OCR 段 + [plans/2026-08-09-ocr-models-offline-deploy.md](plans/2026-08-09-ocr-models-offline-deploy.md)。
 >
 > **架构图说明**：nginx 通过 `/editor/*` 路由用 `hash $doc_key$remote_addr consistent` 策略将请求分流到 3 个 editor 实例（按文档 key + IP 哈希保持会话亲和性），参见 [config/nginx/nginx.conf](MiaotongDoc-Docker/config/nginx/nginx.conf)。
 
@@ -2130,7 +2138,7 @@ PDF OCR 专用 (/api/pdf/{id}/*):
   GET/PUT markdown
   GET    text-positions
   POST   export-edited
-  POST   ai/auto-outline                      ← 智能目录
+  POST   ai/auto-outline {mode:fast|precise}  ← 智能目录(2026-08-09 双模式,precise 走 Docling)
   POST   ai/extract-structured                ← 结构化提取
   POST   ai/vision/stream                     ← PDF VLM(改造后走 VISION 配置)
   POST   ai/extract-terms/stream              ← 合同条款抽取

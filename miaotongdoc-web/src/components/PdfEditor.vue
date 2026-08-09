@@ -68,7 +68,7 @@
       @ai-extract-terms="onAiExtractTerms"
       @ai-optimize-ocr="onAiOptimizeOcr"
       @ai-extract-structured="onAiExtractStructured"
-      @ai-auto-outline="onAiAutoOutline"
+      @ai-auto-outline="onAiAutoOutlineWithMode"
       @ai-view-outline="() => toggleRightPanel('outline')"
       @ai-keywords="onAiKeywords"
       @ai-annotate="onAiAnnotate"
@@ -2041,21 +2041,75 @@ async function onAiAnnotate() {
   aiVisible.value = true
   await aiFloat.chat.sendUserMessage(`请为以下文字添加批注建议:\n\n${sel}`)
 }
+// 2026-08-09: 智能目录统一错误处理(中文友好提示,不再暴露 axios 英文)
+//
+// 安全策略:
+// 1. axios 异常(超时/网络/中断) → 静态中文文案
+// 2. 后端 HTTP 状态码 → 按码映射(401/403/502/504)
+// 3. 后端业务 message → 必须命中白名单才透传,否则 fallback
+//   (即使后端 sanitize 了,前端再守一层,双保险,防业务代码误把 SQL/路径拼进 message)
+function describeApiError(e: any, fallback: string): string {
+  const raw = e?.message || String(e) || ''
+
+  // 1. axios 超时
+  if (raw.includes('timeout') || raw.includes('Timeout')) {
+    return '服务繁忙或任务超时,请稍后重试'
+  }
+  // 2. axios 网络中断
+  if (raw.includes('Network Error') || raw.includes('aborted')) {
+    return '网络连接中断,请检查网络后重试'
+  }
+
+  // 3. HTTP 状态码优先
+  const status = e?.response?.status
+  if (status === 504) return '服务繁忙或任务超时,请稍后重试'
+  if (status === 502) return '服务繁忙,请稍后重试'
+  if (status === 401) return '登录已过期,请重新登录'
+  if (status === 403) return '无权访问'
+  if (status === 404) return '资源不存在'
+
+  // 4. 后端业务 message 白名单过滤
+  // 仅当 message 命中以下模式才透传,否则一律 fallback(防止后端代码误透 SQL/路径/IP)
+  const backendMsg = e?.response?.data?.message
+  if (typeof backendMsg === 'string' && backendMsg.length > 0 && backendMsg.length < 80) {
+    // 必须是中文(包含汉字)
+    const hasChinese = /[一-龥]/.test(backendMsg)
+    // 必须不包含可疑字符串(再次防御)
+    const suspicious = /java\.|javax\.|org\.springframework|org\.apache|com\.miaotong|Throwable|Exception:| at |SQL|psql|\/data\/|\/opt\/|\/usr\/|\.jar|Connection refused|UnknownHost|172\.|10\.|192\.168\.|redis|rabbitmq|postgres|minio|NullPointer|ClassCast|IllegalArgument|IllegalState|StackOverflow|OutOfMemory|HikariCP|pool|classpath:/.test(backendMsg)
+    if (hasChinese && !suspicious) {
+      return backendMsg
+    }
+  }
+
+  return fallback
+}
+
 // 2026-08-02 PR4: 智能目录 - 强制开 outline 面板(避免 toggle 关已开),删多余 getOutline
-async function onAiAutoOutline() {
+async function onAiAutoOutline(mode: 'fast' | 'precise' = 'fast') {
   try {
-    ElMessage.info('AI 正在生成智能目录...')
-    const r = await pdfApi.autoOutline(props.docId)
+    const tip = mode === 'precise'
+      ? 'AI 正在精准生成智能目录(支持扫描件,5-10 秒+,长 PDF 可能 1-2 分钟)...'
+      : 'AI 正在快速生成智能目录...'
+    ElMessage.info(tip)
+    const r = await pdfApi.autoOutline(props.docId, mode)
     if (r.success) {
-      ElMessage.success(`已生成 ${r.outline?.length || 0} 个章节目录`)
+      ElMessage.success(`已生成 ${r.outline?.length || 0} 个章节目录(${r.mode === 'precise' ? '精准' : '快速'})`)
       // 强制开 outline 面板(若已是 outline 则不变;若不是则打开)
       if (rightPanelOpen.value !== 'outline') {
         toggleRightPanel('outline')
       }
       // 不自动跳页(避免用户失去上下文);让用户点击目录项跳转
       // 删多余 pdfApi.getOutline 调用(PdfRightPanel 已 watch docId 重载)
-    } else { ElMessage.error(r.error || '智能目录生成失败') }
-  } catch (e: any) { ElMessage.error(e?.message || '智能目录失败') }
+    } else {
+      ElMessage.error(r.error || describeApiError(null, '智能目录生成失败'))
+    }
+  } catch (e: any) {
+    ElMessage.error(describeApiError(e, '智能目录失败,请稍后重试'))
+  }
+}
+/** 模板包装方法:Ribbon 传入的 mode 参数原样转发 */
+function onAiAutoOutlineWithMode(mode: 'fast' | 'precise' = 'fast') {
+  return onAiAutoOutline(mode)
 }
 async function onAiExtractStructured() {
   try {

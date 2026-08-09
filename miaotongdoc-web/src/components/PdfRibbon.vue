@@ -193,7 +193,10 @@
           <RibbonBtn icon="summarize" label="全文摘要" @click="$emit('ai-full-summary')" />
         </RibbonGroup>
         <RibbonGroup label="结构">
-          <RibbonBtn icon="outline" label="智能目录" @click="$emit('ai-auto-outline')" />
+          <!-- 2026-08-09: 智能目录支持双模式(fast=秒级纯文本/precise=5-10秒扫描件+复杂版面)
+               用两个独立按钮而非下拉,确保 100% 可点击。精准模式按钮在 Docling 不可用时禁用。 -->
+          <RibbonBtn icon="outline" label="智能目录·快速" @click="$emit('ai-auto-outline', 'fast')" />
+          <RibbonBtn icon="outline" label="智能目录·精准" @click="$emit('ai-auto-outline', 'precise')" />
           <RibbonBtn icon="contract" label="合同条款" @click="$emit('ai-extract-terms')" />
         </RibbonGroup>
         <!-- 2026-08-02: 删除空的"编辑"组(智能重写/纠错按钮已删,组内无内容占位)
@@ -208,7 +211,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import RibbonGroup from './RibbonGroup.vue'
 import RibbonBtn from './RibbonBtn.vue'
 import type { AnnotationTool } from '@/composables/pdf/usePdfAnnotation'
@@ -255,7 +258,8 @@ const emit = defineEmits<{
   (e: 'fill-form' | 'rotate-current' | 'crop-page' | 'split-pdf'): void
   (e: 'ai-summarize' | 'ai-translate' | 'ai-full-summary' | 'ai-generate'): void  // 2026-08-02: 'ai-rewrite' 移除
   (e: 'ai-vqa' | 'ai-image-desc' | 'ai-extract-terms' | 'ai-optimize-ocr' | 'ai-extract-structured'): void
-  (e: 'ai-auto-outline' | 'ai-keywords' | 'ai-annotate' | 'ai-recognize-status' | 'ai-view-outline'): void  // 2026-08-02: 'ai-proofread' 移除
+  (e: 'ai-auto-outline', mode: 'fast' | 'precise'): void  // 2026-08-09: 加 mode 参数(fast/precise)
+  (e: 'ai-keywords' | 'ai-annotate' | 'ai-recognize-status' | 'ai-view-outline'): void
   (e: 'extract-images'): void
   /** Phase 10.3: 用户改了图章文字 */
   (e: 'update:stampText', text: string): void
