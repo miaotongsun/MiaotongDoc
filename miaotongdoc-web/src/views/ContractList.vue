@@ -1,8 +1,10 @@
 <template>
   <div class="contract-page">
-    <!-- Stats -->
+    <!-- Stats(2026-08-09 #1:点击筛选 + 选中高亮) -->
     <div class="stats-row">
-      <div class="stat-card" v-for="(val, key) in stats" :key="key">
+      <div class="stat-card" v-for="(val, key) in stats" :key="key"
+        :class="{ active: filterStatus === key }"
+        @click="onStatClick(key)">
         <div class="stat-value">{{ val }}</div>
         <div class="stat-label">{{ statusLabels[key] || key }}</div>
       </div>
@@ -38,37 +40,41 @@
     </div>
 
     <!-- Table -->
-    <el-table :data="contracts" style="width: 100%" v-loading="loading" @row-click="viewContract">
-      <el-table-column prop="contractNo" label="合同编号" width="160" />
-      <el-table-column prop="documentTitle" label="文档标题" min-width="180" show-overflow-tooltip />
-      <el-table-column label="类型" width="100">
+    <el-table :data="contracts" style="width: 100%" v-loading="loading"
+      :row-class-name="rowClassName"
+      @row-dblclick="viewContract">
+      <el-table-column prop="contractNo" label="合同编号" width="170" fixed="left" />
+      <el-table-column prop="documentTitle" label="文档标题" width="auto" min-width="120" show-overflow-tooltip />
+      <el-table-column label="类型" width="80">
         <template #default="{ row }">
           <el-tag size="small">{{ typeLabels[row.contractType] || row.contractType || '-' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="partyA" label="甲方" width="150" show-overflow-tooltip />
-      <el-table-column prop="partyB" label="乙方" width="150" show-overflow-tooltip />
-      <el-table-column label="金额" width="120" align="right">
+      <el-table-column prop="partyA" label="甲方" width="140" show-overflow-tooltip />
+      <el-table-column prop="partyB" label="乙方" width="140" show-overflow-tooltip />
+      <el-table-column label="金额" prop="amount" width="120" align="right" sortable>
         <template #default="{ row }">
           {{ row.amount ? `¥${row.amount.toLocaleString()}` : '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="getStatusType(row.status)" size="small">{{ statusLabels[row.status] || row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="departmentName" label="部门" width="120" show-overflow-tooltip />
-      <el-table-column label="到期日" width="110">
+      <el-table-column prop="departmentName" label="部门" width="110" show-overflow-tooltip />
+      <el-table-column label="到期日" prop="expiryDate" width="110" sortable>
         <template #default="{ row }">
           {{ row.expiryDate || '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button text size="small" type="primary" @click.stop="viewContract(row)">详情</el-button>
-          <el-button v-if="row.status === 'draft'" text size="small" type="success" @click.stop="submitContract(row)">提交审批</el-button>
-          <el-button v-if="row.status === 'draft'" text size="small" type="danger" @click.stop="deleteContract(row)">删除</el-button>
+          <div class="row-actions">
+            <el-button text size="small" type="primary" @click.stop="viewContract(row)">详情</el-button>
+            <el-button v-if="row.status === 'draft'" text size="small" type="success" @click.stop="submitContract(row)">提交审批</el-button>
+            <el-button v-if="row.status === 'draft'" text size="small" type="danger" @click.stop="deleteContract(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -80,6 +86,7 @@
 
     <ContractCreateDialog v-model="showCreate" @created="onCreated" />
     <ContractSubmitDialog v-model="showSubmit" :contract-id="submitContractId" @submitted="onSubmitted" />
+    <ContractDetailDialog v-model="showDetail" :contract-id="detailContractId" @refreshed="onDetailRefreshed" />
   </div>
 </template>
 
@@ -91,6 +98,7 @@ import { contractApi, type Contract } from '@/api/contract'
 import { departmentApi, type Department } from '@/api/department'
 import ContractCreateDialog from '@/components/ContractCreateDialog.vue'
 import ContractSubmitDialog from '@/components/ContractSubmitDialog.vue'
+import ContractDetailDialog from '@/views/ContractDetail.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -102,6 +110,8 @@ const departments = ref<Department[]>([])
 const showCreate = ref(false)
 const showSubmit = ref(false)
 const submitContractId = ref(0)
+const showDetail = ref(false)
+const detailContractId = ref(0)
 
 const filterStatus = ref('')
 const filterType = ref('')
@@ -174,6 +184,16 @@ onMounted(async () => {
   try {
     departments.value = await departmentApi.getAll()
   } catch {}
+  // 处理深链(/contracts/:id → 重定向到这里)
+  // ContractDetailRedirect.vue 写入 sessionStorage 标记,ContractList 弹窗承接
+  const pendingOpen = sessionStorage.getItem('miaotong:contract:openOnHome')
+  if (pendingOpen) {
+    sessionStorage.removeItem('miaotong:contract:openOnHome')
+    detailContractId.value = Number(pendingOpen)
+    if (detailContractId.value > 0) {
+      showDetail.value = true
+    }
+  }
 })
 
 async function loadContracts() {
@@ -213,7 +233,26 @@ function getStatusType(status: string) {
 }
 
 function viewContract(row: Contract) {
-  router.push(`/contracts/${row.id}`)
+  detailContractId.value = row.id
+  showDetail.value = true
+}
+
+// 2026-08-09 #1:点击状态卡片 → 筛选对应状态(再次点击同卡片 = 清除筛选)
+function onStatClick(key: string) {
+  if (key === 'total') {
+    filterStatus.value = ''
+  } else if (filterStatus.value === key) {
+    filterStatus.value = ''
+  } else {
+    filterStatus.value = key
+  }
+  currentPage.value = 1
+  loadContracts()
+}
+
+// 2026-08-09 #5:行 hover 时显示手型光标
+function rowClassName({ row }: { row: Contract }) {
+  return 'contract-row-clickable'
 }
 
 function submitContract(row: Contract) {
@@ -240,6 +279,11 @@ function onSubmitted() {
   loadContracts()
   loadStats()
 }
+
+function onDetailRefreshed() {
+  loadContracts()
+  loadStats()
+}
 </script>
 
 <style scoped>
@@ -260,7 +304,24 @@ function onSubmitted() {
   border-radius: 8px;
   padding: 16px;
   text-align: center;
-  border: 1px solid #ebeef5;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.stat-card:hover {
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+
+/* 2026-08-09 #1:筛选激活态 */
+.stat-card.active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.stat-card.active .stat-value {
+  color: var(--el-color-primary);
 }
 
 .stat-value {
@@ -286,5 +347,18 @@ function onSubmitted() {
   display: flex;
   justify-content: flex-end;
   padding-top: 12px;
+}
+
+/* 2026-08-09 #2:操作列按钮同行 */
+.row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: center;
+}
+
+/* 2026-08-09 #5:行 hover 时显示手型光标(双击进详情) */
+:deep(.el-table__row.contract-row-clickable) {
+  cursor: pointer;
 }
 </style>

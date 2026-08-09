@@ -1123,6 +1123,13 @@ const emptyText = computed(() => {
 })
 
 onMounted(async () => {
+  // 2026-08-09:从编辑器返回时,如果 sessionStorage 中有"待打开合同"标记,
+  // 自动切换到合同 tab(让 ContractList 挂载并读取同一标记)
+  const pendingOpen = sessionStorage.getItem('miaotong:contract:openOnHome')
+  if (pendingOpen && activeTab.value !== 'contract') {
+    switchTab('contract')
+  }
+
   if (activeTab.value === 'recent') {
     documentStore.fetchDocuments({
       page: _lastView?.page ? _lastView.page - 1 : 0,

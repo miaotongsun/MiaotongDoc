@@ -39,4 +39,10 @@ public final class NotificationType {
 
     /** 文档新版本 */
     public static final String VERSION = "VERSION";
+
+    /** 2026-08-09 新增:合同付款计划到期提醒(7 天前) */
+    public static final String PAYMENT_REMIND = "PAYMENT_REMIND";
+
+    /** 2026-08-09 新增:合同付款计划到期当日 */
+    public static final String PAYMENT_DUE = "PAYMENT_DUE";
 }

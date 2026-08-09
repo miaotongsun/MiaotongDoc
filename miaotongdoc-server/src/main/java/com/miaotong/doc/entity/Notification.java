@@ -26,6 +26,10 @@ public class Notification {
     @Column(name = "document_id")
     private Long documentId;
 
+    /** 2026-08-09 新增:关联合同 ID(可选,用于付款计划到期提醒跳转) */
+    @Column(name = "contract_id")
+    private Long contractId;
+
     @Column(nullable = false, length = 30)
     private String type;
 

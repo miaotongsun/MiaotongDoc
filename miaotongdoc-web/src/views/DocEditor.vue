@@ -258,6 +258,18 @@ async function loadSigningTask() {
 }
 
 function goBack() {
+  // 2026-08-09 #4:支持"编辑返回合同管理"上下文
+  const returnTo = sessionStorage.getItem('miaotong:editor:returnTo')
+  sessionStorage.removeItem('miaotong:editor:returnTo')
+  if (returnTo && returnTo.startsWith('contract:')) {
+    const contractId = returnTo.split(':')[1]
+    if (contractId) {
+      // 标记到 sessionStorage,ContractList.vue 监听器会打开合同详情弹窗
+      sessionStorage.setItem('miaotong:contract:openOnHome', contractId)
+      router.push('/home')
+      return
+    }
+  }
   router.push('/home')
 }
 

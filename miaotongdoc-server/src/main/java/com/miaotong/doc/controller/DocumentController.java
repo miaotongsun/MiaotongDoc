@@ -48,6 +48,8 @@ public class DocumentController {
     private final StorageService storageService;
     private final EditorJwtUtil editorJwtUtil;
     private final UserRepository userRepository;
+    /** 2026-08-09 #4:用于合同详情临时预览的纯文本提取 */
+    private final com.miaotong.doc.service.ai.DocumentContentService documentContentService;
     private final DepartmentRepository departmentRepository;
     /** v2.7.2：注入 AI 插件配置 */
     private final com.miaotong.doc.service.AiProxyService aiProxyService;
@@ -521,6 +523,25 @@ public class DocumentController {
                 "attachment; filename=\"" + encodedFilename + "\"; filename*=UTF-8''" + encodedFilename);
 
         return new ResponseEntity<>(content, headers, HttpStatus.OK);
+    }
+
+    /**
+     * 2026-08-09 #4:获取文档纯文本(用于合同详情内临时预览)
+     * 支持 Word / PDF / Markdown / txt
+     */
+    @GetMapping("/{id}/text")
+    public ResponseEntity<Map<String, Object>> getDocumentText(@PathVariable Long id) {
+        Document doc = documentService.getDocument(id);
+        String text = documentContentService.extractText(id);
+        if (text != null && text.length() > 20000) {
+            text = text.substring(0, 20000) + "...(truncated)";
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("documentId", id);
+        result.put("title", doc.getTitle());
+        result.put("fileType", doc.getFileType());
+        result.put("text", text == null ? "" : text);
+        return ResponseEntity.ok(result);
     }
 
     /**

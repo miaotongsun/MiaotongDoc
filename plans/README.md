@@ -29,7 +29,8 @@
 - [2026-08-09-md-table-rewrite.md](2026-08-09-md-table-rewrite.md) — MD 编辑器表格 7 大能力(策略改为 fix-in-place,E2E 33/33 ✅)— **已完成** 2026-08-09
 - [2026-08-09-contract-payment-plan.md](2026-08-09-contract-payment-plan.md) — 合同付款计划(新表 + AI 抽取 + scheduler + 通知跳转)— **已完成** (V29 + 32/32) 2026-08-09
 - [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中 ⚠️ 文件不存在,看板虚假状态,需清理或补文件
-- [offline-export-command.md](offline-export-command.md) — 镜像导出 `docker save` 命令速查（外网→内网导入）
+- [offline-export-command.md](offline-export-command.md) — 镜像导出速查（已重写：一键脚本 + 手工命令 + 实测尺寸 + 三大坑）
+- [offline-env-requirements.md](offline-env-requirements.md) — **内网离线部署环境依赖清单**（硬件/Docker 版本/内核/网段/镜像/自检脚本/交付确认表，26 项依赖；7 项待修已修 5 项）— 生效中 2026-08-10
 
 ## 已完成
 
@@ -53,6 +54,7 @@
 
 ## 看板更新记录
 
+- 2026-08-10 -- 新增 offline-env-requirements.md（内网离线部署环境依赖清单：26 项依赖/9 项阻断级，含镜像清单核对、Compose V2 红线、172.20.0.0/16 网段冲突、目录名依赖陷阱、自检脚本、交付确认表；同时记录 7 项已知待修）
 - 2026-08-09 -- 2026-08-09-md-table-rewrite.md **完成**(策略 fix-in-place,E2E 33/33 ✅:三向对齐回写+NxM 选择器+无表头支持+resize 基础设施,2 文件改动)
 - 2026-08-09 -- 4.1 E2E 入库完成(初始 31/32 FAIL,真实仅 7 fail,补后 33/33 ✅)
 - 2026-08-09 -- 新增 2026-08-09-auto-outline-dual-mode.md(智能目录支持 fast/precise 双模式,前端分体按钮)

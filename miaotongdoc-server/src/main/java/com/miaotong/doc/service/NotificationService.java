@@ -25,15 +25,25 @@ public class NotificationService {
 
     @Transactional
     public void notify(Long fromUserId, Long toUserId, Long documentId, String type, String content) {
+        notify(fromUserId, toUserId, documentId, null, type, content);
+    }
+
+    /**
+     * 2026-08-09 新增:支持合同关联(contractId 用于付款计划提醒跳转)
+     */
+    @Transactional
+    public void notify(Long fromUserId, Long toUserId, Long documentId, Long contractId,
+                        String type, String content) {
         Notification notification = new Notification();
         notification.setUserId(toUserId);
         notification.setFromUserId(fromUserId);
         notification.setDocumentId(documentId);
+        notification.setContractId(contractId);
         notification.setType(type);
         notification.setContent(content);
         notificationRepository.save(notification);
 
-        // 构建完整的推送数据（包含关联信息）
+        // 构建完整的推送数据(包含关联信息)
         Map<String, Object> data = new HashMap<>();
         data.put("id", notification.getId());
         data.put("type", notification.getType());
@@ -52,6 +62,9 @@ public class NotificationService {
             documentRepository.findById(documentId).ifPresent(doc ->
                 data.put("documentTitle", doc.getTitle())
             );
+        }
+        if (contractId != null) {
+            data.put("contractId", contractId);
         }
 
         notificationWebSocketHandler.sendNotification(toUserId, data);

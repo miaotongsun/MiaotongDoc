@@ -93,6 +93,10 @@ function renderNotificationContent(notification: NotificationItem): string {
       return `${userSpan} 在 ${docSpan} 中@了您`
     case 'VERSION':
       return `${userSpan} 为 ${docSpan} <span class="notify-action">保存了新版本</span>`
+    case 'PAYMENT_REMIND':
+    case 'PAYMENT_DUE':
+      // 2026-08-09:合同付款计划提醒,内容由后端定制
+      return `<span class="notify-warning">⏰ ${escapeHtml(notification.content || '您有付款计划即将到期')}</span>`
     default:
       return notification.content ? escapeHtml(notification.content) : `${userSpan} 发送了一条通知`
   }
@@ -100,6 +104,12 @@ function renderNotificationContent(notification: NotificationItem): string {
 
 function handleClick(notification: NotificationItem) {
   notificationStore.markAsRead(notification.id)
+  // 2026-08-09:合同关联通知(付款计划提醒)优先跳转合同详情弹窗
+  if (notification.contractId) {
+    sessionStorage.setItem('miaotong:contract:openOnHome', String(notification.contractId))
+    router.push('/home')
+    return
+  }
   if (notification.documentId) {
     router.push(`/editor/${notification.documentId}`)
   }

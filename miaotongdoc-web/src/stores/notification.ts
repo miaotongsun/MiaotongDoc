@@ -10,6 +10,8 @@ export interface NotificationItem {
   fromEmployeeId?: string
   documentId?: number
   documentTitle?: string
+  /** 2026-08-09 新增:关联合同 ID(用于付款计划提醒跳转) */
+  contractId?: number
   type: string
   content: string
   isRead: boolean
