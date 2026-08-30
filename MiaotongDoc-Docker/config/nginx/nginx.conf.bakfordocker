@@ -1,0 +1,295 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    client_max_body_size 200m;
+
+    # Docker DNS 解析器（解决容器重启时 hostname 解析延迟问题）
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # Gzip 压缩（编辑器资源 72MB, 压缩后约 20MB）
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_comp_level 4;
+    gzip_proxied any;
+    gzip_types  text/plain
+                text/css
+                text/xml
+                text/csv
+                text/javascript
+                application/javascript
+                application/x-javascript
+                application/json
+                application/xml
+                application/rtf
+                application/wasm
+                font/ttf
+                application/x-font-ttf
+                image/svg+xml;
+
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      '';
+    }
+
+    # 如果 socket.io 请求没有带 EIO/transport 参数，自动补上默认值
+    map $args $socketio_default_args {
+        default "";
+        "~*transport=polling" "";
+        ""  "EIO=4&transport=polling";
+    }
+
+    # 从 URL 中提取文档 key（UUID 格式），用于路由亲和
+    map $request_uri $doc_key {
+        "~/(?:doc|docx)/([\w]{8}-[\w]{4}-[\w]{4}-[\w]{4}-[\w]{12})"  $1;
+        "~/cache/files/data/([\w]{8}-[\w]{4}-[\w]{4}-[\w]{4}-[\w]{12})"  $1;
+        default "";
+    }
+
+    upstream backend {
+        zone backend 64k;
+        server web-server:9004 resolve;
+    }
+
+    # SSE 连接池（可选）
+    upstream backend_sse {
+        zone backend_sse 64k;
+        server web-server:9004 resolve;
+    }
+
+    # 按文档 key 哈希：同一文档的请求路由到同一个 editor（负载均衡）
+    upstream editors {
+        zone editors 64k;
+        hash $doc_key$remote_addr consistent;
+        server editor:80 resolve;
+        server editor2:80 resolve;
+        server editor3:80 resolve;
+    }
+
+    # socket.io 专用：按 remote_addr 哈希（保证握手和后续请求到同一 editor）
+    upstream editors_socketio {
+        zone editors_socketio 64k;
+        hash $remote_addr consistent;
+        server editor:80 resolve;
+        server editor2:80 resolve;
+        server editor3:80 resolve;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        # 插件静态资源（浏览器相对 URL 解析到 /sdkjs-plugins/ 而非 /ds-vpath/.../sdkjs-plugins/）
+        location /sdkjs-plugins/ {
+            proxy_pass http://editors/sdkjs-plugins/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            # 覆盖 immutable 缓存头，确保插件更新后浏览器能获取最新版本
+            proxy_hide_header Cache-Control;
+            proxy_hide_header Pragma;
+            proxy_hide_header Expires;
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+            add_header Pragma "no-cache";
+            add_header Expires "0";
+        }
+
+        # 前端静态资源
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Phase 11.8: pdfjs worker (.mjs) 必须用 JavaScript MIME,否则浏览器拒绝 module 加载
+        location ~* \.mjs$ {
+            root /usr/share/nginx/html;
+            default_type application/javascript;
+            try_files $uri =404;
+        }
+
+        # Phase 11.8: pdfjs cMap (.bcmap) 用二进制流 MIME
+        location ~* \.bcmap$ {
+            root /usr/share/nginx/html;
+            default_type application/octet-stream;
+            try_files $uri =404;
+        }
+
+        # 后端 API（包含 SSE 流式响应）
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            # SSE 流式响应优化
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            chunked_transfer_encoding on;
+            # TCP 优化 - 禁用 Nagle 算法，立即发送小数据包
+            proxy_socket_keepalive on;
+            tcp_nodelay on;
+        }
+
+        # WebSocket — 协作状态
+        location /ws/presence/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+        }
+
+        # WebSocket — 通知推送
+        location /ws/notifications {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+        }
+
+        # AI 聊天（SSE 流式）— 关键：禁用 buffer，立即转发每一帧
+        location /api/ai/chat/stream {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_buffering off;
+            proxy_cache off;
+            # SSE 必需
+            proxy_set_header Connection "";
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        # WebSocket — 通知（不是 AI 聊天）
+        location /ws/ai/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            # 流式输出关键：禁用 nginx buffer，立即转发每一帧
+            proxy_buffering off;
+            proxy_cache off;
+        }
+
+        # WebSocket — Yjs 协同编辑（Markdown + PDF 注释）
+        location /ws/yjs/ {
+            proxy_pass http://yjs-server:1234/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+
+        # AI 代理 - 拦截 /ds-vpath/{version}/ai-proxy，转发到后端（而非 DocumentServer）
+        # OnlyOffice AI 插件请求 /ai-proxy，重写为 /api/ai/proxy
+        location ~ ^/ds-vpath/[^/]+/ai-proxy {
+            rewrite ^/ds-vpath/[^/]+/ai-proxy(/.*)?$ /api/ai/proxy$1 break;
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            chunked_transfer_encoding on;
+            tcp_nodelay on;
+        }
+
+        # AI 代理 - 拦截 /ds-vpath/{version}/api/ai/*，转发到后端
+        # 包括 /proxy、/models、/refresh-models、/config、/settings 等
+        location ~ ^/ds-vpath/[^/]+/api/ai/ {
+            rewrite ^/ds-vpath/[^/]+(/.*)$ $1 break;
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            chunked_transfer_encoding on;
+            tcp_nodelay on;
+        }
+
+        # socket.io 握手请求（vendor/socket.io）- 需要注入 EIO 参数
+        location ~ ^/ds-vpath/[^/]+/vendor/socket\.io {
+            set $args $args$socketio_default_args;
+            rewrite ^/ds-vpath/([^/]+)/(.*)$ /$2 break;
+            proxy_pass http://editors_socketio;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Prefix /ds-vpath;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+        }
+
+        # socket.io 后续请求（docx/ 或 doc/ 路径下的 socket.io）
+        location ~ ^/ds-vpath/[^/]+/(docx|doc)/ {
+            set $args $args$socketio_default_args;
+            rewrite ^/ds-vpath/([^/]+)/(.*)$ /$2 break;
+            proxy_pass http://editors_socketio;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Prefix /ds-vpath;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+        }
+
+        # 文档编辑器服务（其他 /ds-vpath/ 请求）
+        location /ds-vpath/ {
+            proxy_pass http://editors/;
+            proxy_set_header Host $host;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Prefix /ds-vpath;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+
+            # 编辑器自身有缓存保护机制(版本号 URL + immutable 缓存),不再覆盖
+            # 移除 no-cache 后浏览器可缓存编辑器资源,避免每次重下 72MB
+        }
+    }
+}

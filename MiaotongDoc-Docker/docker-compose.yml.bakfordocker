@@ -1,0 +1,570 @@
+# MiaotongDoc Docker Compose
+#
+# 内存策略：所有容器不设硬性内存限制，跟随宿主机自动伸缩。
+# 唯一例外：Elasticsearch 通过 ES_JAVA_OPTS 显式限制 JVM heap（防止 Java 默认占满容器内存）。
+# 宿主机层面建议：Docker Desktop 内存上限设为物理内存的 75%，给宿主机 OS 留 25%。
+
+services:
+  nginx:
+    image: nginx:latest
+    container_name: miaotongdoc-nginx
+    ports:
+      - "80:80"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/service-worker-override.js:/etc/nginx/service-worker-override.js:ro
+      - ./app/web/dist:/usr/share/nginx/html
+      - ./data/logs/nginx:/var/log/nginx
+    depends_on:
+      - web-server
+      - editor
+      - editor2
+      - editor3
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:12
+    container_name: miaotongdoc-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: miaotongdocdb
+      POSTGRES_USER: miaotong
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./data/pgdata:/var/lib/postgresql/data
+      - ./data/logs/postgres:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U miaotong -d miaotongdocdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.20
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: miaotongdoc-redis
+    ports:
+      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./data/redis:/data
+      - ./data/logs/redis:/var/log/redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.30
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: miaotongdoc-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: miaotong
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.35
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  web-server:
+    image: eclipse-temurin:17-jre
+    container_name: miaotongdoc-server
+    ports:
+      - "9004:9004"
+    volumes:
+      - ./app/server/miaotongdoc.jar:/app/app.jar
+      - ./data/documents:/data/documents
+      - ./data/config:/data/config
+      - ./data/logs/server:/app/logs
+      - ./config/logback-spring.xml:/app/config/logback-spring.xml:ro
+    command: java -jar /app/app.jar --logging.config=/app/config/logback-spring.xml
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: prod
+      APP_JWT_SECRET: ${APP_JWT_SECRET}
+      APP_JWT_EXPIRATION: ${APP_JWT_EXPIRATION}
+      EDITOR_JWT_SECRET: ${EDITOR_JWT_SECRET}
+      EDITOR_SERVER_URL: http://editor:80
+      EDITOR_CALLBACK_URL: http://web-server:9004/api/callback/editor
+      EDITOR_DOWNLOAD_URL: http://web-server:9004/api/documents
+      DB_HOST: postgres
+      DB_PORT: 5432
+      POSTGRES_DB: miaotongdocdb
+      POSTGRES_USER: miaotong
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      SSO_ENABLED: ${SSO_ENABLED}
+      SSO_ISSUER_URI: ${SSO_ISSUER_URI}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}
+      SSO_PROVIDER_NAME: ${SSO_PROVIDER_NAME}
+      STORAGE_TYPE: ${STORAGE_TYPE}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      LLM_API_URL: ${LLM_API_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_TIMEOUT: ${LLM_TIMEOUT}
+      # OCR AI 改造 v3:OCR 异步任务队列
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: miaotong
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      SPRING_RABBITMQ_VIRTUAL_HOST: /
+      # ===== OCR 服务配置(内网离线场景下三套引擎的开关/地址/超时) =====
+      # Docling: 结构化主力(PDF→Markdown,保留表格/标题),按 profile 启动
+      DOCLING_ENABLED: ${DOCLING_ENABLED}
+      DOCLING_SERVER_URL: http://docling:5001
+      DOCLING_TIMEOUT: ${DOCLING_TIMEOUT:-300}
+      DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-chi_sim+eng}
+      # Tesseract: 多语言兜底,中文+英文默认,扩展语言由 OCR_LANGUAGES 控制(动态安装)
+      OCR_ENABLED: ${OCR_ENABLED}
+      OCR_SERVER_URL: http://ocr:5002
+      OCR_LANGUAGES: ${OCR_LANGUAGES:-chi_sim+eng}
+      # PaddleOCR: 中文扫描件主力(默认开),mobile=轻量,server=高精度
+      PADDLE_OCR_ENABLED: ${PADDLE_OCR_ENABLED}
+      PADDLE_OCR_SERVER_URL: http://ocr-paddle:5003
+      PADDLE_OCR_LANGUAGE: ${PADDLE_OCR_LANGUAGE:-ch}
+      PADDLE_OCR_TIMEOUT: ${PADDLE_OCR_TIMEOUT:-600}
+      PADDLE_OCR_DEFAULT_MODEL: ${PADDLE_OCR_DEFAULT_MODEL:-mobile}
+      PADDLE_OCR_USE_TABLE: ${PADDLE_OCR_USE_TABLE:-true}
+      PADDLE_OCR_USE_LAYOUT: ${PADDLE_OCR_USE_LAYOUT:-true}
+      PADDLE_OCR_RETURN_COORDS: ${PADDLE_OCR_RETURN_COORDS:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9004/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      editor:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.40
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  editor:
+    image: miaotongdoc-editor:latest
+    container_name: miaotongdoc-editor
+    build:
+      context: ./app/editor
+      dockerfile: Dockerfile
+      args:
+        - BASE_IMAGE=onlyoffice/documentserver:9.3
+    environment:
+      - TZ=Asia/Shanghai
+      - JWT_ENABLED=true
+      - JWT_SECRET=${EDITOR_JWT_SECRET}
+      - JWT_IN_BODY=true
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=miaotongdocdb
+      - DB_USER=miaotong
+      - DB_PWD=${DB_PASSWORD}
+      - DB_TYPE=postgres
+      - EDITOR_JWT_SECRET=${EDITOR_JWT_SECRET}
+      - REDIS_SERVER_HOST=redis
+      - REDIS_SERVER_PORT=6379
+      - REDIS_SERVER_PASS=${REDIS_PASSWORD}
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      - COAUTH_ALLOW_PRIVATE_IP=true
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
+    volumes:
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.50
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  editor2:
+    image: miaotongdoc-editor:latest
+    container_name: miaotongdoc-editor2
+    environment:
+      - TZ=Asia/Shanghai
+      - JWT_ENABLED=true
+      - JWT_SECRET=${EDITOR_JWT_SECRET}
+      - JWT_IN_BODY=true
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=miaotongdocdb
+      - DB_USER=miaotong
+      - DB_PWD=${DB_PASSWORD}
+      - DB_TYPE=postgres
+      - EDITOR_JWT_SECRET=${EDITOR_JWT_SECRET}
+      - REDIS_SERVER_HOST=redis
+      - REDIS_SERVER_PORT=6379
+      - REDIS_SERVER_PASS=${REDIS_PASSWORD}
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      - COAUTH_ALLOW_PRIVATE_IP=true
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
+    volumes:
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor2:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.51
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  editor3:
+    image: miaotongdoc-editor:latest
+    container_name: miaotongdoc-editor3
+    environment:
+      - TZ=Asia/Shanghai
+      - JWT_ENABLED=true
+      - JWT_SECRET=${EDITOR_JWT_SECRET}
+      - JWT_IN_BODY=true
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=miaotongdocdb
+      - DB_USER=miaotong
+      - DB_PWD=${DB_PASSWORD}
+      - DB_TYPE=postgres
+      - EDITOR_JWT_SECRET=${EDITOR_JWT_SECRET}
+      - REDIS_SERVER_HOST=redis
+      - REDIS_SERVER_PORT=6379
+      - REDIS_SERVER_PASS=${REDIS_PASSWORD}
+      - AMQP_URI=amqp://miaotong:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      - COAUTH_ALLOW_PRIVATE_IP=true
+      - SECURE_LINK_SECRET=${SECURE_LINK_SECRET}
+      - LLM_API_URL=${LLM_API_URL}
+      - LLM_API_KEY=${LLM_API_KEY}
+    volumes:
+      - ./data/editor:/var/www/onlyoffice/Data
+      - ./data/editor-cache:/var/lib/onlyoffice/documentserver/App_Data
+      - ./data/logs/editor3:/var/log/onlyoffice
+      - ./data/config:/data/config:ro
+      - ./app/editor/scripts/entrypoint.sh:/app/ds/miaotongdoc-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.52
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # OnlyOffice 文件缓存定时清理（每天凌晨3点清理超过24h的缓存）
+  cache-cleaner:
+    image: alpine:latest
+    container_name: miaotongdoc-cache-cleaner
+    environment:
+      - CACHE_MAX_AGE_HOURS=${CACHE_MAX_AGE_HOURS}
+    volumes:
+      - ./data/editor-cache:/var/cache/onlyoffice
+      - ./scripts/clean-editor-cache.sh:/scripts/clean.sh:ro
+    entrypoint: /bin/sh
+    command: -c "echo '0 3 * * * /bin/sh /scripts/clean.sh >> /proc/1/fd/1 2>&1' | crontab - && crond -f -l 8"
+    networks:
+      - mtd-net
+    restart: unless-stopped
+
+  # 日志轮转（每天凌晨2点执行）
+  logrotate:
+    image: alpine:latest
+    container_name: miaotongdoc-logrotate
+    volumes:
+      - ./data/logs:/data/logs
+      - ./config/logrotate/app-logs:/etc/logrotate.d/app-logs:ro
+      - ./scripts/logrotate.sh:/scripts/logrotate.sh:ro
+    entrypoint: /bin/sh
+    command: -c "echo '0 2 * * * /bin/sh /scripts/logrotate.sh >> /proc/1/fd/1 2>&1' | crontab - && crond -f -l 8"
+    networks:
+      - mtd-net
+    restart: unless-stopped
+
+  # MinIO 对象存储
+  minio:
+    image: minio/minio:latest
+    container_name: miaotongdoc-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - ./data/minio:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.60
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Elasticsearch 全文搜索引擎
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: miaotongdoc-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.70
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Yjs WebSocket 协同编辑服务器（Markdown + PDF 注释实时同步）
+  yjs-server:
+    build: ./app/yjs
+    container_name: miaotongdoc-yjs
+    ports:
+      - "1234:1234"
+    environment:
+      - TZ=Asia/Shanghai
+      - YJS_PORT=1234
+    volumes:
+      - ./data/yjs:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:1234/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.80
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Docling 文档解析服务（PDF 结构化识别 + OCR）
+  # AI 文档结构化解析（重型服务，含 docling 模型缓存，按需启动）
+  # 启动方式: docker compose --profile docling up -d docling
+  docling:
+    build: ./app/docling
+    container_name: miaotongdoc-docling
+    profiles: ["docling", "all"]
+    ports:
+      - "5001:5001"
+    environment:
+      - DOCLING_SERVE_ENABLE_UI=false
+      - DOCLING_SERVE_ENG_LOC_NUM_WORKERS=1
+      - DOCLING_SERVE_OPTIONS_CACHE_SIZE=1
+      - DOCLING_SERVE_MAX_SOURCES_PER_REQUEST=1
+      - TZ=Asia/Shanghai
+      - DOCLING_SERVE_MAX_SYNC_WAIT=600
+      - DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT=600
+      # ⭐ 纯内网离线: 禁止 huggingface_hub 发任何外网请求
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - HF_DATASETS_OFFLINE=1
+      - HF_HOME=/root/.cache/huggingface
+    # 注意: 不挂载 ./data/docling-cache 到 /root/.cache!
+    # Docker Desktop on Windows 的 9p 文件系统会把 HF 模型快照里的 symlink
+    # 转成含路径字符串的普通文件,导致 RTDetrImageProcessor.from_json_file
+    # 读到 '.../blobs/xxx' 字符串而非 JSON, 启动时 warm_up_caches 崩溃
+    # 模型已烧入镜像层(约 506MB), 容器内 overlay 文件系统支持真 symlink
+    healthcheck:
+      # 深度健康检查: /health + 模型就绪状态(脚本见 app/docling/healthcheck.sh)
+      test: ["CMD-SHELL", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.90
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Tesseract OCR 服务(扫描件 PDF 多语言兜底;默认禁用,按需启用)
+  # 启动方式: docker compose --profile ocr up -d ocr
+  # 设计依据: plans/pdf-editor-reshape.md §Tesseract 默认禁用,占用极小,作多语言兜底
+  ocr:
+    build: ./app/ocr
+    container_name: miaotongdoc-ocr
+    profiles: ["ocr", "all"]
+    ports:
+      - "5002:5002"
+    environment:
+      - TZ=Asia/Shanghai
+      # Tesseract 语言包配置(运行时动态安装,内置 chi_sim+eng)
+      # 格式:tesseract 语言代码,用 + 连接
+      # 可选:chi_sim/eng/jpn/kor/chi_tra/fra/deu/rus/spa
+      - OCR_LANGUAGES=${OCR_LANGUAGES:-chi_sim+eng}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.95
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Phase 4: PaddleOCR 中文扫描件主力(默认启动;首次启动模型加载约 30-60s)
+  # 仅在不需要中文 OCR 时显式排除: docker compose up -d --scale ocr-paddle=0 ...
+  # 完整启用(含 docling): docker compose --profile all up -d
+  ocr-paddle:
+    build: ./app/ocr-paddle
+    container_name: miaotongdoc-ocr-paddle
+    ports:
+      - "5003:5003"
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    networks:
+      mtd-net:
+        ipv4_address: 172.20.0.96
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+networks:
+  mtd-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
