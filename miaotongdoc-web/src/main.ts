@@ -17,6 +17,8 @@ import 'element-plus/dist/index.css'
 import '@/styles/pdf-tokens.css'
 // Phase 13.21: 统一弹窗样式(.pdf-dialog 类)
 import '@/styles/pdf-dialogs.css'
+// 思维导图全局 CSS 变量（七彩虹 + 琥珀橙，**必须在 main.ts 全局引入**：在 SFC scoped 内 @import 会导致 :root 选择器被加 data-v hash，变量失效）
+import '@/styles/mindmap-theme.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'

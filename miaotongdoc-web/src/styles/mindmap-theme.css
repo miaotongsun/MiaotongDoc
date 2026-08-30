@@ -1,0 +1,223 @@
+/* ============================================================
+ * mindmap-theme.css —— 思维导图七彩虹主题
+ * 创建日期：2026-08-16
+ *
+ * 设计原则：
+ * 1. 主品牌色 #F59E0B（琥珀橙）避开已用 5 色
+ * 2. 节点默认循环 7 色（红橙黄绿青蓝紫）
+ * 3. 暗色 / 浅色 / 多彩主题适配
+ * 4. 不影响其他 5 种文档类型颜色
+ * ============================================================ */
+
+:root {
+  /* 主品牌色（用于 DocCard / CreateDocDialog / DocEditor nav tag / MindmapEditor 工具栏） */
+  --mindmap-primary: #F59E0B;
+  --mindmap-primary-rgb: 245, 158, 11;
+  --mindmap-primary-light: #FCD34D;
+  --mindmap-primary-dark: #B45309;
+  --mindmap-primary-50: #FFFBEB;
+  --mindmap-primary-100: #FEF3C7;
+
+  /* 七彩虹节点色（按节点层级循环 / 用户可改） */
+  --mindmap-rainbow-1: #FF6B6B;  /* 红 */
+  --mindmap-rainbow-2: #FF9F43;  /* 橙 */
+  --mindmap-rainbow-3: #FECA57;  /* 黄 */
+  --mindmap-rainbow-4: #10AC84;  /* 绿 */
+  --mindmap-rainbow-5: #3742FA;  /* 蓝 */
+  --mindmap-rainbow-6: #8E44AD;  /* 紫 */
+  --mindmap-rainbow-7: #5F27CD;  /* 靛 */
+
+  /* CSS 变量数组（用于 SVG / 渐变） */
+  --mindmap-rainbow-array: var(--mindmap-rainbow-1), var(--mindmap-rainbow-2),
+                          var(--mindmap-rainbow-3), var(--mindmap-rainbow-4),
+                          var(--mindmap-rainbow-5), var(--mindmap-rainbow-6),
+                          var(--mindmap-rainbow-7);
+
+  /* MindElixir 主色覆盖（CSS 变量会被 MindElixir 读取） */
+  --main-color: var(--mindmap-primary);
+  --main-bgcolor: var(--mindmap-primary-50);
+  --color-background: #ffffff;
+  --panel-background: #f8fafc;
+  --panel-color: #1e293b;
+}
+
+/* 暗色主题（可选） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #0f172a;
+    --panel-background: #1e293b;
+    --panel-color: #f1f5f9;
+  }
+}
+
+/* 思维导图编辑器壳样式（MindmapEditor.vue 使用） */
+.mindmap-editor {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-background);
+  color: var(--panel-color);
+}
+
+.mindmap-editor .mm-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--panel-background);
+  border-bottom: 1px solid var(--mindmap-primary-100);
+  flex-wrap: wrap;
+}
+
+.mindmap-editor .mm-toolbar .el-button.is-active,
+.mindmap-editor .mm-toolbar .el-button:focus {
+  color: var(--mindmap-primary);
+  border-color: var(--mindmap-primary);
+}
+
+.mindmap-editor .mm-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.mindmap-editor .mm-map {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-background);
+}
+
+.mindmap-editor .mm-collaboration-bar {
+  height: 40px;
+  padding: 6px 16px;
+  background: var(--panel-background);
+  border-top: 1px solid var(--mindmap-primary-100);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 节点选中态高亮（协同远程用户） */
+.mm-node-remote-selected {
+  outline: 2px dashed var(--mindmap-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 协同头像边框色 */
+.mm-collaboration-bar .avatar {
+  border: 2px solid var(--mindmap-primary);
+}
+
+/* ★ 框选虚线框（viselect 默认蓝色 → 改为琥珀橙主题）
+   放这里而不放 scoped style 是因为 viselect 注入的 .selection-area 元素
+   不在 Vue 组件 DOM 树内（动态生成），scoped data-v hash 不命中 */
+.selection-area {
+  background-color: rgba(245, 158, 11, 0.10) !important;
+  border: 1.5px dashed var(--mindmap-primary) !important;
+  border-radius: 2px !important;
+}
+
+/* ★ 节点选中态：XMind 风格 — 柔和光晕，不用粗实线
+   MindElixir 默认 outline: 2px solid var(--selected)
+   XMind 用的是半透明 + 模糊阴影 + 细线 */
+.map-container .selected,
+.map-container me-tpc.selected {
+  outline: none !important;
+  border-radius: 6px !important;
+  box-shadow: 0 0 0 1.5px var(--mindmap-primary), 0 0 8px 2px rgba(245, 158, 11, 0.25) !important;
+}
+
+/* ★ 节点编辑态输入框：琥珀橙边框 + 柔光晕 */
+.map-container #input-box {
+  outline: none !important;
+  border: 1.5px solid var(--mindmap-primary) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15) !important;
+  background-color: #fff !important;
+}
+
+/* ★ me-epd 展开/折叠按钮（XMind 风格：克制灰色 + hover 主题色 + +/− 符号）
+   位置优化：默认在节点正下方居中（MindElixir 默认位置）
+   之前 position: absolute 会让按钮位置错乱（默认在左上角）*/
+.map-container me-epd {
+  background-image: none !important;
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  background-color: #ffffff !important;
+  border: 1.5px solid #cbd5e1 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+  opacity: 1 !important;
+  /* ★★★ 关键修复！MindElixir .map-canvas 默认 pointer-events:none，
+     所有后代元素（包括 me-epd）都收不到鼠标事件。
+     MindElixir 只给 me-parent me-epd 设了 pointer-events:all，
+     但根节点 me-root > me-epd 没设 → 点击穿透 → 折叠按钮失效。
+     一行修复所有根节点折叠问题！ */
+  pointer-events: all !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  z-index: 20 !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #64748b !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+}
+
+/* ★ 根节点 me-epd：定位在节点正下方居中（XMind 风格）*/
+.map-container me-root {
+  position: relative !important;  /* 提供定位上下文 */
+}
+.map-container me-root > me-epd {
+  position: absolute !important;
+  left: 50% !important;
+  top: 100% !important;  /* 在 me-root 底部（me-tpc 之下）*/
+  transform: translate(-50%, -50%) !important;  /* 居中 + 略微上移露出边缘 */
+  z-index: 30 !important;
+  width: 18px !important;
+  height: 18px !important;
+  font-size: 16px !important;
+}
+
+/* ★ 子节点 me-epd：在 wrapper 右侧居中（MindElixir 默认位置是垂直居中） */
+.map-container me-wrapper me-epd {
+  margin-left: 4px !important;  /* 节点右边距 */
+}
+
+/* + 号（折叠状态） */
+.map-container me-epd:not(.minus)::before {
+  content: '+' !important;
+  margin-top: -2px !important;
+}
+/* − 号（展开状态） */
+.map-container me-epd.minus::before {
+  content: '−' !important;
+  margin-top: -2px !important;
+}
+/* 清除 ::after（之前用 ::after 做 + 竖线，现在用 + 字符） */
+.map-container me-epd::after {
+  content: none !important;
+}
+
+/* hover：边框变橙 + 浅琥珀背景
+   ★ 根节点 hover 必须保留 translate(-50%,-50%) + scale（否则 transform 覆盖导致跳位）
+   ★ 子节点 hover 只加 scale（子节点不用 translate 定位） */
+.map-container me-epd:hover {
+  background-color: #fff !important;
+  border-color: var(--mindmap-primary) !important;
+  color: var(--mindmap-primary) !important;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.25) !important;
+}
+.map-container me-wrapper me-epd:hover {
+  transform: scale(1.2) !important;
+}
+.map-container me-root > me-epd:hover {
+  transform: translate(-50%, -50%) scale(1.2) !important;
+}
