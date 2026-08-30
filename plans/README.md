@@ -8,8 +8,7 @@
 
 ## 📊 项目总看板
 
-> 上次更新：2026-08-09
-> 上次更新：2026-08-02
+> 上次更新：2026-08-14
 
 ### 快速索引
 
@@ -26,11 +25,14 @@
 
 <!-- 状态：规划中 / 进行中。每条加一行：- [YYYY-MM-DD-xxx.md](xxx) — 一句话目标 -->
 
+- [2026-08-16-mindmap.md](2026-08-16-mindmap.md) — 思维导图模块集成(MindElixir v5 + 七彩虹 + 节点级 Yjs 协同 + AI 4 个能力)— **已完成** 2026-08-16（8/8 阶段，部署上线）
 - [2026-08-09-md-table-rewrite.md](2026-08-09-md-table-rewrite.md) — MD 编辑器表格 7 大能力(策略改为 fix-in-place,E2E 33/33 ✅)— **已完成** 2026-08-09
 - [2026-08-09-contract-payment-plan.md](2026-08-09-contract-payment-plan.md) — 合同付款计划(新表 + AI 抽取 + scheduler + 通知跳转)— **已完成** (V29 + 32/32) 2026-08-09
 - [2026-07-26-offline-deployment.md](2026-07-26-offline-deployment.md) — 纯内网部署方案设计（LLM/Docling/PaddleOCR/镜像 全链路离线改造）— 规划中（文件存在，此前被 .gitignore 误排除，2026-08-10 已修正）
 - [offline-export-command.md](offline-export-command.md) — 镜像导出速查（已重写：一键脚本 + 手工命令 + 实测尺寸 + 三大坑）
 - [offline-env-requirements.md](offline-env-requirements.md) — **内网离线部署环境依赖清单**（硬件/Docker 版本/内核/网段/镜像/自检脚本/交付确认表，26 项依赖；7 项待修已修 5 项）— 生效中 2026-08-10
+- [2026-08-12-feature-flags.md](2026-08-12-feature-flags.md) — 功能配置（12 项功能开关 + 业务角色 + 三轴授权 + 三重防护）— 规划中 2026-08-12
+- [2026-08-12-podman-migration.md](2026-08-12-podman-migration.md) — Docker Desktop → Podman Desktop 迁移 — 进行中 2026-08-14
 
 ## 已完成
 
@@ -54,6 +56,15 @@
 
 ## 看板更新记录
 
+- 2026-08-22 -- MindmapEditor **工具栏精简到极致 + 根节点折叠 + XMind 风格按钮/光晕**（全套 82/82 E2E 全过）：①工具栏只剩 8 个按钮：第一个大纲视图、第二个撤销 + 专注模式（保留 active 状态）+ 只读模式（保留 active 状态）+ AI 三剑客 + 帮助；移除：添加子节点/兄弟/父/复制/删除/上下移/重做/缩放/适应/居中/展开全部/折叠全部/主题/方向/紧凑/搜索/导入导出/清除选中/只读/锁定/移动到节点下/移到之前/移到之后/重命名/编辑关联线/删除关联线/编辑摘要/清理孤立关联线等 20+ 按钮 + 「空白拖动 = 框选」提示 ②修复根节点展开/折叠（MindElixir init 创建的 me-epd 不注册自定义 click handler → ensureEpdFor 改为无论 epd 是否存在都注册 handler + 同时拦截 click 和 mousedown）③me-epd 美化为 XMind 风格圆形按钮（CSS +/- 图标 + hover 放大 + 琥珀橙填充）④节点选中态改为 XMind 风格 box-shadow 光晕（不再用粗实线 outline）⑤focusNode 修复 isFocusMode 不更新（MindElixir 不触发 bus event，手动赋值）⑥测试更新：4 个测试文件改用右键菜单代替工具栏按钮（addChild/moveIn/clearSelection 等已不在工具栏）+ mindmap-toolbar-test.mjs 新增 18 步全过
+- 2026-08-22 -- MindmapEditor **样式修复 + 工具栏精简**（11/11 E2E 全过 + 原 29/29 全过）：①工具栏移除上一轮加的 7 个按钮（移动到节点下/移到之前/移到之后/重命名/编辑关联线/删除关联线/编辑摘要/清理孤立/清除选中/只读模式）— 这些功能全保留在右键菜单 ②节点选中态从粗实线改为琥珀橙 1px outline（柔和） ③节点编辑输入框从灰色硬实线改为琥珀橙边框 + 阴影呼吸感 ④MindmapNodeStylePanel 8 个图标渲染修复（之前 elIcon:'Star' 字符串不渲染 → 改 markRaw(Star) 组件引用 → svgCount=8 全渲染）；新增 mindmap-style-fix-test.mjs (11/11 全过)
+- 2026-08-22 -- MindmapEditor **UX 优化 5 项**（用户反馈修复 + E2E 8/8 全过 + 全 API 16/16 + 原 29/29 全过）：①卸载 @mind-elixir/node-menu 插件（跟 StylePanel 功能重叠 + UI 风格不搭 + 占画布空间）②精简右键菜单 11 项 → 7 项最常用（添加子/兄弟/重命名/关联线/摘要/专注/删除）③启用空白处拖动框选（MindElixir viselect 内置 + 修复 onMapMouseDown 不再无差别拦空白点击）④框选虚线框样式 蓝色→琥珀橙 + dashed（放全局样式避免 scoped hash 失效）⑤工具栏加「🖱️ 空白拖动 = 框选」提示 + 加 mindmap-ux-test.mjs (8/8 全过)
+- 2026-08-22 -- MindmapEditor **MindElixir v5 全 API 补全**（16/16 E2E 全过 + mindmap-e2e 29/29 全过）：新增 12 个核心 API 完整集成 — scrollIntoView(大纲跳转) / clearSelection(空白清选中) / enableEdit+disableEdit(只读切换) / moveNodeIn+Before+After(节点跨级移动对话框) / editTopic+setNodeTopic(重命名) / createArrowFrom+reshapeArrow+tidyArrow+renderArrow+selectArrow+unselectArrow(关联线管理) / createSummaryFrom+renderSummary+selectSummary+removeSummary(摘要管理) / generateNewObj+stringifyData(辅助) / @mind-elixir/node-menu 插件(与自定义 StylePanel 并存);工具栏新增 8 个按钮 + 右键菜单新增 6 项;新增 mindmap-all-api-test.mjs (16 步全过);experience.md 新增 6 条 MindElixir 经验沉淀(scrollIntoView/moveNode*/editTopic DOM/clearSelection 不清 Arrow/NodeMenu 并存)
+- 2026-08-22 -- MindmapEditor 5 项功能全面核查（用户反馈 4 项问题）：①大纲选中白色不可见（@import 在 scoped 内导致 :root 失效→移 main.ts）②关联线无法使用（createArrow 应传 DOM 而非 nodeObj）③正文无折叠图标（CSS 选择器 .mind-elixir 错→.map-container + MindElixir addChild 不补父节点 epd→加 repairEpds）④AI 助手 + CSS 选择器统一从 .mind-elixir 改 .map-container；E2E 29/29 全过 + 全功能测试 10/12 + experience.md 累计 6 条 MindElixir 经验沉淀
+- 2026-08-22 -- MindmapEditor pan 根因修复（overflowHidden:true 会短路掉 MindElixir 内置 panHelper；删除自写 pan 系统 + tabindex:0 + mousedown focus；29/29 E2E 全过 + 7/7 pan 真实测试过）+ experience.md 新增 MindElixir 3 条经验沉淀
+- 2026-08-18 -- PODMAN_GUIDE.md 追加"MiaotongDoc 项目特定差异"章节：4 个项目级兼容性问题（EPERM bind mount 9p 跨 fs / 多人协同 hash 不一致 / editor nginx 静默挂 / resolve DNS 跑不通）+ 必做修改清单
+- 2026-08-16 -- 新增 2026-08-16-mindmap.md 进行中(MindElixir v5 思维导图:节点级 Yjs 协同 + 七彩虹配色 + AI 4 个能力,8 阶段 6-7.5h)
+- 2026-08-16 -- 2026-08-16-mindmap.md **完成**(MindElixir v5 思维导图:8/8 阶段交付,12 文件新增/5 修改,后端零改动 + AI 复用 chat-stream,部署到 miaotongdoc-server + nginx,curl 8/8 端到端验证通过)
 - 2026-08-10 -- 清理 docling 残留 layout-heron-git/（HF 仓库 clone，模型仅 LFS 指针，Dockerfile 从未引用）· 新增 app/docling/README.md（HF 缓存三件套原理 + models/ 重建步骤 + 14 blob 校验脚本）· 修 .gitignore（混入的 XML 标签 + 重复行 + 误排除 plans/ 两个文档）
 - 2026-08-10 -- 离线部署三件套落地：修 setup-linux-host.sh 4 项（max_map_count 262144 / Docker 缺失改 exit 1 + 版本校验 / 颜色转义 / --ntp-server）· 新增 export-images.sh（实测导出通过，核心 tar 4.0GB）· 重写 offline-export-command.md（删 httpd:alpine，尺寸改实测）
 - 2026-08-10 -- 新增 offline-env-requirements.md（内网离线部署环境依赖清单：26 项依赖/9 项阻断级，含镜像清单核对、Compose V2 红线、172.20.0.0/16 网段冲突、目录名依赖陷阱、自检脚本、交付确认表；同时记录 7 项已知待修）

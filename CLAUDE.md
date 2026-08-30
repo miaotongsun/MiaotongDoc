@@ -325,6 +325,15 @@ MiaotongDoc/
 | `src/components/DocCard.vue` | 文档卡片 |
 | `src/components/CreateDocDialog.vue` | 新建文档对话框（5 种 docType + 模板可折叠 + PDF 模式 Tab 集成空白/图片转） |
 | `src/components/MergeDialog.vue` | 文档合并对话框 |
+| **思维导图编辑器** (2026-08-16 新增，MindElixir v5) |
+| `src/components/MindmapEditor.vue` | 思维导图编辑器主壳（七彩虹配色 + Yjs 协同 + AI 4 能力） |
+| `src/components/MindmapOutline.vue` | 思维导图左侧大纲视图（递归缩略 + 跳转） |
+| `src/components/MindmapNodeStylePanel.vue` | 节点样式面板（颜色 / 字体 / 标签 / 8 图标 / 超链接 / 图片） |
+| `src/composables/mindmap/useMindmapCollab.ts` | Yjs 节点级协同（Y.Map 全树 JSON + 100ms 去抖 + awareness） |
+| `src/composables/mindmap/useMindmapAi.ts` | AI 4 能力封装（generate / expand / summarize） |
+| `src/composables/mindmap/mindmapPrompts.ts` | 4 个 AI prompt 模板常量 |
+| `src/composables/mindmap/aiJsonUtils.ts` | AI JSON 3 层解析兜底 + AI→MindElixir 映射 |
+| `src/styles/mindmap-theme.css` | 思维导图七彩虹 CSS 变量 |
 | **PDF 编辑器 V3** (Phase 7-13) |
 | `src/components/PdfEditor.vue` | PDF 编辑器 V3 主壳 |
 | `src/components/PdfRibbon.vue` | PDF 多 tab 顶栏 |
@@ -439,6 +448,7 @@ MiaotongDoc/
 | SSO | OAuth2 单点登录 | `/api/sso` |
 | AI 功能 | 问答、摘要、翻译、改写 | `/api/ai` |
 | **PDF 编辑器 V3** | Ribbon/缩略图/ToolsRail/标注/页面操作/OCR/表单/签名/加密/创建 | `/api/pdf` |
+| **思维导图** | MindElixir v5 + Yjs 节点级协同 + AI 4 能力（生成/扩写/总结/图标） | `/api/mindmap` |
 
 ### 文档状态机
 
@@ -827,6 +837,28 @@ draft (草稿)
 }
 ```
 
+### 思维导图模块 (`/api/mindmap`) (2026-08-16 新增)
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/{id}/content` | 获取思维导图 JSON 树内容（view 权限） |
+| POST | `/{id}/save` | 保存思维导图 JSON 树（edit 权限，1.5s 去抖） |
+
+**请求体（save）**:
+```json
+{
+  "content": "{\"nodeData\":{\"id\":\"root\",\"topic\":\"中心主题\",\"children\":[]}}"
+}
+```
+
+**协同（Yjs 节点级）**：WebSocket `/ws/yjs/`，房间名 `mm-{docKey}`，复用 Markdown/PDF 协同通道，与 5 种文档互不冲突。
+
+**AI 4 个能力**：复用全局 `/api/ai/chat-stream` SSE 端点（OpenAI 兼容），前端 `useMindmapAi.ts` 封装：
+- generate-mindmap（主题 → 完整节点树）
+- expand-node（选中节点 → 3-5 子节点）
+- summarize-mindmap（节点树 → 200 字总结）
+- suggest-icons（并入 generate/expand，节点同时打 8 选 1-2 图标）
+
 ---
 
 ## 数据库设计
@@ -934,22 +966,22 @@ UPDATE mt_contract SET status = 'draft' WHERE id = ?;
 
 | 服务 | 容器名 | 端口 | IP | 用途 |
 |------|--------|------|-----|------|
-| nginx | miaotongdoc-nginx | 80 | 172.20.0.10 | 反向代理 |
-| postgres | miaotongdoc-postgres | 5432 | 172.20.0.20 | 数据库 |
-| redis | miaotongdoc-redis | 6379 | 172.20.0.30 | 缓存 |
-| rabbitmq | miaotongdoc-rabbitmq | 5672/15672 | 172.20.0.35 | 消息队列 |
-| web-server | miaotongdoc-server | 9004 | 172.20.0.40 | Spring Boot 后端 |
-| editor | miaotongdoc-editor | (内部80) | 172.20.0.50 | MTOffice 主实例 |
-| editor2 | miaotongdoc-editor2 | (内部80) | 172.20.0.51 | MTOffice 副实例1 |
-| editor3 | miaotongdoc-editor3 | (内部80) | 172.20.0.52 | MTOffice 副实例2 |
+| nginx | miaotongdoc-nginx | 80 | 172.21.0.10 | 反向代理 |
+| postgres | miaotongdoc-postgres | 5432 | 172.21.0.20 | 数据库 |
+| redis | miaotongdoc-redis | 6379 | 172.21.0.30 | 缓存 |
+| rabbitmq | miaotongdoc-rabbitmq | 5672/15672 | 172.21.0.35 | 消息队列 |
+| web-server | miaotongdoc-server | 9004 | 172.21.0.40 | Spring Boot 后端 |
+| editor | miaotongdoc-editor | (内部80) | 172.21.0.50 | MTOffice 主实例 |
+| editor2 | miaotongdoc-editor2 | (内部80) | 172.21.0.51 | MTOffice 副实例1 |
+| editor3 | miaotongdoc-editor3 | (内部80) | 172.21.0.52 | MTOffice 副实例2 |
 | cache-cleaner | miaotongdoc-cache-cleaner | - | - | 定时清理 MTOffice 缓存（cron） |
 | logrotate | miaotongdoc-logrotate | - | - | 定时日志轮转（cron） |
-| minio | miaotongdoc-minio | 9000/9001 | 172.20.0.60 | 对象存储（单节点） |
-| elasticsearch | miaotongdoc-elasticsearch | (内部9200) | 172.20.0.70 | 全文搜索 |
-| yjs-server | miaotongdoc-yjs | 1234 | 172.20.0.80 | Yjs 协同服务器 |
-| docling | miaotongdoc-docling | 5001 | 172.20.0.90 | AI 文档结构化解析（可选 profile,模型 506MB 已烧入镜像,内网零外网） |
-| ocr | miaotongdoc-ocr | 5002 | 172.20.0.95 | Tesseract 多语言兜底（可选 profile,语言包可运行时动态扩展） |
-| ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.20.0.96 | PaddleOCR 中文扫描件主力（默认启动,模型 232MB 已烧入） |
+| minio | miaotongdoc-minio | 9000/9001 | 172.21.0.60 | 对象存储（单节点） |
+| elasticsearch | miaotongdoc-elasticsearch | (内部9200) | 172.21.0.70 | 全文搜索 |
+| yjs-server | miaotongdoc-yjs | 1234 | 172.21.0.80 | Yjs 协同服务器 |
+| docling | miaotongdoc-docling | 5001 | 172.21.0.90 | AI 文档结构化解析（可选 profile,模型 506MB 已烧入镜像,内网零外网） |
+| ocr | miaotongdoc-ocr | 5002 | 172.21.0.95 | Tesseract 多语言兜底（可选 profile,语言包可运行时动态扩展） |
+| ocr-paddle | miaotongdoc-ocr-paddle | (内部5003) | 172.21.0.96 | PaddleOCR 中文扫描件主力（默认启动,模型 232MB 已烧入） |
 
 > **可选 profile**：`docling` / `ocr` 默认不启动，需用 `docker compose --profile ocr up -d ocr` 等命令启用；`ocr-paddle` **默认启动**（中文扫描件主力）。完整启用：`--profile all`。
 >
@@ -1168,7 +1200,7 @@ docker compose restart nginx web-server
 > 纯内网（断网）部署方案见 **[plans/2026-07-26-offline-deployment.md](plans/2026-07-26-offline-deployment.md)**。
 
 **关键要点**：
-- **启动顺序**：基础设施 → RabbitMQ → editor → web-server → yjs+nginx（editor 必须先于 web-server，否则 Flyway V9 因 `task_result` 表不存在而失败）
+- **启动顺序**：基础设施 → RabbitMQ → web-server → editor → yjs+nginx（web-server 先于 editor——Flyway V9 仅做 COMMENT 注释，task_result/doc_changes 表由历史 pgdata 持久化提供；editor 后启是为了让 nginx AI 反代 upstream `web-server:9004` DNS 可解析）
 - **Linux 宿主机**（生产环境）：首次部署先运行 `sudo ./setup-linux-host.sh`，完成内核参数/文件句柄/Docker daemon/防火墙/swap/SSH 加固/自动备份 cron 共 9 项配置
 - **Windows 端口陷阱**：yjs 端口 1234 可能被 `winnat` 排除，需 `net stop/start winnat`
 - **admin 密码**：初始 `Admin@123` 无效，需重置为 `123456`（见 DEPLOY.md 第 4 步）
@@ -1714,7 +1746,7 @@ docker volume ls                      # 命名卷列表
 ```
 
 **Docker Compose 命令修饰符（内存不卡顿的关键）**:
-- 容器间网络隔离由 `172.20.0.0/16` 桥接网络 `mtd-net` 提供
+- 容器间网络隔离由 `172.21.0.0/16` 桥接网络 `mtd-net` 提供
 - 所有服务通过 `docker compose ps` 中的 `healthy` 状态确认就绪
 - 健康检查失败容器会显示 `Restarting (1)`,需查 `docker compose logs <service>` 诊断
 
