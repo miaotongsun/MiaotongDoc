@@ -1,0 +1,371 @@
+#!/bin/bash
+# MiaotongDoc Podman 一键部署脚本
+# 使用方法: ./podman-deploy.sh [start|stop|restart|status|health|logs|build|backup|clean-logs]
+# 启动可选服务: ./podman-deploy.sh start --with-docling   # 启用 docling(重型 AI 文档解析)
+#
+# 环境要求:
+#   - Podman 5.4.0+（不要用 6.0.x，Windows WSL 上不工作）
+#   - Podman Desktop 1.29.1+（可选，用于 GUI 管理）
+#   - machine 已 init + start + rootful 模式
+#
+# 说明:
+#   - 数据存储在 D:\containers\（通过 junction + WSL --import 迁移）
+#   - docker-compose.exe 通过 Podman 的 named pipe 连接（5.4.0 自动创建，不需要 DOCKER_HOST）
+#   - 网段 172.25.0.0/16（避开 WSL 默认 172.20.32.0/20）
+#   - 所有容器用标准端口（80/5432/6379/9004 等），无端口偏移
+
+set -e
+
+# docker-compose 路径（Podman Desktop 安装的 Compose 插件，通过 npipe 连接 podman socket）
+# 5.4.0 的 machine start 自动创建 \\.\pipe\docker_engine，docker-compose 直接用
+COMPOSE="/c/Users/tiany/AppData/Local/Microsoft/WindowsApps/docker-compose.exe"
+
+# Podman 安装目录兜底(未加入 Windows PATH 时自动补充)
+if ! command -v podman &> /dev/null; then
+    for pod_dir in "/c/Program Files/RedHat/Podman" "/d/Program Files/RedHat/Podman"; do
+        if [ -x "$pod_dir/podman.exe" ]; then
+            export PATH="$pod_dir:$PATH"
+            break
+        fi
+    done
+fi
+
+# compose 函数：转发到 docker-compose.exe（避免 podman compose 的 "Executing external compose provider" 噪音）
+compose() {
+    "$COMPOSE" "$@"
+}
+
+# 启动参数(全局,可在 start 子命令后追加 --with-ocr/--with-docling)
+WITH_OCR=false
+WITH_DOCLING=false
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# 日志函数
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# 检查前置条件
+check_prerequisites() {
+    log_info "检查前置条件..."
+
+    # 检查 Podman
+    if ! command -v podman &> /dev/null; then
+        log_error "Podman 未安装，请先安装 Podman（winget install RedHat.Podman）"
+        exit 1
+    fi
+
+    # 检查 docker-compose（Podman Desktop 安装的 Compose 插件）
+    if ! "$COMPOSE" version &> /dev/null; then
+        log_error "docker-compose 不可用，请确认 Podman Desktop 已安装 Compose 插件"
+        exit 1
+    fi
+
+    # 检查 Podman machine 是否已启动
+    if ! podman info &> /dev/null; then
+        log_error "Podman machine 未运行，请先执行: podman machine start"
+        exit 1
+    fi
+
+    # 检查 .env 文件
+    if [ ! -f .env ]; then
+        log_error ".env 文件不存在，请先创建 .env 文件"
+        exit 1
+    fi
+
+    log_info "前置条件检查通过"
+}
+
+# 创建数据目录
+create_data_dirs() {
+    log_info "创建数据目录..."
+
+    mkdir -p data/{documents,pgdata,minio,rabbitmq,editor,editor-cache,redis,yjs,elasticsearch}
+    mkdir -p data/logs/{server,nginx,postgres,editor,editor2,editor3,redis,rabbitmq,minio,elasticsearch}
+
+    log_info "数据目录创建完成"
+}
+
+# 构建镜像
+build_images() {
+    log_info "构建镜像..."
+
+    # 构建 OnlyOffice 编辑器镜像
+    compose build editor
+
+    log_info "镜像构建完成"
+}
+
+# 分阶段启动服务（按依赖顺序，避免 Flyway V9 等需要 editor 先启动的坑）
+start_services() {
+    log_info "按依赖顺序分阶段启动服务..."
+
+    # 创建数据目录
+    create_data_dirs
+
+    # 阶段 A: 基础设施（postgres/redis/elasticsearch/minio）
+    log_info "[阶段 A] 启动基础设施..."
+    compose up -d postgres redis elasticsearch minio
+    wait_for_healthy "postgres" "redis" "elasticsearch" "minio"
+
+    # 阶段 B: RabbitMQ
+    log_info "[阶段 B] 启动 RabbitMQ..."
+    compose up -d rabbitmq
+    wait_for_healthy "rabbitmq"
+
+    # 阶段 C: 后端 web-server（执行 Flyway 迁移；task_result/doc_changes 表已存在于 pgdata 历史数据）
+    log_info "[阶段 C] 启动后端 web-server..."
+    compose up -d web-server
+    log_info "等待 Flyway 迁移完成..."
+    wait_for_healthy "web-server"
+
+    # 阶段 D: OnlyOffice 编辑器（依赖 web-server DNS 才能启动 nginx AI 反代）
+    log_info "[阶段 D] 启动 OnlyOffice 编辑器..."
+    compose up -d editor editor2 editor3
+    log_info "等待编辑器初始化（约 1-2 分钟）..."
+    sleep 60
+    wait_for_healthy "editor"
+
+    # 阶段 E: yjs-server + nginx
+    log_info "[阶段 E] 启动 yjs + nginx..."
+    compose up -d yjs-server nginx
+    wait_for_healthy "nginx"
+
+    # 阶段 F: PaddleOCR(默认必起);ocr(Tesseract 兜底)/docling(重型)按需启用
+    local compose_flags=()
+    if [ "$WITH_OCR" = true ] || [ "$WITH_DOCLING" = true ]; then
+        # 有任何 profile 启用的服务时,启用 ocr profile 即可覆盖到 ocr
+        compose_flags+=(--profile ocr)
+    fi
+    if [ "$WITH_DOCLING" = true ]; then
+        compose_flags+=(--profile docling)
+        log_info "[阶段 F] 启动 PaddleOCR + ocr(--with-ocr) + docling(--with-docling)..."
+    elif [ "$WITH_OCR" = true ]; then
+        log_info "[阶段 F] 启动 PaddleOCR + Tesseract ocr(--with-ocr)..."
+    else
+        log_info "[阶段 F] 启动 PaddleOCR(docling 与 Tesseract 未启用,加 --with-docling/--with-ocr 启用)..."
+    fi
+    compose "${compose_flags[@]}" up -d ocr-paddle
+    if [ "$WITH_OCR" = true ]; then
+        compose "${compose_flags[@]}" up -d ocr
+    fi
+    if [ "$WITH_DOCLING" = true ]; then
+        compose "${compose_flags[@]}" up -d docling
+    fi
+
+    # 最终状态
+    log_info "部署完成！"
+    echo ""
+    echo "访问地址:"
+    echo "  - 前端: http://localhost"
+    echo "  - 后端 API: http://localhost:9004"
+    echo "  - MinIO 控制台: http://localhost:9001"
+    echo "  - RabbitMQ 管理: http://localhost:15672"
+    echo ""
+}
+
+# 等待指定服务 healthy(超时 5 分钟)
+wait_for_healthy() {
+    local timeout=300
+    local interval=10
+    local elapsed=0
+    for svc in "$@"; do
+        log_info "等待 $svc healthy..."
+        while ! compose ps "$svc" 2>/dev/null | grep -q "(healthy)"; do
+            if [ $elapsed -ge $timeout ]; then
+                log_warn "$svc 未在 ${timeout}s 内 healthy，继续执行（可能是已启动或 unhealthy 但可运行）"
+                break
+            fi
+            sleep $interval
+            elapsed=$((elapsed + interval))
+        done
+        elapsed=0  # 重置给下一个服务
+    done
+}
+
+# 停止服务（保留容器，不丢失数据）
+stop_services() {
+    log_info "停止服务（保留容器和数据）..."
+    compose stop --timeout 60
+    log_info "服务已停止"
+}
+
+# 重启服务
+restart_services() {
+    log_info "重启服务..."
+    compose stop --timeout 60
+    compose up -d
+    log_info "服务已重启"
+}
+
+# 检查服务状态
+check_status() {
+    log_info "服务状态:"
+    compose ps
+}
+
+# 检查健康状态
+check_health() {
+    log_info "检查服务健康状态..."
+
+    # 检查 PostgreSQL
+    if compose exec -T postgres pg_isready -U miaotong -d miaotongdocdb &> /dev/null; then
+        log_info "PostgreSQL: 健康"
+    else
+        log_warn "PostgreSQL: 未就绪"
+    fi
+
+    # 检查 Redis
+    if compose exec -T redis redis-cli -a ${REDIS_PASSWORD} ping &> /dev/null; then
+        log_info "Redis: 健康"
+    else
+        log_warn "Redis: 未就绪"
+    fi
+
+    # 检查 Web Server
+    if compose exec -T web-server wget -q --spider http://localhost:9004/actuator/health &> /dev/null; then
+        log_info "Web Server: 健康"
+    else
+        log_warn "Web Server: 未就绪"
+    fi
+
+    # 检查 MinIO
+    if compose exec -T minio mc ready local &> /dev/null; then
+        log_info "MinIO: 健康"
+    else
+        log_warn "MinIO: 未就绪"
+    fi
+}
+
+# 查看日志
+view_logs() {
+    if [ -z "$1" ]; then
+        compose logs -f
+    else
+        compose logs -f "$1"
+    fi
+}
+
+# 清理日志
+clean_logs() {
+    log_warn "清理超过 30 天的日志..."
+    find data/logs -name "*.gz" -mtime +30 -delete 2>/dev/null || true
+    log_info "日志清理完成"
+}
+
+# 备份数据
+backup_data() {
+    BACKUP_DIR="backup_$(date +%Y%m%d_%H%M%S)"
+    log_info "备份数据到 ${BACKUP_DIR}..."
+
+    mkdir -p "${BACKUP_DIR}"
+
+    # 备份 PostgreSQL
+    compose exec -T postgres pg_dump -U miaotong miaotongdocdb > "${BACKUP_DIR}/database.sql"
+
+    # 备份文档
+    cp -r data/documents "${BACKUP_DIR}/documents"
+
+    # 备份配置
+    cp -r config "${BACKUP_DIR}/config"
+    cp .env "${BACKUP_DIR}/.env"
+
+    log_info "备份完成: ${BACKUP_DIR}"
+}
+
+# 主函数
+main() {
+    cd "$(dirname "$0")"
+
+    # 解析参数(支持 ./podman-deploy.sh start --with-docling 形式)
+    local cmd="${1:-}"
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --with-ocr)
+                WITH_OCR=true
+                shift
+                ;;
+            --with-docling)
+                WITH_DOCLING=true
+                shift
+                ;;
+            *)
+                log_warn "未知参数: $1"
+                shift
+                ;;
+        esac
+    done
+
+    case "$cmd" in
+        start)
+            check_prerequisites
+            start_services
+            ;;
+        stop)
+            stop_services
+            ;;
+        restart)
+            restart_services
+            ;;
+        status)
+            check_status
+            ;;
+        health)
+            check_health
+            ;;
+        logs)
+            view_logs "$2"
+            ;;
+        build)
+            check_prerequisites
+            build_images
+            ;;
+        backup)
+            backup_data
+            ;;
+        clean-logs)
+            clean_logs
+            ;;
+        *)
+            echo "MiaotongDoc Podman 部署脚本（与 deploy.sh 并行版本）"
+            echo ""
+            echo "使用方法: $0 {start|stop|restart|status|health|logs|build|backup|clean-logs} [--with-ocr] [--with-docling]"
+            echo ""
+            echo "命令说明:"
+            echo "  start                       - 启动核心服务 + PaddleOCR(默认)"
+            echo "  start --with-ocr            - 额外启动 Tesseract OCR(多语言兜底,轻量)"
+            echo "  start --with-docling        - 额外启动 Docling AI 文档解析(重型)"
+            echo "  start --with-ocr --with-docling"
+            echo "                             - 同时启动 Tesseract + Docling"
+            echo "  stop                        - 停止所有服务"
+            echo "  restart                     - 重启所有服务"
+            echo "  status                      - 查看服务状态"
+            echo "  health                      - 检查服务健康状态"
+            echo "  logs                        - 查看日志 (可指定服务名)"
+            echo "  build                       - 构建镜像"
+            echo "  backup                      - 备份数据"
+            echo "  clean-logs                  - 清理旧日志"
+            echo ""
+            echo "可选 profile(默认禁用,按需启用):"
+            echo "  ocr       Tesseract 多语言兜底(25MB,小语种扫描件)"
+            echo "  docling   Docling AI 文档解析(重型,~6GB,首次启动慢)"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
