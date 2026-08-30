@@ -23,8 +23,18 @@ public class DocGenerator {
             case "slide" -> createPptx(title);
             case "markdown" -> createMarkdown(title);
             case "pdf" -> createPdf(title);
+            case "mindmap" -> createMindmap(title);
             default -> throw new IllegalArgumentException("不支持的文档类型: " + docType);
         };
+    }
+
+    /**
+     * 创建空白 MindElixir v5 思维导图文档（JSON 树 + 默认根节点）
+     */
+    private static byte[] createMindmap(String title) {
+        String safeTitle = title == null ? "中心主题" : title.replace("\"", "\\\"");
+        String json = "{\"nodeData\":{\"id\":\"root\",\"topic\":\"" + safeTitle + "\",\"children\":[]}}";
+        return json.getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] createDocx(String title) throws IOException {

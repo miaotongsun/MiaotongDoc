@@ -60,6 +60,7 @@ public class DocumentService {
             case "slide" -> "pptx";
             case "markdown" -> "md";
             case "pdf" -> "pdf";
+            case "mindmap" -> "mm";
             default -> throw new BusinessException("不支持的文档类型");
         };
 
