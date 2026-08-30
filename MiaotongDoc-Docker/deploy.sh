@@ -90,18 +90,18 @@ start_services() {
     docker compose up -d rabbitmq
     wait_for_healthy "rabbitmq"
 
-    # 阶段 C: OnlyOffice 编辑器（会创建 task_result 表，供 Flyway V9 使用）
-    log_info "[阶段 C] 启动 OnlyOffice 编辑器..."
+    # 阶段 C: 后端 web-server（执行 Flyway 迁移；task_result/doc_changes 表已存在于 pgdata 历史数据）
+    log_info "[阶段 C] 启动后端 web-server..."
+    docker compose up -d web-server
+    log_info "等待 Flyway 迁移完成..."
+    wait_for_healthy "web-server"
+
+    # 阶段 D: OnlyOffice 编辑器（依赖 web-server DNS 才能启动 nginx AI 反代）
+    log_info "[阶段 D] 启动 OnlyOffice 编辑器..."
     docker compose up -d editor editor2 editor3
     log_info "等待编辑器初始化（约 1-2 分钟）..."
     sleep 60
     wait_for_healthy "editor"
-
-    # 阶段 D: 后端 web-server（执行 Flyway 迁移）
-    log_info "[阶段 D] 启动后端 web-server..."
-    docker compose up -d web-server
-    log_info "等待 Flyway 迁移完成..."
-    wait_for_healthy "web-server"
 
     # 阶段 E: yjs-server + nginx
     log_info "[阶段 E] 启动 yjs + nginx..."
