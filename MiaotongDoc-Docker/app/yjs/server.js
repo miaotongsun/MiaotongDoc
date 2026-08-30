@@ -32,8 +32,8 @@ wss.on('connection', (ws, req) => {
   // 支持 /ws/yjs/docName 或 /docName 格式
   let docName = pathParts[pathParts.length - 1] || 'default'
 
-  // 安全校验：只允许合法的文档名格式
-  if (!docName.match(/^(md|pdf)-[a-f0-9-]+$/)) {
+  // 安全校验：只允许合法的文档名格式（md=markdown, pdf=PDF, mm=mindmap）
+  if (!docName.match(/^(md|pdf|mm)-[a-f0-9-]+$/)) {
     console.warn(`[Yjs] 拒绝非法文档名: ${docName}`)
     ws.close(4000, 'Invalid document name')
     return
