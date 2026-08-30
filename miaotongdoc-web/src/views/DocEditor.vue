@@ -5,7 +5,8 @@
         <button @click="goBack" class="back-btn">
           <el-icon :size="16"><ArrowLeft /></el-icon>
         </button>
-        <el-tag :color="docTypeConfig.color" effect="dark" size="small" class="doc-type-tag">
+        <el-tag :color="docTypeConfig.color" effect="dark" size="small" class="doc-type-tag" :style="{ display: 'inline-flex', alignItems: 'center', gap: '4px' }">
+          <MindmapIcon v-if="doc?.docType === 'mindmap'" :size="12" style="margin-right: 2px" />
           {{ docTypeConfig.label }}
         </el-tag>
         <span class="doc-title">{{ docTitle }}</span>
@@ -68,6 +69,14 @@
         :filename="docTitle"
         @ready="onReady" @state-change="onStateChange" />
 
+      <!-- 思维导图编辑器 (2026-08-16 新增) -->
+      <MindmapEditor v-else-if="isMindmap && mindmapLoaded"
+        :doc-id="docId" :doc-key="doc?.docKey || ''"
+        :can-edit="canEdit"
+        :user-name="currentUserName" :user-id="currentUserId"
+        :initial-content="mindmapContent"
+        @ready="onReady" @state-change="onStateChange" @content-change="onMindmapContentChange" />
+
       <!-- 加载中 -->
       <div v-else class="editor-loading">
         <el-icon class="loading-icon" :size="32"><Loading /></el-icon>
@@ -113,11 +122,13 @@ import NotificationBell from '@/components/NotificationBell.vue'
 import DocumentEditor from '@/components/DocumentEditor.vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import PdfEditor from '@/components/PdfEditor.vue'
+import MindmapEditor from '@/components/MindmapEditor.vue'
 import CommentPanel from '@/components/CommentPanel.vue'
 import ShareDialog from '@/components/ShareDialog.vue'
 import VersionHistory from '@/components/VersionHistory.vue'
 import SigningDialog from '@/components/SigningDialog.vue'
 import SigningBar from '@/components/SigningBar.vue'
+import MindmapIcon from '@/components/MindmapIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -143,6 +154,10 @@ const markdownLoaded = ref(false)
 // PDF 状态
 const pdfFileUrl = ref('')
 const pdfLoaded = ref(false)
+
+// 思维导图状态 (2026-08-16 新增)
+const mindmapContent = ref('')
+const mindmapLoaded = ref(false)
 
 const docTitle = computed(() => doc.value?.title || '加载中...')
 
@@ -187,6 +202,7 @@ const isOfficeDoc = computed(() => {
 })
 const isMarkdown = computed(() => doc.value?.docType === 'markdown')
 const isPdf = computed(() => doc.value?.docType === 'pdf')
+const isMindmap = computed(() => doc.value?.docType === 'mindmap')  // 2026-08-16 新增
 
 const editorServerUrl = computed(() => {
   return import.meta.env.VITE_EDITOR_SERVER_URL || '/ds-vpath'
@@ -197,6 +213,7 @@ async function loadDoc() {
   pdfLoaded.value = false
   pdfFileUrl.value = ''
   markdownLoaded.value = false
+  mindmapLoaded.value = false  // 2026-08-16 新增
   try {
     doc.value = await documentApi.getById(docId.value)
 
@@ -210,6 +227,9 @@ async function loadDoc() {
       // PDF 编辑器：设置文件 URL
       pdfFileUrl.value = `/api/documents/${docId.value}/file`
       pdfLoaded.value = true
+    } else if (isMindmap.value) {
+      // 思维导图编辑器：加载 JSON 内容 (2026-08-16 新增)
+      await loadMindmapContent()
     }
 
     if (doc.value?.status === 'signing') {
@@ -246,6 +266,23 @@ async function loadMarkdownContent() {
     console.error('加载 Markdown 内容失败', e)
   }
   markdownLoaded.value = true
+}
+
+// 2026-08-16 新增：加载思维导图 JSON 内容
+async function loadMindmapContent() {
+  try {
+    const token = sessionStorage.getItem('token')
+    const resp = await fetch(`/api/mindmap/${docId.value}/content`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      mindmapContent.value = data.content || ''
+    }
+  } catch (e) {
+    console.error('加载思维导图内容失败', e)
+  }
+  mindmapLoaded.value = true
 }
 
 async function loadSigningTask() {
@@ -304,6 +341,36 @@ function onMarkdownContentChange(html: string) {
       saveStatus.value = '已保存'
     } catch (e) {
       console.error('保存 Markdown 失败', e)
+      saveStatus.value = '保存失败'
+    }
+  }, 1500)
+}
+
+// 思维导图自动保存 (2026-08-16 新增, 1.5s 去抖)
+let mmSaveTimer: ReturnType<typeof setTimeout> | null = null
+function onMindmapContentChange(json: string) {
+  if (mmSaveTimer) clearTimeout(mmSaveTimer)
+  mmSaveTimer = setTimeout(async () => {
+    try {
+      const token = sessionStorage.getItem('token')
+      const resp = await fetch(`/api/mindmap/${docId.value}/save`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: json }),
+      })
+      if (resp.ok) {
+        const result = await resp.json()
+        if (result.saved !== false) {
+          saveStatus.value = '已保存'
+        }
+      } else {
+        saveStatus.value = '保存失败'
+      }
+    } catch (e) {
+      console.error('保存思维导图失败', e)
       saveStatus.value = '保存失败'
     }
   }, 1500)

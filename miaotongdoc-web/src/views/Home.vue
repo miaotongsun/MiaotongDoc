@@ -35,6 +35,10 @@
           <el-icon><Document /></el-icon>
           <span>MiaotongPDF</span>
         </li>
+        <li :class="{ active: activeTab === 'mindmap' }" @click="switchTab('mindmap')">
+          <MindmapIcon :size="16" class="nav-mindmap-icon" :class="{ active: activeTab === 'mindmap' }" />
+          <span>MiaotongMind</span>
+        </li>
         <li class="nav-divider"></li>
         <li :class="{ active: activeTab === 'shared' }" @click="switchTab('shared')">
           <el-icon><Share /></el-icon>
@@ -260,7 +264,8 @@
               <div class="doc-name-cell" draggable="true"
                 @dragstart="onDocDragStart($event, row)"
                 @dragend="onDocDragEnd">
-                <el-icon class="doc-type-icon" :style="{ color: docTypeColor(row.docType) }">
+                <MindmapIcon v-if="row.docType === 'mindmap'" :size="16" :style="{ color: docTypeColor(row.docType), verticalAlign: 'middle' }" />
+                <el-icon v-else class="doc-type-icon" :style="{ color: docTypeColor(row.docType) }">
                   <Document v-if="row.docType === 'word'" />
                   <Grid v-else-if="row.docType === 'cell'" />
                   <Picture v-else-if="row.docType === 'slide'" />
@@ -580,6 +585,7 @@ import { useDocumentStore } from '@/stores/document'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
 import { Search, List, MoreFilled, Lock, Document, Delete, Download, Folder, Plus, MagicStick, ArrowDown, ArrowRight, Setting } from '@element-plus/icons-vue'
+import MindmapIcon from '@/components/MindmapIcon.vue'
 import { documentApi } from '@/api/document'
 import { departmentApi, type Department } from '@/api/department'
 import { folderApi, type Folder as FolderType } from '@/api/folder'
@@ -1938,6 +1944,20 @@ async function handleTableCommand(cmd: string, row: any) {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+}
+
+/* 思维导图导航图标（黑白，未激活时与文字同色） */
+.nav-list li:not(.nav-divider) .nav-mindmap-icon {
+  color: #606266;
+  transition: color 0.2s;
+}
+
+.nav-list li:not(.nav-divider):hover .nav-mindmap-icon {
+  color: var(--el-color-primary);
+}
+
+.nav-list li:not(.nav-divider).active .nav-mindmap-icon {
+  color: var(--el-color-primary);
 }
 
 /* Main content */

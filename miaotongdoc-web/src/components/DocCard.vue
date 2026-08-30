@@ -7,7 +7,8 @@
         <el-icon v-if="selected" class="check-on" :size="18"><CircleCheck /></el-icon>
         <el-icon v-else-if="hovered" class="check-off" :size="18"><CircleCheck /></el-icon>
       </div>
-      <el-icon :size="24" :style="{ color: docTypeConfig.color }">
+      <MindmapIcon v-if="doc.docType === 'mindmap'" :size="24" :style="{ color: docTypeConfig.color }" />
+      <el-icon v-else :size="24" :style="{ color: docTypeConfig.color }">
         <component :is="docTypeConfig.icon" />
       </el-icon>
       <el-tag size="small" :color="docTypeConfig.color" effect="dark">
@@ -70,6 +71,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Document } from '@/api/document'
 
 import { CircleCheck } from '@element-plus/icons-vue'
+import MindmapIcon from '@/components/MindmapIcon.vue'
 
 const props = defineProps<{
   doc: Document

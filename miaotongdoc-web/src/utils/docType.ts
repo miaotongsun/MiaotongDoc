@@ -1,4 +1,4 @@
-export type DocType = 'word' | 'cell' | 'slide' | 'markdown' | 'pdf'
+export type DocType = 'word' | 'cell' | 'slide' | 'markdown' | 'pdf' | 'mindmap'
 
 export interface DocTypeConfig {
   label: string
@@ -7,7 +7,7 @@ export interface DocTypeConfig {
   icon: string
   color: string
   ooDocumentType?: string  // OnlyOffice 文档类型，markdown/pdf 不需要
-  editorType: 'onlyoffice' | 'markdown' | 'pdf'
+  editorType: 'onlyoffice' | 'markdown' | 'pdf' | 'mindmap'
 }
 
 export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
@@ -53,6 +53,15 @@ export const DOC_TYPE_CONFIG: Record<DocType, DocTypeConfig> = {
     icon: 'Document',
     color: '#DC2626',
     editorType: 'pdf'
+  },
+  // 2026-08-16 新增：思维导图（七彩虹主色，避开已用 5 色）
+  mindmap: {
+    label: '思维导图',
+    brandName: 'MiaotongMind',
+    ext: 'mm',
+    icon: 'Connection',
+    color: '#F59E0B',  // 琥珀橙（橙黄过渡）
+    editorType: 'mindmap'
   }
 }
 
@@ -67,6 +76,7 @@ export function getFileTypeIcon(fileType: string): string {
     case 'pptx': return 'Picture'
     case 'md': return 'EditPen'
     case 'pdf': return 'Document'
+    case 'mm': return 'Connection'
     default: return 'Document'
   }
 }

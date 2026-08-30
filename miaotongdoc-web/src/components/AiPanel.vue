@@ -2,12 +2,16 @@
   <div class="ai-panel">
     <div class="panel-header">
       <div class="header-brand">
-        <div class="brand-icon">✨</div>
+        <el-icon class="brand-icon"><MagicStick /></el-icon>
         <span class="brand-text">AI 助手</span>
       </div>
       <div class="header-actions">
-        <button class="header-btn" @click="clearChat" title="新建对话">＋</button>
-        <button class="header-btn" @click="$emit('close')" title="关闭">✕</button>
+        <button class="header-btn" @click="clearChat" title="新建对话">
+          <el-icon><Plus /></el-icon>
+        </button>
+        <button class="header-btn" @click="$emit('close')" title="关闭">
+          <el-icon><Close /></el-icon>
+        </button>
       </div>
     </div>
 
@@ -15,16 +19,36 @@
       <div v-if="messages.length === 0" class="welcome-container">
         <h2>{{ docHasContent ? '正在阅读文档' : '开始创作' }}</h2>
         <p class="welcome-hint">{{ docHasContent ? '有什么关于文档的问题吗？' : '描述你想要创建的内容，我来帮你' }}</p>
-        <div v-if="docHasContent" class="quick-prompts">
-          <button class="prompt-chip" @click="quickAsk('总结这篇文档的核心内容')">📋 总结摘要</button>
-          <button class="prompt-chip" @click="quickAsk('提取文档中的关键条款')">📌 提取要点</button>
-          <button class="prompt-chip" @click="quickAsk('解释这段内容的含义')">💡 解释说明</button>
-          <button class="prompt-chip" @click="quickAsk('润色并改进这段文字')">✏️ 润色文字</button>
+        <div v-if="quickPrompts && quickPrompts.length > 0" class="quick-prompts">
+          <button v-for="qp in quickPrompts" :key="qp.label" class="prompt-chip" @click="quickAsk(qp.prompt)">
+            <el-icon v-if="qp.icon"><component :is="qp.icon" /></el-icon>
+            <span>{{ qp.label }}</span>
+          </button>
+        </div>
+        <div v-else-if="docHasContent" class="quick-prompts">
+          <button class="prompt-chip" @click="quickAsk('总结这篇文档的核心内容')">
+            <el-icon><Document /></el-icon><span>总结摘要</span>
+          </button>
+          <button class="prompt-chip" @click="quickAsk('提取文档中的关键条款')">
+            <el-icon><DataLine /></el-icon><span>提取要点</span>
+          </button>
+          <button class="prompt-chip" @click="quickAsk('解释这段内容的含义')">
+            <el-icon><Reading /></el-icon><span>解释说明</span>
+          </button>
+          <button class="prompt-chip" @click="quickAsk('润色并改进这段文字')">
+            <el-icon><EditPen /></el-icon><span>润色文字</span>
+          </button>
         </div>
         <div v-else class="quick-prompts">
-          <button class="prompt-chip" @click="quickAsk('帮我写一份项目计划书')">📝 项目计划</button>
-          <button class="prompt-chip" @click="quickAsk('写一封正式的商务邮件')">📧 商务邮件</button>
-          <button class="prompt-chip" @click="quickAsk('起草一份合同协议')">📄 合同协议</button>
+          <button class="prompt-chip" @click="quickAsk('帮我写一份项目计划书')">
+            <el-icon><Document /></el-icon><span>项目计划</span>
+          </button>
+          <button class="prompt-chip" @click="quickAsk('写一封正式的商务邮件')">
+            <el-icon><Message /></el-icon><span>商务邮件</span>
+          </button>
+          <button class="prompt-chip" @click="quickAsk('起草一份合同协议')">
+            <el-icon><Notebook /></el-icon><span>合同协议</span>
+          </button>
         </div>
       </div>
 
@@ -73,12 +97,17 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
+import {
+  MagicStick, Plus, Close, Document, Message, Notebook,
+  DataLine, Reading, EditPen,
+} from '@element-plus/icons-vue'
 
 const props = defineProps<{
   docId: number
   docType: string
   docHasContent?: boolean
   editorContent?: string
+  quickPrompts?: { label: string; prompt: string; icon?: string }[]
 }>()
 
 const emit = defineEmits(['close', 'insert'])

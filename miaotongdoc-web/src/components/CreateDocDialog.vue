@@ -8,7 +8,8 @@
             class="doc-type-item" :class="{ selected: form.docType === type }"
             :data-doc-type="type"
             @click="onDocTypeChange(type)">
-            <el-icon :size="26" :style="{ color: config.color }">
+            <MindmapIcon v-if="type === 'mindmap'" :size="26" :style="{ color: config.color }" />
+            <el-icon v-else :size="26" :style="{ color: config.color }">
               <component :is="config.icon" />
             </el-icon>
             <span class="type-name">{{ config.label }}</span>
@@ -152,6 +153,7 @@ import { DOC_TYPE_CONFIG } from '@/utils/docType'
 import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { formatFileSize } from '@/utils/docType'
+import MindmapIcon from '@/components/MindmapIcon.vue'
 
 const router = useRouter()
 const visible = defineModel<boolean>({ default: false })
@@ -328,19 +330,19 @@ async function handleCreate() {
 <style scoped>
 .doc-type-group {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   flex-wrap: wrap;
 }
 
 .doc-type-item {
   flex: 1;
-  min-width: 100px;
+  min-width: 88px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 14px 10px;
+  gap: 4px;
+  padding: 12px 6px;
   border: 2px solid #e8e8e8;
   border-radius: 8px;
   cursor: pointer;
@@ -361,11 +363,13 @@ async function handleCreate() {
   font-size: 13px;
   color: #606266;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .type-ext {
   font-size: 11px;
   color: #909399;
+  white-space: nowrap;
 }
 
 /* PDF 模式 tabs */
