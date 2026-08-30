@@ -2,6 +2,14 @@
 # MiaotongDoc Editor 自定义入口脚本
 # 在 run-document-server.sh 生成 local.json 后注入 aiSettings
 
+# 修复 Podman tmpfs mode 异常(2026-08-19):
+# Podman on WSL 把 tmpfs mount 的 mode:1777 解析成奇怪的 06431/04327,
+# ds 用户(uid=105)无法 cd 进 /tmp 写 ASC_CONVERT 临时目录。
+# Docker 没有这个问题,但 Podman 部署必须 chmod 兜底。
+# (App_Data 已改 named volume ext4,不需要 chmod)
+chmod 1777 /tmp 2>/dev/null || true
+chown root:root /tmp 2>/dev/null || true
+
 CONFIG_FILE="/etc/onlyoffice/documentserver/local.json"
 
 # 从 ai-config.json 读取模型配置（前端配置，/data/config 是只读挂载）
